@@ -178,6 +178,43 @@ export const loadTodayState = async (
   }
 };
 
+export const loadAllTodayStates = async (): Promise<TodayState[]> => {
+  const keys = await AsyncStorage.getAllKeys();
+  const stateKeys = keys.filter((key) => key.startsWith(TODAY_STATE_KEY_PREFIX));
+  if (stateKeys.length === 0) {
+    return [];
+  }
+  const entries = await AsyncStorage.multiGet(stateKeys);
+  const states: TodayState[] = [];
+  for (const [key, raw] of entries) {
+    if (!raw) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw) as TodayState;
+      const date = typeof parsed?.date === "string" ? parsed.date : "";
+      const keyDate = key.slice(TODAY_STATE_KEY_PREFIX.length);
+      if (!date || date !== keyDate) {
+        continue;
+      }
+      const slots = SLOT_KEYS.reduce(
+        (acc, slotKey) => {
+          const rawSlot = (parsed.slots as Record<string, SlotState> | undefined)?.[
+            slotKey
+          ];
+          acc[slotKey] = normalizeSlot(rawSlot ?? {});
+          return acc;
+        },
+        {} as Record<SlotKey, SlotState>,
+      );
+      states.push({ ...parsed, slots });
+    } catch {
+      continue;
+    }
+  }
+  return states;
+};
+
 export const saveTodayState = async (state: TodayState): Promise<void> => {
   await AsyncStorage.setItem(
     getTodayStateKey(state.date),

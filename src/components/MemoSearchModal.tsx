@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -11,42 +11,48 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import {
-  MemoSearchHit,
-  searchMemosByTaskTitle,
-  searchMemosByToken,
-} from "../db/memoRepo";
-
-type SearchMode = "task" | "token";
+import { searchAllMemos, SearchMemo } from "../services/searchIndex";
+import { upsertMemoForTask } from "../db/memoRepo";
+import { upsertDailyNote, upsertFreeNote } from "../db/noteRepo";
+import LinkText from "./LinkText";
 
 type Props = {
   visible: boolean;
   onClose: () => void;
-  onSelectTaskId?: (taskId: string) => void;
+  initialQuery?: string;
 };
 
-const pad2 = (num: number) => String(num).padStart(2, "0");
-
-const formatDateTime = (timestamp: number) => {
-  const date = new Date(timestamp);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
-    date.getDate(),
-  )} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-};
-
-const MemoSearchModal = ({ visible, onClose, onSelectTaskId }: Props) => {
-  const [mode, setMode] = useState<SearchMode>("task");
+const MemoSearchModal = ({ visible, onClose, initialQuery }: Props) => {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<MemoSearchHit[]>([]);
+  const [results, setResults] = useState<SearchMemo[]>([]);
+  const [mode, setMode] = useState<"list" | "detail">("list");
+  const [selectedMemo, setSelectedMemo] = useState<SearchMemo | null>(null);
+  const [activeWord, setActiveWord] = useState<string | null>(null);
+  const [searchTrigger, setSearchTrigger] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editableText, setEditableText] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!visible) {
       setQuery("");
       setResults([]);
       setLoading(false);
+      setMode("list");
+      setSelectedMemo(null);
+      setActiveWord(null);
+      setSearchTrigger(0);
+      setIsEditing(false);
+      setEditableText("");
+      setSaving(false);
+      return;
     }
-  }, [visible]);
+    setQuery(initialQuery ?? "");
+    setMode("list");
+    setSelectedMemo(null);
+    setActiveWord(initialQuery?.trim() || null);
+  }, [visible, initialQuery]);
 
   useEffect(() => {
     if (!visible) {
@@ -56,15 +62,16 @@ const MemoSearchModal = ({ visible, onClose, onSelectTaskId }: Props) => {
     if (!trimmed) {
       setResults([]);
       setLoading(false);
+      setMode("list");
+      setSelectedMemo(null);
       return;
     }
     let active = true;
     setLoading(true);
+    setMode("list");
+    setSelectedMemo(null);
     const handler = setTimeout(() => {
-      const search = mode === "task"
-        ? searchMemosByTaskTitle(trimmed)
-        : searchMemosByToken(trimmed);
-      search
+      searchAllMemos(trimmed)
         .then((items) => {
           if (active) {
             setResults(items);
@@ -85,19 +92,107 @@ const MemoSearchModal = ({ visible, onClose, onSelectTaskId }: Props) => {
       active = false;
       clearTimeout(handler);
     };
-  }, [query, mode, visible]);
+  }, [query, visible, searchTrigger]);
 
-  const modeLabel = useMemo(
-    () => (mode === "task" ? "タスク名" : "Token"),
-    [mode],
-  );
+  useEffect(() => {
+    if (mode === "detail" && selectedMemo) {
+      setEditableText(selectedMemo.memoText);
+      setIsEditing(false);
+      setSaving(false);
+    }
+  }, [mode, selectedMemo]);
+
+  const handlePressLink = (word: string) => {
+    const trimmed = word.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (trimmed !== activeWord) {
+      setActiveWord(trimmed);
+    }
+    setMode("list");
+    setSelectedMemo(null);
+    setResults([]);
+    setLoading(true);
+    if (trimmed === query.trim()) {
+      setSearchTrigger((prev) => prev + 1);
+    } else {
+      setQuery(trimmed);
+    }
+  };
+
+  const handleEdit = () => {
+    if (!selectedMemo) {
+      return;
+    }
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    if (!selectedMemo) {
+      return;
+    }
+    setEditableText(selectedMemo.memoText);
+    setIsEditing(false);
+  };
+
+  const applySavedText = (nextText: string) => {
+    if (!selectedMemo) {
+      return;
+    }
+    const updated = { ...selectedMemo, memoText: nextText };
+    setSelectedMemo(updated);
+    setResults((prev) =>
+      prev.map((item) => (item.key === updated.key ? updated : item)),
+    );
+    setIsEditing(false);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedMemo || saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      if (selectedMemo.source === "task") {
+        if (!selectedMemo.taskId) {
+          return;
+        }
+        await upsertMemoForTask(selectedMemo.taskId, editableText);
+        applySavedText(editableText);
+        return;
+      }
+      if (selectedMemo.noteType === "daily") {
+        await upsertDailyNote(selectedMemo.date, editableText);
+        applySavedText(editableText);
+        return;
+      }
+      if (selectedMemo.noteType === "free") {
+        if (!selectedMemo.noteId) {
+          return;
+        }
+        await upsertFreeNote({
+          id: selectedMemo.noteId,
+          title: selectedMemo.noteTitle ?? null,
+          body: editableText,
+        });
+        applySavedText(editableText);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const buildSnippet = (text: string, maxLength = 100) => {
+    const trimmed = text.replace(/\s+/g, " ").trim();
+    if (trimmed.length <= maxLength) {
+      return trimmed;
+    }
+    return `${trimmed.slice(0, maxLength)}...`;
+  };
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <Pressable style={styles.backButton} onPress={onClose}>
@@ -110,41 +205,69 @@ const MemoSearchModal = ({ visible, onClose, onSelectTaskId }: Props) => {
           </Pressable>
         </View>
         <View style={styles.container}>
-          <View style={styles.segmentRow}>
-            <Pressable
-              style={[styles.segmentButton, mode === "task" && styles.segmentActive]}
-              onPress={() => setMode("task")}
-            >
-              <Text
-                style={[
-                  styles.segmentText,
-                  mode === "task" && styles.segmentTextActive,
-                ]}
-              >
-                タスク名
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.segmentButton, mode === "token" && styles.segmentActive]}
-              onPress={() => setMode("token")}
-            >
-              <Text
-                style={[
-                  styles.segmentText,
-                  mode === "token" && styles.segmentTextActive,
-                ]}
-              >
-                Token
-              </Text>
-            </Pressable>
-          </View>
           <TextInput
             style={styles.input}
-            placeholder={`${modeLabel}で検索`}
+            placeholder="単語で検索"
             value={query}
             onChangeText={setQuery}
           />
-          {loading ? (
+          {mode === "detail" && selectedMemo ? (
+            <View style={styles.detailBox}>
+              <View style={styles.detailActionRow}>
+                <Pressable
+                  style={styles.backButtonInline}
+                  onPress={() => setMode("list")}
+                >
+                  <Text style={styles.backTextInline}>一覧へ戻る</Text>
+                </Pressable>
+                {isEditing ? (
+                  <View style={styles.editActions}>
+                    <Pressable
+                      style={styles.editButton}
+                      onPress={handleCancelEdit}
+                    >
+                      <Text style={styles.editButtonText}>キャンセル</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.editButton}
+                      onPress={handleSaveEdit}
+                      disabled={saving}
+                    >
+                      <Text style={styles.editButtonText}>
+                        {saving ? "保存中" : "保存"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    style={styles.editButton}
+                    onPress={handleEdit}
+                  >
+                    <Text style={styles.editButtonText}>編集</Text>
+                  </Pressable>
+                )}
+              </View>
+              <Text style={styles.detailTitle}>{selectedMemo.taskTitle}</Text>
+              <Text style={styles.detailMeta}>{selectedMemo.date}</Text>
+              <ScrollView style={styles.detailBody}>
+                {isEditing ? (
+                  <TextInput
+                    style={styles.detailEditor}
+                    value={editableText}
+                    onChangeText={setEditableText}
+                    multiline
+                    textAlignVertical="top"
+                  />
+                ) : (
+                  <LinkText
+                    body={editableText}
+                    style={styles.detailText}
+                    onPressLink={handlePressLink}
+                  />
+                )}
+              </ScrollView>
+            </View>
+          ) : loading ? (
             <Text style={styles.helperText}>検索中...</Text>
           ) : results.length === 0 ? (
             <Text style={styles.helperText}>該当メモがありません</Text>
@@ -152,21 +275,31 @@ const MemoSearchModal = ({ visible, onClose, onSelectTaskId }: Props) => {
             <ScrollView contentContainerStyle={styles.listBody}>
               {results.map((item) => (
                 <Pressable
-                  key={item.memoId}
-                  style={styles.item}
-                  onPress={() => onSelectTaskId?.(item.taskId)}
+                  key={item.key}
+                  style={[
+                    styles.item,
+                    item.taskId
+                      ? styles.itemBorderTask
+                      : item.memoText
+                        ? styles.itemBorderMemo
+                        : null,
+                  ]}
+                  onPress={() => {
+                    setSelectedMemo(item);
+                    setMode("detail");
+                  }}
                 >
-                <View style={styles.itemHeader}>
-                  <Text style={styles.itemTitle}>{item.taskTitle}</Text>
-                  <Text style={styles.itemDate}>
-                    {formatDateTime(item.updatedAt)}
+                  <Text style={styles.itemSnippet}>
+                    {buildSnippet(item.memoText)}
                   </Text>
-                </View>
-                <Text style={styles.itemPreview}>{item.preview}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        )}
+                  <Text style={styles.itemMetaText}>
+                    {item.date}
+                    {item.taskTitle ? ` · ${item.taskTitle}` : ""}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
         </View>
       </SafeAreaView>
     </Modal>
@@ -221,30 +354,6 @@ const styles = StyleSheet.create({
     color: "#2563eb",
     fontSize: 12,
   },
-  segmentRow: {
-    flexDirection: "row",
-    backgroundColor: "#f3f4f6",
-    borderRadius: 8,
-    padding: 4,
-    marginBottom: 12,
-  },
-  segmentButton: {
-    flex: 1,
-    paddingVertical: 6,
-    borderRadius: 6,
-    alignItems: "center",
-  },
-  segmentActive: {
-    backgroundColor: "#111827",
-  },
-  segmentText: {
-    fontSize: 12,
-    color: "#6b7280",
-  },
-  segmentTextActive: {
-    color: "#ffffff",
-    fontWeight: "600",
-  },
   input: {
     borderWidth: 1,
     borderColor: "#e5e7eb",
@@ -267,25 +376,80 @@ const styles = StyleSheet.create({
     backgroundColor: "#f9fafb",
     marginBottom: 12,
   },
-  itemHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  itemBorderTask: {
+    borderColor: "#3B82F6",
+  },
+  itemBorderMemo: {
+    borderColor: "#22C55E",
+  },
+  itemSnippet: {
+    fontSize: 12,
+    color: "#111827",
     marginBottom: 6,
   },
-  itemTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#111827",
-    flexShrink: 1,
-    marginRight: 8,
-  },
-  itemDate: {
+  itemMetaText: {
     fontSize: 11,
     color: "#6b7280",
   },
-  itemPreview: {
+  detailBox: {
+    flex: 1,
+  },
+  detailActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  editActions: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  editButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginLeft: 6,
+  },
+  editButtonText: {
     fontSize: 12,
-    color: "#374151",
+    color: "#2563eb",
+  },
+  backButtonInline: {
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginBottom: 8,
+  },
+  backTextInline: {
+    fontSize: 12,
+    color: "#2563eb",
+  },
+  detailTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  detailMeta: {
+    fontSize: 11,
+    color: "#6b7280",
+    marginBottom: 10,
+  },
+  detailBody: {
+    flex: 1,
+  },
+  detailText: {
+    fontSize: 12,
+    color: "#111827",
+    lineHeight: 18,
+  },
+  detailEditor: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 12,
+    color: "#111827",
+    lineHeight: 18,
+    minHeight: 120,
   },
 });
 

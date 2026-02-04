@@ -74,6 +74,14 @@ export const getMemoByTaskId = async (
   return toMemoRecord(row);
 };
 
+export const listAllMemos = async (): Promise<MemoRecord[]> => {
+  await ensureDbReady();
+  const result = await executeSql(
+    "SELECT id, task_id, body, created_at, updated_at FROM memos ORDER BY updated_at DESC",
+  );
+  return (result.rows._array as MemoRow[]).map((row) => toMemoRecord(row));
+};
+
 export const upsertMemoForTask = async (
   taskId: string,
   body: string,

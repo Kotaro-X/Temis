@@ -1,22 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getMemoByTaskId, upsertMemoForTask } from "../db/memoRepo";
+import HighlightEditor from "../components/HighlightEditor";
 import TokenChips from "../components/TokenChips";
-import TokenReferenceOverlay from "../components/TokenReferenceOverlay";
 import { extractTokens } from "../utils/wikiLink";
 
 type Props = {
   taskId: string;
-  onSelectTaskId?: (taskId: string) => void;
+  onSearchToken?: (token: string) => void;
 };
 
-const TaskDetailScreen = ({ taskId, onSelectTaskId }: Props) => {
+const TaskDetailScreen = ({ taskId, onSearchToken }: Props) => {
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeToken, setActiveToken] = useState<string | null>(null);
-  const [overlayOpen, setOverlayOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -57,8 +55,7 @@ const TaskDetailScreen = ({ taskId, onSelectTaskId }: Props) => {
   };
 
   const handlePressToken = (token: string) => {
-    setActiveToken(token);
-    setOverlayOpen(true);
+    onSearchToken?.(token);
   };
 
   return (
@@ -73,12 +70,12 @@ const TaskDetailScreen = ({ taskId, onSelectTaskId }: Props) => {
           <Text style={styles.saveButtonText}>{saving ? "保存中" : "保存"}</Text>
         </Pressable>
       </View>
-      <TextInput
-        style={styles.memoInput}
-        placeholder="メモを入力"
-        multiline
+      <HighlightEditor
         value={body}
         onChangeText={setBody}
+        placeholder="メモを入力"
+        textStyle={styles.memoInput}
+        linkStyle={styles.memoLink}
       />
       {loading ? (
         <Text style={styles.helperText}>読み込み中...</Text>
@@ -88,12 +85,6 @@ const TaskDetailScreen = ({ taskId, onSelectTaskId }: Props) => {
           <TokenChips tokens={tokens} onPressToken={handlePressToken} />
         </View>
       )}
-      <TokenReferenceOverlay
-        visible={overlayOpen}
-        token={activeToken}
-        onClose={() => setOverlayOpen(false)}
-        onSelectTaskId={onSelectTaskId}
-      />
     </View>
   );
 };
@@ -137,6 +128,13 @@ const styles = StyleSheet.create({
     padding: 10,
     minHeight: 120,
     textAlignVertical: "top",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  memoLink: {
+    backgroundColor: "#fef3c7",
+    color: "#1f2937",
+    fontWeight: "600",
   },
   helperText: {
     marginTop: 8,

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Dimensions,
@@ -11,9 +11,12 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as ScreenOrientation from "expo-screen-orientation";
+import Svg, { Circle, Line, Polyline } from "react-native-svg";
 import {
   DEFAULT_TAGS,
   DEFAULT_TIMEBOX_SCHEDULE,
@@ -41,6 +44,7 @@ import {
   saveTimeBoxSchedule,
   saveTodayState,
 } from "./storage";
+import HighlightEditor from "./src/components/HighlightEditor";
 import MemoSearchModal from "./src/components/MemoSearchModal";
 import { setTaskIndex } from "./src/db/memoRepo";
 import {
@@ -53,6 +57,7 @@ import {
 } from "./src/db/noteRepo";
 import { ensureDbReady } from "./src/db/sqlite";
 import TaskDetailScreen from "./src/screens/TaskDetailScreen";
+import MemosScreen from "./src/screens/MemosScreen";
 
 const FOOTER_HEIGHT = Math.max(
   56,
@@ -60,6 +65,9 @@ const FOOTER_HEIGHT = Math.max(
 );
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
+const LOG_ANALYSIS_POINT_GAP = 12;
+const LOG_ANALYSIS_MONTH_SLOTS = 31;
+const LOG_ANALYSIS_YEAR_SLOTS = 366;
 
 const toDateString = (date: Date) =>
   `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
@@ -71,7 +79,76 @@ const round1 = (num: number) => Math.round(num * 10) / 10;
 const formatMinutes = (num: number) => round1(num).toFixed(1);
 
 const diffLabel = (diff: number) =>
-  diff > 0 ? `+${formatMinutes(diff)}` : formatMinutes(diff);
+  diff >= 0 ? `+${formatMinutes(diff)}` : formatMinutes(diff);
+
+const formatFullDate = (date: Date) =>
+  `${date.getFullYear()}/${pad2(date.getMonth() + 1)}/${pad2(date.getDate())}`;
+
+const formatMonth = (date: Date) =>
+  `${date.getFullYear()}/${pad2(date.getMonth() + 1)}`;
+
+const formatMonthLabel = (value: string) => {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return value;
+  }
+  return match[2];
+};
+
+const formatShortDate = (value: string) => {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return value;
+  }
+  return `${match[2]}/${match[3]}`;
+};
+
+const buildDateRange = (start: Date, end: Date) => {
+  const results: string[] = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const endDate = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  while (cursor <= endDate) {
+    results.push(toDateString(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return results;
+};
+
+const getDaysInMonth = (year: number, month: number) =>
+  new Date(year, month + 1, 0).getDate();
+
+const buildDailyTotalsForDates = (
+  logs: LogEntry[],
+  dateList: string[],
+  tagFilter: string,
+) => {
+  const totals = new Map<string, number>();
+  for (const date of dateList) {
+    totals.set(date, 0);
+  }
+  for (const log of logs) {
+    if (!totals.has(log.date)) {
+      continue;
+    }
+    if (tagFilter === ALL_TAG_FILTER) {
+      totals.set(log.date, (totals.get(log.date) ?? 0) + log.actualMinutes);
+      continue;
+    }
+    if (tagFilter === NO_TAG_LABEL) {
+      if (log.tags.length === 0) {
+        totals.set(log.date, (totals.get(log.date) ?? 0) + log.actualMinutes);
+      }
+      continue;
+    }
+    if (log.tags.includes(tagFilter)) {
+      totals.set(log.date, (totals.get(log.date) ?? 0) + log.actualMinutes);
+    }
+  }
+  return dateList.map((date) => ({
+    date,
+    minutes: round1(totals.get(date) ?? 0),
+  }));
+};
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
@@ -278,9 +355,149 @@ const findTaskLocation = (state: TodayState, taskId: string) => {
   return null;
 };
 
-type Screen = "today" | "logs" | "archive" | "tags" | "timeSettings" | "notes";
+type Screen =
+  | "today"
+  | "logs"
+  | "archive"
+  | "tags"
+  | "timeSettings"
+  | "notes"
+  | "memos";
+
+const LogMetricValue = ({ value }: { value: number }) => {
+  return (
+    <View style={styles.logLandscapeMetricCell}>
+      <Text style={styles.logLandscapeValue}>{formatMinutes(value)}m</Text>
+    </View>
+  );
+};
+
+const LogDiffMetric = ({ diff }: { diff: number }) => {
+  const diffColor =
+    diff > 0 ? "#dc2626" : diff < 0 ? "#2563eb" : "#6b7280";
+  return (
+    <View style={styles.logLandscapeDiffCell}>
+      <Text style={[styles.logLandscapeValue, { color: diffColor }]}>
+        {`${diffLabel(diff)}m`}
+      </Text>
+    </View>
+  );
+};
+
+const renderMetricCell = ({
+  kind,
+  value,
+  diff,
+}: {
+  kind: "estimate" | "actual" | "diff";
+  value?: number;
+  diff?: number;
+}) => {
+  if (kind === "diff") {
+    return <LogDiffMetric diff={diff ?? 0} />;
+  }
+  return <LogMetricValue value={value ?? 0} />;
+};
+
+const LandscapeLogView = ({ logs }: { logs: LogEntry[] }) => {
+  return (
+    <View style={styles.logLandscapeTable}>
+      <View style={[styles.logLandscapeRow, styles.logLandscapeHeaderRow]}>
+        <View style={styles.logLandscapeMetaCell}>
+          <Text style={styles.logLandscapeHeaderCell}>タスク</Text>
+        </View>
+        <View style={styles.logLandscapeMetricCell}>
+          <Text
+            style={[
+              styles.logLandscapeHeaderCell,
+              styles.logLandscapeHeaderMetric,
+            ]}
+          >
+            予
+          </Text>
+        </View>
+        <View style={styles.logLandscapeMetricCell}>
+          <Text
+            style={[
+              styles.logLandscapeHeaderCell,
+              styles.logLandscapeHeaderMetric,
+            ]}
+          >
+            実
+          </Text>
+        </View>
+        <View style={styles.logLandscapeDiffCell}>
+          <Text
+            style={[
+              styles.logLandscapeHeaderCell,
+              styles.logLandscapeHeaderMetric,
+            ]}
+          >
+            差
+          </Text>
+        </View>
+      </View>
+      {logs.map((log) => {
+        const diff = round1(log.actualMinutes - log.estimateMinutes);
+        const tags =
+          log.tags.length > 0 ? log.tags : ([NO_TAG_LABEL] as Tag[]);
+        const visibleTags = tags.slice(0, 3);
+        const overflowCount = tags.length - visibleTags.length;
+        return (
+          <View key={log.id} style={styles.logLandscapeRow}>
+            <View style={styles.logLandscapeMetaCell}>
+              <View style={styles.logLandscapeTitleRow}>
+                <Text
+                  style={styles.logLandscapeTitle}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {log.taskName || "未設定"}
+                </Text>
+                <View style={styles.logLandscapeTags}>
+                  {visibleTags.map((tag) =>
+                    tag === NO_TAG_LABEL ? (
+                      <View key={tag} style={styles.logLandscapeTagChipMuted}>
+                        <Text style={styles.logLandscapeTagTextMuted}>
+                          {tag}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View key={tag} style={styles.logLandscapeTagChip}>
+                        <Text style={styles.logLandscapeTagText}>{tag}</Text>
+                      </View>
+                    ),
+                  )}
+                  {overflowCount > 0 && (
+                    <View style={styles.logLandscapeTagChipMuted}>
+                      <Text style={styles.logLandscapeTagTextMuted}>
+                        {`+${overflowCount}`}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+              <Text style={styles.logLandscapeMeta}>{log.date}</Text>
+            </View>
+            {renderMetricCell({
+              kind: "estimate",
+              value: log.estimateMinutes,
+            })}
+            {renderMetricCell({
+              kind: "actual",
+              value: log.actualMinutes,
+            })}
+            {renderMetricCell({ kind: "diff", diff })}
+          </View>
+        );
+      })}
+    </View>
+  );
+};
 
 export default function App() {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const [screen, setScreen] = useState<Screen>("today");
   const [selectedDate, setSelectedDate] = useState<string>(
     toDateString(new Date()),
@@ -297,7 +514,17 @@ export default function App() {
   const [logView, setLogView] = useState<"table" | "board">("table");
   const [logQuery, setLogQuery] = useState("");
   const [logTagFilter, setLogTagFilter] = useState(ALL_TAG_FILTER);
+  const [logAnalysisPeriod, setLogAnalysisPeriod] = useState<7 | 30 | 365>(7);
+  const [logAnalysisTag, setLogAnalysisTag] = useState(ALL_TAG_FILTER);
+  const [logAnalysisCollapsed, setLogAnalysisCollapsed] = useState(false);
+  const [logAnalysisOffsets, setLogAnalysisOffsets] = useState({
+    7: 0,
+    30: 0,
+    365: 0,
+  });
+  const [logAnalysisWidth, setLogAnalysisWidth] = useState(0);
   const [memoSearchOpen, setMemoSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [tagDropdownTaskId, setTagDropdownTaskId] = useState<string | null>(
     null,
   );
@@ -305,6 +532,14 @@ export default function App() {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [dateDraft, setDateDraft] = useState(selectedDate);
   const [dateError, setDateError] = useState<string | null>(null);
+  const [moveModalOpen, setMoveModalOpen] = useState(false);
+  const [moveTaskId, setMoveTaskId] = useState<string | null>(null);
+  const [moveFromSlotKey, setMoveFromSlotKey] = useState<SlotKey | null>(null);
+  const [moveDateDraft, setMoveDateDraft] = useState(selectedDate);
+  const [moveDateError, setMoveDateError] = useState<string | null>(null);
+  const [moveTargetSlotKey, setMoveTargetSlotKey] = useState<SlotKey>(
+    SLOT_KEYS[0],
+  );
   const [storageReady, setStorageReady] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [notesTab, setNotesTab] = useState<"daily" | "free">("daily");
@@ -351,6 +586,12 @@ export default function App() {
         {} as Record<SlotKey, boolean>,
       ),
   );
+  const logScrollRef = useRef<ScrollView | null>(null);
+  const logScrollOffset = useRef({ x: 0, y: 0 });
+  const logTableScrollRef = useRef<ScrollView | null>(null);
+  const logTableScrollOffset = useRef({ x: 0, y: 0 });
+  const logBoardScrollRef = useRef<ScrollView | null>(null);
+  const logBoardScrollOffset = useRef({ x: 0, y: 0 });
   const [activeExpandedBySlot, setActiveExpandedBySlot] = useState<
     Record<SlotKey, boolean>
   >(
@@ -531,6 +772,23 @@ export default function App() {
   useEffect(() => {
     setTagDropdownTaskId(null);
   }, [activeTaskId, selectionMode, screen]);
+
+  useEffect(() => {
+    const applyOrientation = async () => {
+      try {
+        if (screen === "logs") {
+          await ScreenOrientation.unlockAsync();
+        } else {
+          await ScreenOrientation.lockAsync(
+            ScreenOrientation.OrientationLock.PORTRAIT_UP,
+          );
+        }
+      } catch (_error) {
+        // no-op: keep UI usable even if orientation lock fails
+      }
+    };
+    applyOrientation();
+  }, [screen]);
 
   const activeInfo = useMemo(() => {
     if (!todayState || !activeTaskId) {
@@ -1025,6 +1283,91 @@ export default function App() {
     setDateError(null);
   };
 
+  const openMoveModal = (slotKey: SlotKey, taskId: string) => {
+    setMoveTaskId(taskId);
+    setMoveFromSlotKey(slotKey);
+    setMoveDateDraft(selectedDate);
+    setMoveTargetSlotKey(slotKey);
+    setMoveDateError(null);
+    setMoveModalOpen(true);
+  };
+
+  const closeMoveModal = () => {
+    setMoveModalOpen(false);
+    setMoveTaskId(null);
+    setMoveFromSlotKey(null);
+  };
+
+  const shiftMoveDateDraft = (delta: number) => {
+    const base = parseDateString(moveDateDraft) ?? parseDateString(selectedDate);
+    const date = base ?? new Date();
+    const next = new Date(date);
+    next.setDate(next.getDate() + delta);
+    setMoveDateDraft(toDateString(next));
+    setMoveDateError(null);
+  };
+
+  const applyMoveTask = async () => {
+    if (!todayState || !moveTaskId || !moveFromSlotKey) {
+      return;
+    }
+    const parsed = parseDateString(moveDateDraft);
+    if (!parsed) {
+      setMoveDateError("YYYY-MM-DDで入力してください");
+      return;
+    }
+    const targetDate = toDateString(parsed);
+    const targetSlot = moveTargetSlotKey;
+    setMoveDateError(null);
+    if (targetDate === selectedDate && targetSlot === moveFromSlotKey) {
+      setMoveModalOpen(false);
+      return;
+    }
+    const sourceSlot = todayState.slots[moveFromSlotKey];
+    const movingTask = sourceSlot.tasks.find((task) => task.id === moveTaskId);
+    if (!movingTask) {
+      return;
+    }
+    const nextSourceSlot: SlotState = {
+      ...sourceSlot,
+      tasks: sourceSlot.tasks.filter((task) => task.id !== moveTaskId),
+    };
+    if (targetDate === selectedDate) {
+      const targetSlotState = todayState.slots[targetSlot];
+      const nextTargetSlot: SlotState = {
+        ...targetSlotState,
+        tasks: [...targetSlotState.tasks, movingTask],
+      };
+      updateTodayState({
+        ...todayState,
+        slots: {
+          ...todayState.slots,
+          [moveFromSlotKey]: nextSourceSlot,
+          [targetSlot]: nextTargetSlot,
+        },
+      });
+      setMoveModalOpen(false);
+      return;
+    }
+    const defaultTag = tagLibrary[0];
+    const targetState = await loadTodayState(targetDate, defaultTag);
+    const targetSlotState = targetState.slots[targetSlot];
+    const nextTargetSlot: SlotState = {
+      ...targetSlotState,
+      tasks: [...targetSlotState.tasks, movingTask],
+    };
+    const nextTargetState: TodayState = {
+      ...targetState,
+      slots: { ...targetState.slots, [targetSlot]: nextTargetSlot },
+    };
+    updateTodayState({
+      ...todayState,
+      slots: { ...todayState.slots, [moveFromSlotKey]: nextSourceSlot },
+    });
+    await saveTodayState(nextTargetState);
+    setMoveModalOpen(false);
+  };
+
   const applyDateDraft = () => {
     const parsed = parseDateString(dateDraft);
     if (!parsed) {
@@ -1088,6 +1431,12 @@ export default function App() {
     setScreen("today");
     setActiveTaskId(taskId);
   };
+
+  const openSearch = (keyword: string) => {
+    setSearchQuery(keyword);
+    setMemoSearchOpen(true);
+  };
+
 
   const refreshFreeNotes = async () => {
     setFreeNoteLoading(true);
@@ -1337,6 +1686,61 @@ export default function App() {
     [tagLibrary],
   );
 
+  const logAnalysisTagOptions = useMemo(() => {
+    const options = [
+      ALL_TAG_FILTER,
+      ...(tagLibrary.length > 0 ? tagLibrary : [...DEFAULT_TAGS]),
+    ];
+    const hasNoTag = logs.some((log) => log.tags.length === 0);
+    if (hasNoTag && !options.includes(NO_TAG_LABEL)) {
+      options.push(NO_TAG_LABEL);
+    }
+    return options;
+  }, [tagLibrary, logs]);
+
+  const logAnalysisChartHeight = Math.max(140, Math.round(height * 0.22));
+
+  const logAnalysisRange = useMemo(() => {
+    const today = new Date();
+    if (logAnalysisPeriod === 7) {
+      const offset = logAnalysisOffsets[7];
+      const end = new Date(today);
+      end.setDate(end.getDate() - offset * 7);
+      const start = new Date(end);
+      start.setDate(end.getDate() - 6);
+      return {
+        dateList: buildDateRange(start, end),
+        label: `${formatFullDate(start)} – ${formatShortDate(toDateString(end))}`,
+        totalSlots: 7,
+      };
+    }
+    if (logAnalysisPeriod === 30) {
+      const offset = logAnalysisOffsets[30];
+      const anchor = new Date(today.getFullYear(), today.getMonth() - offset, 1);
+      const daysInMonth = getDaysInMonth(
+        anchor.getFullYear(),
+        anchor.getMonth(),
+      );
+      const end = offset === 0
+        ? today
+        : new Date(anchor.getFullYear(), anchor.getMonth(), daysInMonth);
+      return {
+        dateList: buildDateRange(anchor, end),
+        label: formatMonth(anchor),
+        totalSlots: LOG_ANALYSIS_MONTH_SLOTS,
+      };
+    }
+    const offset = logAnalysisOffsets[365];
+    const year = today.getFullYear() - offset;
+    const start = new Date(year, 0, 1);
+    const end = offset === 0 ? today : new Date(year, 11, 31);
+    return {
+      dateList: buildDateRange(start, end),
+      label: `${year}/01 – ${year}/12`,
+      totalSlots: LOG_ANALYSIS_YEAR_SLOTS,
+    };
+  }, [logAnalysisPeriod, logAnalysisOffsets]);
+
   const completedTimeByTaskId = useMemo(() => {
     const map = new Map<string, string>();
     if (!todayState) {
@@ -1378,6 +1782,141 @@ export default function App() {
     }
     return tags.length > 0 ? tags : [NO_TAG_LABEL];
   }, [tagLibrary, filteredLogs]);
+
+  const logAnalysisTotals = useMemo(
+    () =>
+      buildDailyTotalsForDates(
+        logs,
+        logAnalysisRange.dateList,
+        logAnalysisTag,
+      ),
+    [logs, logAnalysisRange.dateList, logAnalysisTag],
+  );
+
+  const logAnalysisScaleMax = useMemo(() => {
+    let max = 0;
+    for (const item of logAnalysisTotals) {
+      max = Math.max(max, item.minutes);
+    }
+    return max > 0 ? max : 1;
+  }, [logAnalysisTotals]);
+
+  const logAnalysisDisplayMax = useMemo(() => {
+    let max = 0;
+    for (const item of logAnalysisTotals) {
+      max = Math.max(max, item.minutes);
+    }
+    return max;
+  }, [logAnalysisTotals]);
+
+  const logAnalysisLabelEvery = useMemo(() => {
+    if (logAnalysisPeriod === 7) {
+      return 1;
+    }
+    if (logAnalysisPeriod === 30) {
+      return 5;
+    }
+    return 999;
+  }, [logAnalysisPeriod]);
+
+  const logAnalysisChartBaseWidth = useMemo(() => {
+    if (logAnalysisRange.totalSlots <= 1) {
+      return 0;
+    }
+    return (logAnalysisRange.totalSlots - 1) * LOG_ANALYSIS_POINT_GAP;
+  }, [logAnalysisRange.totalSlots]);
+
+  const logAnalysisChartWidth = useMemo(
+    () => Math.max(logAnalysisWidth, logAnalysisChartBaseWidth),
+    [logAnalysisWidth, logAnalysisChartBaseWidth],
+  );
+
+  const logAnalysisStep = useMemo(() => {
+    if (logAnalysisRange.totalSlots <= 1) {
+      return 0;
+    }
+    return logAnalysisChartWidth / (logAnalysisRange.totalSlots - 1);
+  }, [logAnalysisChartWidth, logAnalysisRange.totalSlots]);
+
+  const logAnalysisOffsetX = useMemo(() => {
+    if (logAnalysisTotals.length <= 1) {
+      return Math.max(0, logAnalysisChartWidth / 2);
+    }
+    const plotWidth = (logAnalysisTotals.length - 1) * logAnalysisStep;
+    return Math.max(0, (logAnalysisChartWidth - plotWidth) / 2);
+  }, [logAnalysisTotals.length, logAnalysisStep, logAnalysisChartWidth]);
+
+  const logAnalysisPoints = useMemo(() => {
+    return logAnalysisTotals.map((item, index) => {
+      const x = logAnalysisOffsetX + index * logAnalysisStep;
+      const y =
+        logAnalysisChartHeight -
+        (item.minutes / logAnalysisScaleMax) * logAnalysisChartHeight;
+      return { x, y, date: item.date, minutes: item.minutes };
+    });
+  }, [
+    logAnalysisTotals,
+    logAnalysisOffsetX,
+    logAnalysisStep,
+    logAnalysisChartHeight,
+    logAnalysisScaleMax,
+  ]);
+
+  const logAnalysisAxisLabels = useMemo(() => {
+    const labels: Array<{ label: string; x: number }> = [];
+    logAnalysisTotals.forEach((item, index) => {
+      const isYearLabel = logAnalysisPeriod === 365 && item.date.endsWith("-01");
+      const isPeriodicLabel =
+        logAnalysisPeriod !== 365 && index % logAnalysisLabelEvery === 0;
+      const isLastLabel = index === logAnalysisTotals.length - 1;
+      if (!isYearLabel && !isPeriodicLabel && !isLastLabel) {
+        return;
+      }
+      const label =
+        logAnalysisPeriod === 365
+          ? formatMonthLabel(item.date)
+          : formatShortDate(item.date);
+      labels.push({ label, x: logAnalysisOffsetX + index * logAnalysisStep });
+    });
+    return labels;
+  }, [
+    logAnalysisTotals,
+    logAnalysisPeriod,
+    logAnalysisLabelEvery,
+    logAnalysisOffsetX,
+    logAnalysisStep,
+  ]);
+
+  const logAnalysisCanNext = logAnalysisOffsets[logAnalysisPeriod] > 0;
+
+  useEffect(() => {
+    if (screen !== "logs") {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      logScrollRef.current?.scrollTo({
+        x: logScrollOffset.current.x,
+        y: logScrollOffset.current.y,
+        animated: false,
+      });
+      if (!isLandscape) {
+        if (logView === "table") {
+          logTableScrollRef.current?.scrollTo({
+            x: logTableScrollOffset.current.x,
+            y: 0,
+            animated: false,
+          });
+        } else {
+          logBoardScrollRef.current?.scrollTo({
+            x: logBoardScrollOffset.current.x,
+            y: 0,
+            animated: false,
+          });
+        }
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [screen, isLandscape, logView]);
 
   if (!todayState) {
     return <SafeAreaView style={styles.container} />;
@@ -1573,6 +2112,14 @@ export default function App() {
                                 <Text style={styles.deleteButtonText}>🗑</Text>
                               </Pressable>
                             )}
+                            {task.status !== "DONE" && (
+                              <Pressable
+                                style={styles.deleteButton}
+                                onPress={() => openMoveModal(key, task.id)}
+                              >
+                                <Text style={styles.deleteButtonText}>移動</Text>
+                              </Pressable>
+                            )}
                             {!selectionMode && (
                               <Pressable
                                 style={[styles.deleteButton, styles.archiveButton]}
@@ -1592,12 +2139,6 @@ export default function App() {
                           <View style={styles.taskNavRow}>
                             <Text style={styles.taskTitle}>{`タスク${index + 1}`}</Text>
                             <View style={styles.navButtons}>
-                              <Pressable
-                                style={[styles.navButton, styles.searchButton]}
-                                onPress={() => setMemoSearchOpen(true)}
-                              >
-                                <Text style={styles.searchButtonText}>検索</Text>
-                              </Pressable>
                               <Pressable
                                 style={[
                                   styles.navButton,
@@ -1693,10 +2234,7 @@ export default function App() {
                           </View>
                           <TaskDetailScreen
                             taskId={task.id}
-                            onSelectTaskId={(taskId) => {
-                              setScreen("today");
-                              setActiveTaskId(taskId);
-                            }}
+                            onSearchToken={openSearch}
                           />
                         </View>
                       )}
@@ -1770,6 +2308,7 @@ export default function App() {
         </ScrollView>
       ) : screen === "logs" ? (
         <ScrollView
+          ref={logScrollRef}
           contentContainerStyle={styles.content}
           refreshControl={
             <RefreshControl
@@ -1777,6 +2316,10 @@ export default function App() {
               onRefresh={handleRefresh}
             />
           }
+          onScroll={(event) => {
+            logScrollOffset.current = event.nativeEvent.contentOffset;
+          }}
+          scrollEventThrottle={16}
         >
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -1788,41 +2331,232 @@ export default function App() {
             <Text style={styles.headerTitle}>Logs</Text>
             <View style={styles.headerRight} />
           </View>
+          <View style={styles.logAnalysisPanel}>
+            <Pressable
+              style={styles.logAnalysisHeader}
+              onPress={() => setLogAnalysisCollapsed((prev) => !prev)}
+            >
+              <Text style={styles.logAnalysisTitle}>分析パネル</Text>
+              <Text style={styles.logAnalysisToggle}>
+                {logAnalysisCollapsed ? "▶︎" : "▼"}
+              </Text>
+            </Pressable>
+            {!logAnalysisCollapsed && (
+              <>
+                <View style={styles.logAnalysisPeriodRow}>
+                  {[7, 30, 365].map((period) => (
+                    <Pressable
+                      key={period}
+                      style={[
+                        styles.logAnalysisChip,
+                        logAnalysisPeriod === period && styles.logAnalysisChipActive,
+                      ]}
+                      onPress={() =>
+                        setLogAnalysisPeriod(period as 7 | 30 | 365)
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.logAnalysisChipText,
+                          logAnalysisPeriod === period &&
+                            styles.logAnalysisChipTextActive,
+                        ]}
+                      >
+                        {period === 7 ? "7日" : period === 30 ? "1ヶ月" : "1年"}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.logAnalysisRangeRow}>
+                  <Pressable
+                    style={styles.logAnalysisNavButton}
+                    onPress={() =>
+                      setLogAnalysisOffsets((prev) => ({
+                        ...prev,
+                        [logAnalysisPeriod]: prev[logAnalysisPeriod] + 1,
+                      }))
+                    }
+                  >
+                    <Text style={styles.logAnalysisNavText}>◀︎</Text>
+                  </Pressable>
+                  <Text style={styles.logAnalysisRangeText}>
+                    {logAnalysisRange.label}
+                  </Text>
+                  <Pressable
+                    style={[
+                      styles.logAnalysisNavButton,
+                      !logAnalysisCanNext && styles.logAnalysisNavButtonDisabled,
+                    ]}
+                    onPress={() =>
+                      logAnalysisCanNext &&
+                      setLogAnalysisOffsets((prev) => ({
+                        ...prev,
+                        [logAnalysisPeriod]: Math.max(
+                          0,
+                          prev[logAnalysisPeriod] - 1,
+                        ),
+                      }))
+                    }
+                    disabled={!logAnalysisCanNext}
+                  >
+                    <Text
+                      style={[
+                        styles.logAnalysisNavText,
+                        !logAnalysisCanNext && styles.logAnalysisNavTextDisabled,
+                      ]}
+                    >
+                      ▶︎
+                    </Text>
+                  </Pressable>
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.logAnalysisTagRow}
+                >
+                  {logAnalysisTagOptions.map((tag) => (
+                    <Pressable
+                      key={tag}
+                      style={[
+                        styles.logAnalysisChip,
+                        logAnalysisTag === tag && styles.logAnalysisChipActive,
+                      ]}
+                      onPress={() => setLogAnalysisTag(tag)}
+                    >
+                      <Text
+                        style={[
+                          styles.logAnalysisChipText,
+                          logAnalysisTag === tag &&
+                            styles.logAnalysisChipTextActive,
+                        ]}
+                      >
+                        {tag}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+                <View
+                  style={styles.logAnalysisChartContainer}
+                  onLayout={(event) => {
+                    const nextWidth = event.nativeEvent.layout.width;
+                    if (nextWidth !== logAnalysisWidth) {
+                      setLogAnalysisWidth(nextWidth);
+                    }
+                  }}
+                >
+                  <ScrollView
+                    horizontal={logAnalysisChartWidth > logAnalysisWidth}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.logAnalysisChartScroll}
+                  >
+                    <View style={styles.logAnalysisChart}>
+                      <Svg
+                        width={logAnalysisChartWidth}
+                        height={logAnalysisChartHeight}
+                      >
+                        <Line
+                          x1={0}
+                          y1={logAnalysisChartHeight}
+                          x2={logAnalysisChartWidth}
+                          y2={logAnalysisChartHeight}
+                          stroke="#e5e7eb"
+                          strokeWidth={1}
+                        />
+                        {logAnalysisPoints.length > 1 && (
+                          <Polyline
+                            points={logAnalysisPoints
+                              .map((point) => `${point.x},${point.y}`)
+                              .join(" ")}
+                            fill="none"
+                            stroke="#111827"
+                            strokeWidth={2}
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                          />
+                        )}
+                        {logAnalysisPeriod !== 365 &&
+                          logAnalysisPoints.map((point) => (
+                            <Circle
+                              key={`marker-${point.date}`}
+                              cx={point.x}
+                              cy={point.y}
+                              r={logAnalysisPeriod === 7 ? 2.4 : 1.8}
+                              fill="#111827"
+                            />
+                          ))}
+                      </Svg>
+                      <View
+                        style={[
+                          styles.logAnalysisAxisRow,
+                          { width: logAnalysisChartWidth },
+                        ]}
+                      >
+                        {logAnalysisAxisLabels.map((item) => (
+                          <Text
+                            key={`label-${item.label}-${item.x}`}
+                            style={[
+                              styles.logAnalysisAxisLabel,
+                              {
+                                left: Math.max(
+                                  0,
+                                  Math.min(
+                                    logAnalysisChartWidth - 34,
+                                    Math.max(0, item.x - 17),
+                                  ),
+                                ),
+                              },
+                            ]}
+                          >
+                            {item.label}
+                          </Text>
+                        ))}
+                      </View>
+                    </View>
+                  </ScrollView>
+                </View>
+                <Text style={styles.logAnalysisHint}>
+                  {`最大 ${formatMinutes(logAnalysisDisplayMax)}m`}
+                </Text>
+              </>
+            )}
+          </View>
           <View style={styles.logControls}>
-            <View style={styles.viewToggleRow}>
-              <Pressable
-                style={[
-                  styles.viewToggleButton,
-                  logView === "table" && styles.viewToggleButtonActive,
-                ]}
-                onPress={() => setLogView("table")}
-              >
-                <Text
+            {!isLandscape && (
+              <View style={styles.viewToggleRow}>
+                <Pressable
                   style={[
-                    styles.viewToggleText,
-                    logView === "table" && styles.viewToggleTextActive,
+                    styles.viewToggleButton,
+                    logView === "table" && styles.viewToggleButtonActive,
                   ]}
+                  onPress={() => setLogView("table")}
                 >
-                  表
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.viewToggleButton,
-                  logView === "board" && styles.viewToggleButtonActive,
-                ]}
-                onPress={() => setLogView("board")}
-              >
-                <Text
+                  <Text
+                    style={[
+                      styles.viewToggleText,
+                      logView === "table" && styles.viewToggleTextActive,
+                    ]}
+                  >
+                    表
+                  </Text>
+                </Pressable>
+                <Pressable
                   style={[
-                    styles.viewToggleText,
-                    logView === "board" && styles.viewToggleTextActive,
+                    styles.viewToggleButton,
+                    logView === "board" && styles.viewToggleButtonActive,
                   ]}
+                  onPress={() => setLogView("board")}
                 >
-                  ボード
-                </Text>
-              </Pressable>
-            </View>
+                  <Text
+                    style={[
+                      styles.viewToggleText,
+                      logView === "board" && styles.viewToggleTextActive,
+                    ]}
+                  >
+                    ボード
+                  </Text>
+                </Pressable>
+              </View>
+            )}
             <TextInput
               style={styles.logSearchInput}
               placeholder="タスク名で検索"
@@ -1855,8 +2589,18 @@ export default function App() {
               ))}
             </ScrollView>
           </View>
-          {logView === "table" ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {isLandscape ? (
+            <LandscapeLogView logs={filteredLogs} />
+          ) : logView === "table" ? (
+            <ScrollView
+              ref={logTableScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              onScroll={(event) => {
+                logTableScrollOffset.current = event.nativeEvent.contentOffset;
+              }}
+              scrollEventThrottle={16}
+            >
               <View style={styles.table}>
                 <View style={[styles.tableRow, styles.tableHeaderRow]}>
                   <Text style={[styles.tableCell, styles.tableCellDate]}>
@@ -1914,7 +2658,15 @@ export default function App() {
               </View>
             </ScrollView>
           ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <ScrollView
+              ref={logBoardScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              onScroll={(event) => {
+                logBoardScrollOffset.current = event.nativeEvent.contentOffset;
+              }}
+              scrollEventThrottle={16}
+            >
               <View style={styles.boardRow}>
                 {boardTags.map((tag) => {
                   const columnLogs =
@@ -2066,6 +2818,11 @@ export default function App() {
             <Text style={styles.resetButtonText}>初期値に戻す</Text>
           </Pressable>
         </ScrollView>
+      ) : screen === "memos" ? (
+        <MemosScreen
+          onBack={() => setScreen("today")}
+          onOpenMenu={() => setMenuOpen(true)}
+        />
       ) : screen === "notes" ? (
         <ScrollView
           contentContainerStyle={styles.content}
@@ -2132,12 +2889,12 @@ export default function App() {
                 <Text style={styles.helperText}>読み込み中...</Text>
               ) : (
                 <>
-                  <TextInput
-                    style={styles.noteBodyInput}
-                    placeholder="日記を書く"
-                    multiline
+                  <HighlightEditor
                     value={dailyNoteBody}
                     onChangeText={setDailyNoteBody}
+                    placeholder="日記を書く"
+                    textStyle={styles.noteBodyInput}
+                    linkStyle={styles.noteLink}
                   />
                   <Pressable
                     style={[
@@ -2190,14 +2947,14 @@ export default function App() {
                     setFreeNoteDraft((prev) => ({ ...prev, title: text }))
                   }
                 />
-                <TextInput
-                  style={styles.noteBodyInput}
-                  placeholder="本文"
-                  multiline
+                <HighlightEditor
                   value={freeNoteDraft.body}
                   onChangeText={(text) =>
                     setFreeNoteDraft((prev) => ({ ...prev, body: text }))
                   }
+                  placeholder="本文"
+                  textStyle={styles.noteBodyInput}
+                  linkStyle={styles.noteLink}
                 />
                 <Pressable
                   style={[
@@ -2429,6 +3186,78 @@ export default function App() {
       </Modal>
       <Modal
         transparent
+        visible={moveModalOpen}
+        animationType="fade"
+        onRequestClose={closeMoveModal}
+      >
+        <View style={styles.dateOverlay}>
+          <Pressable style={styles.dateBackdrop} onPress={closeMoveModal} />
+          <View style={styles.datePanel}>
+            <Text style={styles.dateTitle}>タスクを移動</Text>
+            <View style={styles.dateShiftRow}>
+              <Pressable
+                style={styles.dateShiftButton}
+                onPress={() => shiftMoveDateDraft(-1)}
+              >
+                <Text style={styles.dateShiftText}>前日</Text>
+              </Pressable>
+              <Pressable
+                style={styles.dateShiftButton}
+                onPress={() => shiftMoveDateDraft(1)}
+              >
+                <Text style={styles.dateShiftText}>翌日</Text>
+              </Pressable>
+            </View>
+            <TextInput
+              style={styles.dateInput}
+              value={moveDateDraft}
+              onChangeText={setMoveDateDraft}
+              placeholder="YYYY-MM-DD"
+              autoCapitalize="none"
+            />
+            {moveDateError && <Text style={styles.errorText}>{moveDateError}</Text>}
+            <View style={styles.moveSlotRow}>
+              {SLOT_KEYS.map((slotKey) => {
+                const active = moveTargetSlotKey === slotKey;
+                return (
+                  <Pressable
+                    key={slotKey}
+                    style={[
+                      styles.moveSlotButton,
+                      active && styles.moveSlotButtonActive,
+                    ]}
+                    onPress={() => setMoveTargetSlotKey(slotKey)}
+                  >
+                    <Text
+                      style={[
+                        styles.moveSlotText,
+                        active && styles.moveSlotTextActive,
+                      ]}
+                    >
+                      {SLOT_LABELS[slotKey]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.dateActionRow}>
+              <Pressable style={styles.dateActionButton} onPress={closeMoveModal}>
+                <Text style={styles.dateActionText}>キャンセル</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.dateActionButton, styles.dateActionPrimary]}
+                onPress={applyMoveTask}
+              >
+                <Text style={[styles.dateActionText, styles.dateActionPrimaryText]}>
+                  移動
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        transparent
         visible={menuOpen}
         animationType="slide"
         onRequestClose={closeMenu}
@@ -2440,12 +3269,9 @@ export default function App() {
             <Text style={styles.sheetTitle}>メニュー</Text>
             <Pressable
               style={styles.sheetItem}
-              onPress={() => {
-                setMemoSearchOpen(true);
-                closeMenu();
-              }}
+              onPress={() => handleMenuNavigate("memos")}
             >
-              <Text style={styles.sheetItemText}>メモ検索</Text>
+              <Text style={styles.sheetItemText}>Memo&apos;s</Text>
             </Pressable>
             <Pressable
               style={styles.sheetItem}
@@ -2491,11 +3317,7 @@ export default function App() {
       <MemoSearchModal
         visible={memoSearchOpen}
         onClose={() => setMemoSearchOpen(false)}
-        onSelectTaskId={(taskId) => {
-          setScreen("today");
-          setActiveTaskId(taskId);
-          setMemoSearchOpen(false);
-        }}
+        initialQuery={searchQuery}
       />
     </SafeAreaView>
   );
@@ -2799,7 +3621,14 @@ const styles = StyleSheet.create({
     padding: 10,
     minHeight: 160,
     textAlignVertical: "top",
+    fontSize: 14,
+    lineHeight: 20,
     marginBottom: 12,
+  },
+  noteLink: {
+    backgroundColor: "#fef3c7",
+    color: "#1f2937",
+    fontWeight: "600",
   },
   noteSaveButton: {
     alignSelf: "flex-start",
@@ -3201,6 +4030,115 @@ const styles = StyleSheet.create({
   logControls: {
     marginBottom: 12,
   },
+  logAnalysisPanel: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: "#ffffff",
+    marginBottom: 12,
+  },
+  logAnalysisHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  logAnalysisTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  logAnalysisToggle: {
+    fontSize: 12,
+    color: "#6b7280",
+  },
+  logAnalysisPeriodRow: {
+    flexDirection: "row",
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  logAnalysisRangeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+  logAnalysisTagRow: {
+    alignItems: "center",
+    paddingBottom: 4,
+  },
+  logAnalysisRangeText: {
+    fontSize: 11,
+    color: "#111827",
+    fontWeight: "600",
+    marginHorizontal: 8,
+  },
+  logAnalysisNavButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+  },
+  logAnalysisNavButtonDisabled: {
+    borderColor: "#e5e7eb",
+  },
+  logAnalysisNavText: {
+    fontSize: 11,
+    color: "#111827",
+  },
+  logAnalysisNavTextDisabled: {
+    color: "#9ca3af",
+  },
+  logAnalysisChip: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginRight: 6,
+    marginBottom: 6,
+  },
+  logAnalysisChipActive: {
+    borderColor: "#111827",
+    backgroundColor: "#111827",
+  },
+  logAnalysisChipText: {
+    fontSize: 11,
+    color: "#111827",
+  },
+  logAnalysisChipTextActive: {
+    color: "#ffffff",
+  },
+  logAnalysisChartContainer: {
+    marginTop: 4,
+    width: "100%",
+  },
+  logAnalysisChartScroll: {
+    flexGrow: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  logAnalysisChart: {
+    alignItems: "center",
+  },
+  logAnalysisAxisRow: {
+    position: "relative",
+    height: 16,
+    marginTop: 4,
+  },
+  logAnalysisAxisLabel: {
+    fontSize: 9,
+    color: "#9ca3af",
+    position: "absolute",
+    width: 34,
+    textAlign: "center",
+  },
+  logAnalysisHint: {
+    marginTop: 6,
+    fontSize: 10,
+    color: "#6b7280",
+  },
   viewToggleRow: {
     flexDirection: "row",
     marginBottom: 8,
@@ -3322,6 +4260,97 @@ const styles = StyleSheet.create({
     color: "#4b5563",
     marginBottom: 2,
   },
+  logLandscapeTable: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  logLandscapeRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderBottomWidth: 1,
+    borderColor: "#f3f4f6",
+  },
+  logLandscapeHeaderRow: {
+    alignItems: "center",
+    backgroundColor: "#f9fafb",
+  },
+  logLandscapeHeaderCell: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontWeight: "600",
+  },
+  logLandscapeHeaderMetric: {
+    textAlign: "right",
+  },
+  logLandscapeMetaCell: {
+    flex: 2.2,
+    paddingRight: 8,
+  },
+  logLandscapeMetricCell: {
+    flex: 1,
+    paddingHorizontal: 6,
+  },
+  logLandscapeDiffCell: {
+    flex: 1.2,
+    paddingLeft: 6,
+  },
+  logLandscapeTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 2,
+    flexShrink: 1,
+  },
+  logLandscapeTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  logLandscapeTags: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginLeft: 6,
+    flexShrink: 0,
+  },
+  logLandscapeTagChip: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    backgroundColor: "#f9fafb",
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    marginLeft: 4,
+  },
+  logLandscapeTagText: {
+    fontSize: 10,
+    color: "#6b7280",
+  },
+  logLandscapeTagChipMuted: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f8fafc",
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    marginLeft: 4,
+  },
+  logLandscapeTagTextMuted: {
+    fontSize: 10,
+    color: "#9ca3af",
+  },
+  logLandscapeMeta: {
+    fontSize: 10,
+    color: "#6b7280",
+  },
+  logLandscapeValue: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#111827",
+    textAlign: "right",
+  },
   sheetOverlay: {
     flex: 1,
     justifyContent: "flex-end",
@@ -3436,6 +4465,32 @@ const styles = StyleSheet.create({
   },
   dateActionPrimaryText: {
     color: "#ffffff",
+    fontWeight: "600",
+  },
+  moveSlotRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 4,
+  },
+  moveSlotButton: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  moveSlotButtonActive: {
+    borderColor: "#2563eb",
+    backgroundColor: "#eff6ff",
+  },
+  moveSlotText: {
+    fontSize: 12,
+    color: "#111827",
+  },
+  moveSlotTextActive: {
+    color: "#1d4ed8",
     fontWeight: "600",
   },
   footer: {

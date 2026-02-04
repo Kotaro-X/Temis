@@ -128,6 +128,14 @@ export const getFreeNoteById = async (
   return toNoteRecord(result.rows.item(0) as NoteRow);
 };
 
+export const listAllNotes = async (): Promise<NoteRecord[]> => {
+  await ensureDbReady();
+  const result = await executeSql(
+    "SELECT id, type, date, title, body, updated_at FROM notes ORDER BY updated_at DESC",
+  );
+  return (result.rows._array as NoteRow[]).map((row) => toNoteRecord(row));
+};
+
 export const upsertFreeNote = async (input: {
   id?: string | null;
   title?: string | null;
