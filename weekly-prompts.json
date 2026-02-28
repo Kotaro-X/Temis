@@ -1,7 +1,7 @@
 {
   "version": 1,
   "timezone": "Asia/Tokyo",
-  "updatedAt": "2026-02-28T02:00:00+09:00",
+  "updatedAt": "2026-02-23T02:00:00+09:00",
   "prompts": [
     {
       "weekStart": "2026-02-23",
