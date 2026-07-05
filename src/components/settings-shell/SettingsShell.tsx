@@ -345,6 +345,7 @@ const SettingsShell = ({
           contentPaddingTop={contentPaddingTop}
           onBackToSettings={() => setSettingsScreen("settings")}
           onOpenMenu={openMenu}
+          onOpenAccountSettings={() => setSettingsScreen("account")}
           onOpenArchiveTags={() => setSettingsScreen("tags")}
           onOpenTimeBoxes={() => setSettingsScreen("timeSettings")}
           onOpenDeletedItems={() => setSettingsScreen("deletedItems")}
@@ -379,7 +380,11 @@ const SettingsShell = ({
             });
           }}
           initialSection={
-            settingsScreen === "timeSettings"
+            settingsScreen === "sync"
+              ? "Account"
+              : settingsScreen === "account"
+                ? "Account"
+              : settingsScreen === "timeSettings"
               ? "TimeBoxes"
               : settingsScreen === "tags"
                 ? "Tags"
@@ -390,6 +395,10 @@ const SettingsShell = ({
           visibleSections={
             settingsScreen === "settings"
               ? []
+              : settingsScreen === "sync"
+                ? ["Account"]
+              : settingsScreen === "account"
+                ? ["Account"]
               : settingsScreen === "timeSettings"
                 ? ["TimeBoxes"]
                 : settingsScreen === "tags"

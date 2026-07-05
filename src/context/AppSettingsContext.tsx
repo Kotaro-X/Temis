@@ -140,11 +140,9 @@ export const AppSettingsProvider = ({
   }, []);
 
   const setCloudSyncEnabled = useCallback(async (value: boolean) => {
-    const entitled = value ? cloudSyncEntitled : await loadCloudSyncEntitled();
-    const nextValue = value && entitled;
-    setCloudSyncEnabledState(nextValue);
-    await saveCloudSyncEnabled(nextValue);
-  }, [cloudSyncEntitled]);
+    setCloudSyncEnabledState(value);
+    await saveCloudSyncEnabled(value);
+  }, []);
 
   const refreshSettings = useCallback(async () => {
     const [
@@ -162,9 +160,7 @@ export const AppSettingsProvider = ({
     setArchivedTagLibrary(loadedTagState.archivedTags);
     setTimeBoxSchedule(loadedSchedule);
     setCloudSyncEntitledState(loadedCloudSyncEntitled);
-    setCloudSyncEnabledState(
-      loadedCloudSyncEntitled && loadedCloudSyncEnabled,
-    );
+    setCloudSyncEnabledState(loadedCloudSyncEnabled);
   }, [loadTagLibraries, setArchivedTagLibrary, setTagLibrary]);
 
   const tr = useCallback((key: string) => t(appLanguage, key), [appLanguage]);

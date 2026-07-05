@@ -10,6 +10,8 @@ export type MemoWorkspaceScreenKey = "memo" | "notes" | "research";
 
 export type SettingsWorkspaceScreenKey =
   | "settings"
+  | "sync"
+  | "account"
   | "timeSettings"
   | "tags"
   | "deletedItems";

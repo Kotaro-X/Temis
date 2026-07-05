@@ -21,12 +21,13 @@ import TimeBoxSettingsSection, {
 } from "../components/settings/TimeBoxSettingsSection";
 import { AppLanguage, t } from "../i18n";
 
-type SectionKey = "TimeBoxes" | "Tags" | "DeletedItems";
+type SectionKey = "Account" | "TimeBoxes" | "Tags" | "DeletedItems";
 
 export type SettingsScreenProps = {
   contentPaddingTop: number;
   onBack: () => void;
   onOpenMenu: () => void;
+  onOpenAccountSettings?: () => void;
   onOpenArchiveTags?: () => void;
   onOpenTimeBoxes?: () => void;
   onOpenDeletedItems?: () => void;
@@ -60,6 +61,7 @@ const SettingsScreen = ({
   contentPaddingTop,
   onBack,
   onOpenMenu,
+  onOpenAccountSettings,
   onOpenArchiveTags,
   onOpenTimeBoxes,
   onOpenDeletedItems,
@@ -88,8 +90,9 @@ const SettingsScreen = ({
   deletedItemsSectionProps,
 }: SettingsScreenProps) => {
   const scrollRef = useRef<ScrollView | null>(null);
-  const activeSections = visibleSections ?? ["TimeBoxes", "Tags", "DeletedItems"];
+  const activeSections = visibleSections ?? ["Account", "TimeBoxes", "Tags", "DeletedItems"];
   const sectionOffsets = useRef<Record<SectionKey, number | null>>({
+    Account: null,
     TimeBoxes: null,
     Tags: null,
     DeletedItems: null,
@@ -118,8 +121,14 @@ const SettingsScreen = ({
   }, [initialSection, layoutReady]);
 
   const accountLabel = googleAccountName || googleAccountEmail;
-  const syncReady =
-    cloudSyncEntitled && cloudSyncEnabled && googleAuthStatus === "signedIn";
+  const isSyncInProgress = cloudSyncEnabled;
+  const syncLabel = isSyncInProgress
+    ? t(language, "settings.sync.inProgress")
+    : t(language, "settings.sync.notSynced");
+  const accountStatusLabel =
+    googleAuthStatus === "signedIn"
+      ? t(language, "settings.account.connected")
+      : t(language, "settings.account.notConnected");
 
   return (
     <ScrollView
@@ -145,90 +154,72 @@ const SettingsScreen = ({
         <View style={styles.headerRight} />
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{t(language, "settings.language")}</Text>
-        <View style={styles.languageRow}>
+      {showMenuButtons && (
+        <View style={styles.menuSection}>
           <Pressable
-            style={[
-              styles.languageButton,
-              language === "ja" && styles.languageButtonActive,
-            ]}
-            onPress={() => onChangeLanguage("ja")}
+            style={styles.menuButtonRow}
+            onPress={onOpenAccountSettings}
           >
-            <Text
-              style={[
-                styles.languageButtonText,
-                language === "ja" && styles.languageButtonTextActive,
-              ]}
-            >
-              {t(language, "settings.language.ja")}
+            <Text style={styles.menuButtonText}>
+              {t(language, "settings.account.menu")}
             </Text>
+            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
           </Pressable>
           <Pressable
-            style={[
-              styles.languageButton,
-              language === "en" && styles.languageButtonActive,
-            ]}
-            onPress={() => onChangeLanguage("en")}
+            style={styles.menuButtonRow}
+            onPress={onOpenArchiveTags}
           >
-            <Text
-              style={[
-                styles.languageButtonText,
-                language === "en" && styles.languageButtonTextActive,
-              ]}
-            >
-              {t(language, "settings.language.en")}
+            <Text style={styles.menuButtonText}>
+              {t(language, "settings.editTagList")}
             </Text>
+            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+          </Pressable>
+          <Pressable
+            style={styles.menuButtonRow}
+            onPress={onOpenTimeBoxes}
+          >
+            <Text style={styles.menuButtonText}>
+              {t(language, "settings.timeBoxes")}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
+          </Pressable>
+          <Pressable
+            style={styles.menuButtonRow}
+            onPress={onOpenDeletedItems}
+          >
+            <Text style={styles.menuButtonText}>
+              {t(language, "settings.deletedItems")}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
           </Pressable>
         </View>
-      </View>
+      )}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{t(language, "settings.sync.title")}</Text>
-        <View style={styles.syncCard}>
-          <View style={styles.syncMeta}>
-            <Text style={styles.syncStatusText}>
-              {!cloudSyncEntitled
-                ? t(language, "settings.sync.locked")
-                : cloudSyncEnabled
-                  ? t(language, "settings.sync.enabled")
-                  : t(language, "settings.sync.disabled")}
-            </Text>
-            <Text style={styles.syncCaption}>
-              {!cloudSyncEntitled
-                ? t(language, "settings.sync.lockedCaption")
-                : cloudSyncEnabled && lastSyncedAt
-                ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}`
-                : cloudSyncEnabled
-                  ? t(language, "settings.sync.never")
-                  : t(language, "settings.sync.disabledCaption")}
-            </Text>
-            {cloudSyncEntitled && cloudSyncEnabled ? (
-              <Text style={styles.syncCaption}>
-                {googleAuthStatus === "signedIn" && accountLabel
-                  ? `${t(language, "settings.sync.connectedAs")} ${accountLabel}`
-                  : googleAuthStatus === "restoring"
-                    ? t(language, "settings.sync.restoring")
-                    : t(language, "settings.sync.googleRequired")}
+      {activeSections.includes("Account") && (
+        <View onLayout={handleSectionLayout("Account")} style={styles.section}>
+          <Text style={styles.sectionTitle}>
+            {t(language, "settings.section.account")}
+          </Text>
+          <View style={styles.syncCard}>
+            <View style={styles.syncStatusRow}>
+              <Text style={styles.syncStatusLabel}>
+                {t(language, "settings.account.menu")}
               </Text>
-            ) : null}
-            {cloudSyncEntitled ? (
-              <View style={styles.syncToggleRow}>
-                <Text style={styles.syncToggleLabel}>
-                  {cloudSyncEnabled
-                    ? t(language, "settings.sync.turnOff")
-                    : t(language, "settings.sync.turnOn")}
-                </Text>
-                <Switch
-                  value={cloudSyncEnabled}
-                  onValueChange={(value) => onToggleCloudSync?.(value)}
-                  trackColor={{ false: "#d1d5db", true: "#111827" }}
-                  thumbColor="#ffffff"
-                  ios_backgroundColor="#d1d5db"
-                />
-              </View>
-            ) : null}
-            {cloudSyncEntitled && cloudSyncEnabled ? (
+              <Text
+                style={[
+                  styles.syncStateText,
+                  googleAuthStatus === "signedIn"
+                    ? styles.syncStateActive
+                    : styles.syncStateInactive,
+                ]}
+              >
+                {accountStatusLabel}
+              </Text>
+            </View>
+            <View style={styles.syncMeta}>
+              <Text style={styles.accountLabelText}>
+                {accountLabel ?? t(language, "settings.account.noAccount")}
+              </Text>
               <Pressable
                 style={[
                   styles.googleAuthButton,
@@ -266,63 +257,87 @@ const SettingsScreen = ({
                         : t(language, "settings.sync.signInGoogle")}
                 </Text>
               </Pressable>
-            ) : null}
-            {syncError ? <Text style={styles.syncErrorText}>{syncError}</Text> : null}
-            {!syncError && syncResultMessage ? (
-              <Text style={styles.syncCaption}>{syncResultMessage}</Text>
-            ) : null}
+            </View>
           </View>
-          <Pressable
-            style={[
-              styles.syncButton,
-              (syncStatus === "syncing" || !syncReady) &&
-                styles.syncButtonDisabled,
-            ]}
-            onPress={onSyncNow}
-            disabled={
-              syncStatus === "syncing" ||
-              !syncReady ||
-              !onSyncNow
-            }
-          >
-            <Text style={styles.syncButtonText}>
-              {syncStatus === "syncing"
-                ? t(language, "settings.sync.syncing")
-                : t(language, "settings.sync.syncNow")}
+          <View style={styles.nestedSection}>
+            <Text style={styles.sectionTitle}>
+              {t(language, "settings.section.sync")}
             </Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {showMenuButtons && (
-        <View style={styles.menuSection}>
-          <Pressable
-            style={styles.menuButtonRow}
-            onPress={onOpenArchiveTags}
-          >
-            <Text style={styles.menuButtonText}>
-              {t(language, "settings.editTagList")}
-            </Text>
-            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
-          </Pressable>
-          <Pressable
-            style={styles.menuButtonRow}
-            onPress={onOpenTimeBoxes}
-          >
-            <Text style={styles.menuButtonText}>
-              {t(language, "settings.timeBoxes")}
-            </Text>
-            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
-          </Pressable>
-          <Pressable
-            style={styles.menuButtonRow}
-            onPress={onOpenDeletedItems}
-          >
-            <Text style={styles.menuButtonText}>
-              {t(language, "settings.deletedItems")}
-            </Text>
-            <Ionicons name="chevron-forward" size={18} color="#9ca3af" />
-          </Pressable>
+            <View style={styles.syncCard}>
+              <View style={styles.syncStatusRow}>
+                <Text style={styles.syncStatusLabel}>
+                  {t(language, "settings.sync.title")}
+                </Text>
+                <Text
+                  style={[
+                    styles.syncStateText,
+                    isSyncInProgress
+                      ? styles.syncStateActive
+                      : styles.syncStateInactive,
+                  ]}
+                >
+                  {syncLabel}
+                </Text>
+              </View>
+              <View style={styles.syncMeta}>
+                {cloudSyncEntitled ? (
+                  <View style={styles.syncToggleRow}>
+                    <Text style={styles.syncToggleLabel}>
+                      {t(language, "settings.sync.turnOn")}
+                    </Text>
+                    <Switch
+                      value={cloudSyncEnabled}
+                      onValueChange={(value) => onToggleCloudSync?.(value)}
+                      trackColor={{ false: "#d1d5db", true: "#111827" }}
+                      thumbColor="#ffffff"
+                      ios_backgroundColor="#d1d5db"
+                    />
+                  </View>
+                ) : (
+                  <Text style={styles.syncCaption}>
+                    {t(language, "settings.sync.lockedCaption")}
+                  </Text>
+                )}
+              </View>
+            </View>
+          </View>
+          <View style={styles.nestedSection}>
+            <Text style={styles.sectionTitle}>{t(language, "settings.language")}</Text>
+            <View style={styles.languageRow}>
+              <Pressable
+                style={[
+                  styles.languageButton,
+                  language === "ja" && styles.languageButtonActive,
+                ]}
+                onPress={() => onChangeLanguage("ja")}
+              >
+                <Text
+                  style={[
+                    styles.languageButtonText,
+                    language === "ja" && styles.languageButtonTextActive,
+                  ]}
+                >
+                  {t(language, "settings.language.ja")}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.languageButton,
+                  language === "en" && styles.languageButtonActive,
+                ]}
+                onPress={() => onChangeLanguage("en")}
+              >
+                <Text
+                  style={[
+                    styles.languageButtonText,
+                    language === "en" && styles.languageButtonTextActive,
+                  ]}
+                >
+                  {t(language, "settings.language.en")}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       )}
 
@@ -397,6 +412,9 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 18,
   },
+  nestedSection: {
+    marginTop: 18,
+  },
   sectionTitle: {
     fontSize: 14,
     fontWeight: "600",
@@ -420,10 +438,26 @@ const styles = StyleSheet.create({
   syncMeta: {
     gap: 4,
   },
-  syncStatusText: {
+  syncStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  syncStatusLabel: {
     fontSize: 14,
     fontWeight: "600",
     color: "#111827",
+  },
+  syncStateText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  syncStateActive: {
+    color: "#2563eb",
+  },
+  syncStateInactive: {
+    color: "#dc2626",
   },
   syncCaption: {
     fontSize: 12,
@@ -452,17 +486,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
   },
-  syncToggleButton: {
-    marginTop: 4,
-  },
-  syncToggleButtonText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  syncToggleButtonTextActive: {
-    color: "#111827",
-  },
   googleAuthButton: {
     alignSelf: "flex-start",
     borderRadius: 8,
@@ -487,11 +510,6 @@ const styles = StyleSheet.create({
   syncButtonDisabled: {
     opacity: 0.6,
   },
-  syncButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#ffffff",
-  },
   menuButtonRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -503,6 +521,11 @@ const styles = StyleSheet.create({
   },
   menuButtonText: {
     fontSize: 14,
+    color: "#111827",
+    fontWeight: "500",
+  },
+  accountLabelText: {
+    fontSize: 13,
     color: "#111827",
     fontWeight: "500",
   },

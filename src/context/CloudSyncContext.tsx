@@ -12,9 +12,9 @@ export const CloudSyncProvider = ({
 }: {
   children: React.ReactNode;
 }) => {
-  const { cloudSyncEnabled, cloudSyncEntitled } = useAppSettings();
+  const { cloudSyncEnabled } = useAppSettings();
   const value = useCloudSync({
-    enabled: cloudSyncEntitled && cloudSyncEnabled,
+    enabled: cloudSyncEnabled,
   });
   return (
     <CloudSyncContext.Provider value={value}>{children}</CloudSyncContext.Provider>

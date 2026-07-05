@@ -51,6 +51,8 @@ type AppUIContextValue = {
   setMemoScreen: React.Dispatch<React.SetStateAction<MemoWorkspaceScreenKey>>;
   openSettings: (screen?: SettingsWorkspaceScreenKey) => void;
   openSettingsHome: () => void;
+  openSettingsSync: () => void;
+  openSettingsAccount: () => void;
   openSettingsTimeBoxes: () => void;
   openSettingsTags: () => void;
   openSettingsDeletedItems: () => void;
@@ -347,6 +349,16 @@ export const AppUIProvider = ({
     switchRootScreen("settings");
   }, [switchRootScreen]);
 
+  const openSettingsSync = useCallback(() => {
+    setSettingsScreen("sync");
+    switchRootScreen("settings");
+  }, [switchRootScreen]);
+
+  const openSettingsAccount = useCallback(() => {
+    setSettingsScreen("account");
+    switchRootScreen("settings");
+  }, [switchRootScreen]);
+
   const openSettingsTimeBoxes = useCallback(() => {
     setSettingsScreen("timeSettings");
     switchRootScreen("settings");
@@ -414,6 +426,8 @@ export const AppUIProvider = ({
       setMemoScreen,
       openSettings,
       openSettingsHome,
+      openSettingsSync,
+      openSettingsAccount,
       openSettingsTimeBoxes,
       openSettingsTags,
       openSettingsDeletedItems,
@@ -465,6 +479,8 @@ export const AppUIProvider = ({
       openMenu,
       openSettings,
       openSettingsHome,
+      openSettingsSync,
+      openSettingsAccount,
       openSettingsDeletedItems,
       openSettingsTags,
       openSettingsTimeBoxes,

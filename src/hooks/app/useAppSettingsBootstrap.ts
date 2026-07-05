@@ -82,7 +82,7 @@ export const useAppSettingsBootstrap = ({
       setTimeBoxSchedule(loadedSchedule);
       setAppLanguage(resolvedLanguage);
       setCloudSyncEntitled(loadedCloudSyncEntitled);
-      setCloudSyncEnabled(loadedCloudSyncEntitled && loadedCloudSyncEnabled);
+      setCloudSyncEnabled(loadedCloudSyncEnabled);
       setLanguagePickerOpen(!loadedLanguage);
       setStorageReady(true);
 
