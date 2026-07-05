@@ -1,7 +1,21 @@
 import { nanoid } from "nanoid/non-secure";
 
+import { loadSyncDeviceId } from "../../storage";
+import { getEmbeddingProvider } from "../services/EmbeddingProvider";
+import { invalidateHybridSearchCache } from "../services/hybridSearch";
+import { buildIndexText, buildNoteDocumentId } from "../services/indexTextBuilder";
+import { buildNoteSyncEnvelope } from "../services/sync/syncEntityModels";
+import { persistAndEnqueueSyncEnvelope } from "../services/sync/syncEnvelopeStore";
 import { extractTokens } from "../utils/wikiLink";
+import {
+  getChunkIndexCountByDocumentId,
+  rebuildChunkIndexForDocument,
+} from "./chunkIndexRepo";
 import { ensureDbReady, executeSql } from "./sqlite";
+import {
+  getTokenIndexCountByDocumentId,
+  rebuildTokenIndexForDocument,
+} from "./tokenIndexRepo";
 
 export type NoteType = "daily" | "free";
 
@@ -33,6 +47,24 @@ export type FreeNoteSummary = {
   updatedAt: number;
 };
 
+export type NoteIndexBackfillProgress = {
+  jobKey: string;
+  total: number;
+  processed: number;
+  reindexed: number;
+  skipped: number;
+  updatedAt: number;
+};
+
+type BackfillProgressRow = {
+  job_key: string;
+  total: number;
+  processed: number;
+  reindexed: number;
+  skipped: number;
+  updated_at: number;
+};
+
 const toNoteRecord = (row: NoteRow): NoteRecord => ({
   id: row.id,
   type: row.type,
@@ -41,6 +73,51 @@ const toNoteRecord = (row: NoteRow): NoteRecord => ({
   body: row.body,
   updatedAt: row.updated_at,
 });
+
+const toBackfillProgress = (row: BackfillProgressRow): NoteIndexBackfillProgress => ({
+  jobKey: row.job_key,
+  total: row.total,
+  processed: row.processed,
+  reindexed: row.reindexed,
+  skipped: row.skipped,
+  updatedAt: row.updated_at,
+});
+
+const saveBackfillProgress = async (
+  progress: NoteIndexBackfillProgress,
+): Promise<void> => {
+  await executeSql(
+    "INSERT INTO index_backfill_progress (job_key, total, processed, reindexed, skipped, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(job_key) DO UPDATE SET total = excluded.total, processed = excluded.processed, reindexed = excluded.reindexed, skipped = excluded.skipped, updated_at = excluded.updated_at",
+    [
+      progress.jobKey,
+      progress.total,
+      progress.processed,
+      progress.reindexed,
+      progress.skipped,
+      progress.updatedAt,
+    ],
+  );
+};
+
+const rebuildSearchIndexesForNote = async (note: NoteRecord): Promise<void> => {
+  const indexText = buildIndexText(note);
+  const noteId = note.id;
+  const documentId = buildNoteDocumentId(noteId);
+  const freeTextLength =
+    note.type === "free" ? (note.body ?? "").trim().length : 0;
+
+  console.log(
+    `[Index][Note] start noteId=${noteId} freeTextLength=${freeTextLength} indexTextLength=${indexText.length}`,
+  );
+
+  await rebuildNoteLinks(noteId, indexText);
+  const tokenStats = await rebuildTokenIndexForDocument(documentId, indexText);
+  const chunkStats = await rebuildChunkIndexForDocument(documentId, indexText);
+  invalidateHybridSearchCache();
+  console.log(
+    `[Index][Note] done noteId=${noteId} chunks=${chunkStats.chunkCount} embedding=${chunkStats.chunkCount > 0 ? "yes" : "no"} embeddingModel=${chunkStats.embeddingModel} embeddingDim=${chunkStats.embeddingDim} tokens=${tokenStats.tokenCount}`,
+  );
+};
 
 export const getDailyNoteByDate = async (
   date: string,
@@ -59,21 +136,18 @@ export const getDailyNoteByDate = async (
 export const upsertDailyNote = async (
   date: string,
   body: string,
+  options?: { enqueueSync?: boolean },
 ): Promise<NoteRecord> => {
   await ensureDbReady();
   const now = Date.now();
+  const shouldEnqueueSync = options?.enqueueSync !== false;
   const existing = await executeSql(
     "SELECT id FROM notes WHERE type = 'daily' AND date = ? LIMIT 1",
     [date],
   );
   if (existing.rows.length > 0) {
     const row = existing.rows.item(0) as Pick<NoteRow, "id">;
-    await executeSql(
-      "UPDATE notes SET body = ?, updated_at = ? WHERE id = ?",
-      [body, now, row.id],
-    );
-    await rebuildNoteLinks(row.id, body);
-    return {
+    const updated: NoteRecord = {
       id: row.id,
       type: "daily",
       date,
@@ -81,14 +155,31 @@ export const upsertDailyNote = async (
       body,
       updatedAt: now,
     };
+    await executeSql("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      await executeSql(
+        "UPDATE notes SET body = ?, updated_at = ? WHERE id = ?",
+        [body, now, row.id],
+      );
+      await rebuildSearchIndexesForNote(updated);
+      await executeSql("COMMIT");
+    } catch (error) {
+      await executeSql("ROLLBACK");
+      throw error;
+    }
+    if (shouldEnqueueSync) {
+      const deviceId = await loadSyncDeviceId();
+      await persistAndEnqueueSyncEnvelope(
+        buildNoteSyncEnvelope({
+          note: updated,
+          deviceId,
+        }),
+      );
+    }
+    return updated;
   }
   const id = nanoid();
-  await executeSql(
-    "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, 'daily', ?, NULL, ?, ?)",
-    [id, date, body, now],
-  );
-  await rebuildNoteLinks(id, body);
-  return {
+  const created: NoteRecord = {
     id,
     type: "daily",
     date,
@@ -96,6 +187,28 @@ export const upsertDailyNote = async (
     body,
     updatedAt: now,
   };
+  await executeSql("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    await executeSql(
+      "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, 'daily', ?, NULL, ?, ?)",
+      [id, date, body, now],
+    );
+    await rebuildSearchIndexesForNote(created);
+    await executeSql("COMMIT");
+  } catch (error) {
+    await executeSql("ROLLBACK");
+    throw error;
+  }
+  if (shouldEnqueueSync) {
+    const deviceId = await loadSyncDeviceId();
+    await persistAndEnqueueSyncEnvelope(
+      buildNoteSyncEnvelope({
+        note: created,
+        deviceId,
+      }),
+    );
+  }
+  return created;
 };
 
 export const listFreeNotes = async (): Promise<FreeNoteSummary[]> => {
@@ -128,6 +241,20 @@ export const getFreeNoteById = async (
   return toNoteRecord(result.rows.item(0) as NoteRow);
 };
 
+export const getNoteById = async (
+  noteId: string,
+): Promise<NoteRecord | null> => {
+  await ensureDbReady();
+  const result = await executeSql(
+    "SELECT id, type, date, title, body, updated_at FROM notes WHERE id = ? LIMIT 1",
+    [noteId],
+  );
+  if (result.rows.length === 0) {
+    return null;
+  }
+  return toNoteRecord(result.rows.item(0) as NoteRow);
+};
+
 export const listAllNotes = async (): Promise<NoteRecord[]> => {
   await ensureDbReady();
   const result = await executeSql(
@@ -140,17 +267,14 @@ export const upsertFreeNote = async (input: {
   id?: string | null;
   title?: string | null;
   body: string;
+  enqueueSync?: boolean;
 }): Promise<NoteRecord> => {
   await ensureDbReady();
   const now = Date.now();
   const title = input.title ?? null;
+  const shouldEnqueueSync = input.enqueueSync !== false;
   if (input.id) {
-    await executeSql(
-      "UPDATE notes SET title = ?, body = ?, updated_at = ? WHERE id = ? AND type = 'free'",
-      [title, input.body, now, input.id],
-    );
-    await rebuildNoteLinks(input.id, input.body);
-    return {
+    const updated: NoteRecord = {
       id: input.id,
       type: "free",
       date: null,
@@ -158,14 +282,31 @@ export const upsertFreeNote = async (input: {
       body: input.body,
       updatedAt: now,
     };
+    await executeSql("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      await executeSql(
+        "UPDATE notes SET title = ?, body = ?, updated_at = ? WHERE id = ? AND type = 'free'",
+        [title, input.body, now, input.id],
+      );
+      await rebuildSearchIndexesForNote(updated);
+      await executeSql("COMMIT");
+    } catch (error) {
+      await executeSql("ROLLBACK");
+      throw error;
+    }
+    if (shouldEnqueueSync) {
+      const deviceId = await loadSyncDeviceId();
+      await persistAndEnqueueSyncEnvelope(
+        buildNoteSyncEnvelope({
+          note: updated,
+          deviceId,
+        }),
+      );
+    }
+    return updated;
   }
   const id = nanoid();
-  await executeSql(
-    "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, 'free', NULL, ?, ?, ?)",
-    [id, title, input.body, now],
-  );
-  await rebuildNoteLinks(id, input.body);
-  return {
+  const created: NoteRecord = {
     id,
     type: "free",
     date: null,
@@ -173,14 +314,94 @@ export const upsertFreeNote = async (input: {
     body: input.body,
     updatedAt: now,
   };
+  await executeSql("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    await executeSql(
+      "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, 'free', NULL, ?, ?, ?)",
+      [id, title, input.body, now],
+    );
+    await rebuildSearchIndexesForNote(created);
+    await executeSql("COMMIT");
+  } catch (error) {
+    await executeSql("ROLLBACK");
+    throw error;
+  }
+  if (shouldEnqueueSync) {
+    const deviceId = await loadSyncDeviceId();
+    await persistAndEnqueueSyncEnvelope(
+      buildNoteSyncEnvelope({
+        note: created,
+        deviceId,
+      }),
+    );
+  }
+  return created;
+};
+
+export const upsertNoteRecord = async (
+  record: NoteRecord,
+): Promise<NoteRecord> => {
+  await ensureDbReady();
+  await executeSql("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    await executeSql(
+      "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET type = excluded.type, date = excluded.date, title = excluded.title, body = excluded.body, updated_at = excluded.updated_at",
+      [
+        record.id,
+        record.type,
+        record.date,
+        record.title,
+        record.body,
+        record.updatedAt,
+      ],
+    );
+    await rebuildSearchIndexesForNote(record);
+    await executeSql("COMMIT");
+  } catch (error) {
+    await executeSql("ROLLBACK");
+    throw error;
+  }
+  return record;
+};
+
+export const deleteNoteById = async (
+  noteId: string,
+  options?: { enqueueSync?: boolean },
+): Promise<void> => {
+  await ensureDbReady();
+  const existing = await getNoteById(noteId);
+  const documentId = buildNoteDocumentId(noteId);
+  await executeSql("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    await executeSql("DELETE FROM note_links WHERE note_id = ?", [noteId]);
+    await executeSql("DELETE FROM token_index WHERE memo_id = ?", [documentId]);
+    await executeSql("DELETE FROM chunk_index WHERE memo_id = ?", [documentId]);
+    await executeSql("DELETE FROM notes WHERE id = ?", [noteId]);
+    await executeSql("COMMIT");
+  } catch (error) {
+    await executeSql("ROLLBACK");
+    throw error;
+  }
+  invalidateHybridSearchCache();
+  if (options?.enqueueSync === false || !existing) {
+    return;
+  }
+  const deviceId = await loadSyncDeviceId();
+  await persistAndEnqueueSyncEnvelope(
+    buildNoteSyncEnvelope({
+      note: existing,
+      deletedAt: Date.now(),
+      deviceId,
+    }),
+  );
 };
 
 export const rebuildNoteLinks = async (
   noteId: string,
-  body: string,
+  text: string,
 ): Promise<void> => {
   await ensureDbReady();
-  const tokens = extractTokens(body);
+  const tokens = extractTokens(text);
   await executeSql("DELETE FROM note_links WHERE note_id = ?", [noteId]);
   if (tokens.length === 0) {
     return;
@@ -200,4 +421,86 @@ export const getTokensByNoteId = async (noteId: string): Promise<string[]> => {
     [noteId],
   );
   return (result.rows._array as NoteLinkRow[]).map((row) => row.token);
+};
+
+export const getNoteIndexBackfillProgress = async (
+  jobKey: string,
+): Promise<NoteIndexBackfillProgress | null> => {
+  await ensureDbReady();
+  const result = await executeSql(
+    "SELECT job_key, total, processed, reindexed, skipped, updated_at FROM index_backfill_progress WHERE job_key = ? LIMIT 1",
+    [jobKey],
+  );
+  if (result.rows.length === 0) {
+    return null;
+  }
+  return toBackfillProgress(result.rows.item(0) as BackfillProgressRow);
+};
+
+export const backfillNoteIndexes = async (options?: {
+  batchSize?: number;
+  jobKey?: string;
+  force?: boolean;
+}): Promise<NoteIndexBackfillProgress> => {
+  await ensureDbReady();
+  const batchSize = Math.max(1, options?.batchSize ?? 20);
+  const jobKey = options?.jobKey ?? "note-index-backfill-v1";
+  const force = options?.force ?? false;
+  const notes = await listAllNotes();
+  const provider = getEmbeddingProvider();
+  const providerModel = provider.getModel();
+  const providerDim = provider.getDim();
+
+  let processed = 0;
+  let reindexed = 0;
+  let skipped = 0;
+
+  for (let offset = 0; offset < notes.length; offset += batchSize) {
+    const batch = notes.slice(offset, offset + batchSize);
+    for (const note of batch) {
+      const indexText = buildIndexText(note);
+      const documentId = buildNoteDocumentId(note.id);
+      const tokenCount = await getTokenIndexCountByDocumentId(documentId);
+      const chunkCount = await getChunkIndexCountByDocumentId(documentId, {
+        embeddingModel: providerModel,
+        embeddingDim: providerDim > 0 ? providerDim : undefined,
+      });
+      const needsReindex =
+        force ||
+        indexText.length === 0 ||
+        tokenCount === 0 ||
+        chunkCount === 0;
+      if (needsReindex) {
+        await rebuildSearchIndexesForNote(note);
+        reindexed += 1;
+      } else {
+        skipped += 1;
+      }
+      processed += 1;
+    }
+
+    const progress: NoteIndexBackfillProgress = {
+      jobKey,
+      total: notes.length,
+      processed,
+      reindexed,
+      skipped,
+      updatedAt: Date.now(),
+    };
+    await saveBackfillProgress(progress);
+    console.log(
+      `[Backfill][Note] progress job=${jobKey} ${processed}/${notes.length} reindexed=${reindexed} skipped=${skipped}`,
+    );
+  }
+
+  const completed: NoteIndexBackfillProgress = {
+    jobKey,
+    total: notes.length,
+    processed,
+    reindexed,
+    skipped,
+    updatedAt: Date.now(),
+  };
+  await saveBackfillProgress(completed);
+  return completed;
 };

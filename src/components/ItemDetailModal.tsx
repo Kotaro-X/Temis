@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -10,46 +10,69 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
+import type { MemoNavigation } from "../screens/MemoScreen";
+import { getMemoByTaskId } from "../db/memoRepo";
+import { getDailyNoteByDate, getNoteById } from "../db/noteRepo";
+import {
+  buildNoteDocumentId,
+  buildTankyuDocumentId,
+} from "../services/indexTextBuilder";
 import { getSearchItemById } from "../services/searchIndex";
 import { SearchItem, SearchItemKind } from "../types/SearchItem";
-import LinkText from "./LinkText";
+import { AppLanguage, t } from "../i18n";
 
 type Props = {
   visible: boolean;
   itemId: string | null;
   kind: SearchItemKind | null;
-  keyword: string;
+  navigation: MemoNavigation;
   onClose: () => void;
-  onSearch: (word: string) => void;
+  language?: AppLanguage;
 };
 
 const ItemDetailModal = ({
   visible,
   itemId,
   kind,
-  keyword,
+  navigation,
   onClose,
-  onSearch,
+  language = "ja",
 }: Props) => {
+  const tr = (key: string) => t(language, key);
   const [loading, setLoading] = useState(false);
   const [item, setItem] = useState<SearchItem | null>(null);
+  const [memoId, setMemoId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible || !itemId || !kind) {
       setItem(null);
+      setMemoId(null);
       return;
     }
     let active = true;
     setLoading(true);
-    getSearchItemById(kind, itemId)
-      .then((result) => {
+    const resolveMemoId = async () => {
+      if (kind === "task") {
+        const memo = await getMemoByTaskId(itemId);
+        return memo?.id ?? null;
+      }
+      if (kind === "tankyu") {
+        return buildTankyuDocumentId(itemId);
+      }
+      const note = (await getNoteById(itemId)) ?? (await getDailyNoteByDate(itemId));
+      return note ? buildNoteDocumentId(note.id) : null;
+    };
+    Promise.all([getSearchItemById(kind, itemId), resolveMemoId()])
+      .then(([result, resolvedMemoId]) => {
         if (active) {
           setItem(result);
+          setMemoId(resolvedMemoId);
         }
       })
       .catch(() => {
         if (active) {
           setItem(null);
+          setMemoId(null);
         }
       })
       .finally(() => {
@@ -62,52 +85,62 @@ const ItemDetailModal = ({
     };
   }, [visible, itemId, kind]);
 
-  const title = useMemo(() => item?.title ?? "", [item]);
+  const openMemo = () => {
+    if (!memoId) {
+      return;
+    }
+    navigation.push("MemoDetail", { id: memoId });
+    onClose();
+  };
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <Pressable style={styles.backButton} onPress={onClose}>
             <Ionicons name="chevron-back" size={18} color="#2563eb" />
-            <Text style={styles.backText}>戻る</Text>
+            <Text style={styles.backText}>{tr("common.back")}</Text>
           </Pressable>
-          <Text style={styles.title}>詳細</Text>
+          <Text style={styles.title}>{language === "en" ? "Detail" : "詳細"}</Text>
           <View style={styles.headerRight} />
         </View>
         <ScrollView contentContainerStyle={styles.container}>
           {loading ? (
-            <Text style={styles.helperText}>読み込み中...</Text>
+            <Text style={styles.helperText}>{tr("common.loading")}</Text>
           ) : !item ? (
-            <Text style={styles.helperText}>データが見つかりません</Text>
+            <Text style={styles.helperText}>
+              {language === "en" ? "Data not found" : "データが見つかりません"}
+            </Text>
           ) : (
             <>
-              <Text style={styles.itemTitle}>{title}</Text>
+              <Text style={styles.itemTitle}>{item.title}</Text>
               <View style={styles.metaRow}>
                 <Text style={styles.itemDate}>{item.date}</Text>
                 <View
                   style={[
                     styles.badge,
-                    item.kind === "task" ? styles.badgeTask : styles.badgeNote,
+                    item.kind === "task"
+                      ? styles.badgeTask
+                      : item.kind === "tankyu"
+                        ? styles.badgeTankyu
+                        : styles.badgeNote,
                   ]}
                 >
                   <Text style={styles.badgeText}>{item.kind}</Text>
                 </View>
               </View>
-              {item.body ? (
-                <LinkText
-                  body={item.body}
-                  style={styles.bodyText}
-                  activeKey={keyword}
-                  onPressLink={(word) => onSearch(word)}
-                />
-              ) : (
-                <Text style={styles.helperText}>本文がありません</Text>
-              )}
+              <Pressable
+                style={[styles.openButton, !memoId && styles.openButtonDisabled]}
+                onPress={openMemo}
+                disabled={!memoId}
+              >
+                <Text style={styles.openButtonText}>
+                  {language === "en" ? "Open memo" : "メモを開く"}
+                </Text>
+              </Pressable>
+              {!memoId ? (
+                <Text style={styles.helperText}>{tr("memo.notFound")}</Text>
+              ) : null}
             </>
           )}
         </ScrollView>
@@ -186,14 +219,27 @@ const styles = StyleSheet.create({
   badgeNote: {
     backgroundColor: "#fef3c7",
   },
+  badgeTankyu: {
+    backgroundColor: "#dcfce7",
+  },
   badgeText: {
     fontSize: 10,
     color: "#1f2937",
   },
-  bodyText: {
-    fontSize: 14,
-    lineHeight: 20,
+  openButton: {
+    borderWidth: 1,
+    borderColor: "#111827",
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  openButtonDisabled: {
+    opacity: 0.5,
+  },
+  openButtonText: {
+    fontSize: 12,
     color: "#111827",
+    fontWeight: "600",
   },
 });
 

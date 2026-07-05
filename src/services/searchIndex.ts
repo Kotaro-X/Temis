@@ -1,6 +1,11 @@
 import { loadAllTodayStates } from "../../storage";
 import { getMemoByTaskId, listAllMemos } from "../db/memoRepo";
 import { getDailyNoteByDate, getFreeNoteById, listAllNotes } from "../db/noteRepo";
+import {
+  getResearchNoteById,
+  listResearchNotes,
+} from "../services/researchNoteService";
+import { buildTankyuDocumentId } from "./indexTextBuilder";
 import { SearchItem, SearchItemKind } from "../types/SearchItem";
 import { normalizeParens, normalizeSearchToken } from "../utils/wikiLink";
 
@@ -20,10 +25,11 @@ export type SearchMemo = {
   date: string;
   memoText: string;
   taskTitle: string;
-  source: "task" | "note";
+  source: "task" | "note" | "tankyu";
   noteId?: string;
   noteType?: "daily" | "free";
   noteTitle?: string | null;
+  tankyuId?: string;
 };
 
 const normalize = (value: string) =>
@@ -140,11 +146,39 @@ export const searchNoteMemos = async (query: string): Promise<SearchMemo[]> => {
 };
 
 export const searchAllMemos = async (query: string): Promise<SearchMemo[]> => {
-  const [taskResults, noteResults] = await Promise.all([
+  const [taskResults, noteResults, tankyuResults] = await Promise.all([
     searchTaskMemos(query),
     searchNoteMemos(query),
+    searchTankyuMemos(query),
   ]);
-  return [...taskResults, ...noteResults];
+  return [...taskResults, ...noteResults, ...tankyuResults];
+};
+
+export const searchTankyuMemos = async (query: string): Promise<SearchMemo[]> => {
+  const keyword = normalize(query);
+  if (!keyword) {
+    return [];
+  }
+  const notes = await listResearchNotes();
+  const results: SearchMemo[] = [];
+  for (const note of notes) {
+    if (
+      !matchesMemo(note.body, keyword) &&
+      !(note.title && matchesMemo(note.title, keyword))
+    ) {
+      continue;
+    }
+    results.push({
+      key: buildTankyuDocumentId(note.id),
+      taskId: "",
+      date: dateFromTimestamp(note.updatedAt),
+      memoText: note.body,
+      taskTitle: note.title?.trim() || "探究",
+      source: "tankyu",
+      tankyuId: note.id,
+    });
+  }
+  return results.sort((a, b) => b.date.localeCompare(a.date));
 };
 
 export const getSearchItemById = async (
@@ -181,14 +215,29 @@ export const getSearchItemById = async (
   }
 
   const dailyNote = await getDailyNoteByDate(itemId);
-  if (!dailyNote) {
-    return null;
+  if (dailyNote) {
+    return {
+      id: dailyNote.id,
+      kind: "note",
+      date: dailyNote.date ?? dateFromTimestamp(dailyNote.updatedAt),
+      title: "Daily",
+      body: dailyNote.body,
+    };
   }
-  return {
-    id: dailyNote.id,
-    kind: "note",
-    date: dailyNote.date ?? dateFromTimestamp(dailyNote.updatedAt),
-    title: "Daily",
-    body: dailyNote.body,
-  };
+
+  if (kind === "tankyu") {
+    const tankyu = await getResearchNoteById(itemId);
+    if (!tankyu) {
+      return null;
+    }
+    return {
+      id: tankyu.id,
+      kind: "tankyu",
+      date: dateFromTimestamp(tankyu.updatedAt),
+      title: tankyu.title?.trim() || "探究",
+      body: tankyu.body,
+    };
+  }
+
+  return null;
 };

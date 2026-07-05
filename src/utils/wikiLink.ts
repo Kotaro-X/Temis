@@ -1,25 +1,46 @@
 export type WikiTextPart = { type: "text" | "token"; value: string };
+export type TokenOccurrence = {
+  token: string;
+  start: number;
+  end: number;
+};
 
-const TOKEN_REGEX = /\(\(\s*(.+?)\s*\)\)/g;
+const TOKEN_REGEX = /\(\((.*?)\)\)/g;
 
 export const normalizeParens = (input: string): string =>
   input.replace(/\uFF08/g, "(").replace(/\uFF09/g, ")");
 
 export const extractTokens = (body: string): string[] => {
   const tokens = new Set<string>();
+  for (const occurrence of extractTokenOccurrences(body)) {
+    tokens.add(occurrence.token);
+  }
+  return Array.from(tokens);
+};
+
+export const extractTokenOccurrences = (body: string): TokenOccurrence[] => {
   if (!body) {
     return [];
   }
   const normalized = normalizeParens(body);
+  const occurrences: TokenOccurrence[] = [];
   TOKEN_REGEX.lastIndex = 0;
   let match: RegExpExecArray | null = null;
   while ((match = TOKEN_REGEX.exec(normalized))) {
-    const token = match[1].trim();
-    if (token) {
-      tokens.add(token);
+    const rawToken = match[1] ?? "";
+    const token = rawToken.trim();
+    if (!token) {
+      continue;
     }
+    const leadingSpaces = rawToken.length - rawToken.trimStart().length;
+    const start = (match.index ?? 0) + 2 + leadingSpaces;
+    occurrences.push({
+      token,
+      start,
+      end: start + token.length,
+    });
   }
-  return Array.from(tokens);
+  return occurrences;
 };
 
 export const parseWikiText = (body: string): WikiTextPart[] => {

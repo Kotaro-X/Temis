@@ -1,7 +1,17 @@
 import { nanoid } from "nanoid/non-secure";
 
+import { loadSyncDeviceId } from "../../storage";
 import { extractTokens, normalizeSearchToken } from "../utils/wikiLink";
 import { ensureDbReady, executeSql } from "./sqlite";
+import { rebuildChunkIndexForMemo } from "./chunkIndexRepo";
+import { invalidateHybridSearchCache } from "../services/hybridSearch";
+import { buildTaskMemoSyncEnvelope } from "../services/sync/syncEntityModels";
+import { persistAndEnqueueSyncEnvelope } from "../services/sync/syncEnvelopeStore";
+import {
+  rebuildTokenIndexForMemo,
+  searchByToken as searchTokenIndexByToken,
+  TokenIndexHit,
+} from "./tokenIndexRepo";
 
 type MemoRow = {
   id: string;
@@ -13,6 +23,13 @@ type MemoRow = {
 
 type MemoLinkRow = {
   token: string;
+};
+
+type MemoSearchRow = {
+  memo_id: string;
+  task_id: string;
+  body: string;
+  updated_at: number;
 };
 
 export type MemoRecord = {
@@ -74,6 +91,21 @@ export const getMemoByTaskId = async (
   return toMemoRecord(row);
 };
 
+export const getMemoById = async (
+  memoId: string,
+): Promise<MemoRecord | null> => {
+  await ensureDbReady();
+  const result = await executeSql(
+    "SELECT id, task_id, body, created_at, updated_at FROM memos WHERE id = ? LIMIT 1",
+    [memoId],
+  );
+  if (result.rows.length === 0) {
+    return null;
+  }
+  const row = result.rows.item(0) as MemoRow;
+  return toMemoRecord(row);
+};
+
 export const listAllMemos = async (): Promise<MemoRecord[]> => {
   await ensureDbReady();
   const result = await executeSql(
@@ -82,12 +114,39 @@ export const listAllMemos = async (): Promise<MemoRecord[]> => {
   return (result.rows._array as MemoRow[]).map((row) => toMemoRecord(row));
 };
 
+type MemoIndexMode = "sync" | "async";
+
+type UpsertMemoOptions = {
+  indexMode?: MemoIndexMode;
+  enqueueSync?: boolean;
+};
+
+const rebuildMemoIndexes = async (
+  memoId: string,
+  body: string,
+): Promise<void> => {
+  await rebuildMemoLinks(memoId, body);
+  await rebuildTokenIndexForMemo(memoId, body);
+  await rebuildChunkIndexForMemo(memoId, body);
+  invalidateHybridSearchCache();
+};
+
+const runMemoIndexRebuildAsync = (memoId: string, body: string): void => {
+  void rebuildMemoIndexes(memoId, body).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[Index][Memo] async rebuild failed memoId=${memoId} ${message}`);
+  });
+};
+
 export const upsertMemoForTask = async (
   taskId: string,
   body: string,
+  options?: UpsertMemoOptions,
 ): Promise<MemoRecord> => {
   await ensureDbReady();
   const now = Date.now();
+  const indexMode: MemoIndexMode = options?.indexMode ?? "sync";
+  const shouldEnqueueSync = options?.enqueueSync !== false;
   const existing = await executeSql(
     "SELECT id, created_at FROM memos WHERE task_id = ? LIMIT 1",
     [taskId],
@@ -98,28 +157,116 @@ export const upsertMemoForTask = async (
       "UPDATE memos SET body = ?, updated_at = ? WHERE id = ?",
       [body, now, row.id],
     );
-    await rebuildMemoLinks(row.id, body);
-    return {
+    if (indexMode === "async") {
+      runMemoIndexRebuildAsync(row.id, body);
+    } else {
+      await rebuildMemoIndexes(row.id, body);
+    }
+    const updated = {
       id: row.id,
       taskId,
       body,
       createdAt: row.created_at,
       updatedAt: now,
     };
+    if (shouldEnqueueSync) {
+      const deviceId = await loadSyncDeviceId();
+      await persistAndEnqueueSyncEnvelope(
+        buildTaskMemoSyncEnvelope({
+          memo: updated,
+          deviceId,
+        }),
+      );
+    }
+    return updated;
   }
   const memoId = nanoid();
   await executeSql(
     "INSERT INTO memos (id, task_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
     [memoId, taskId, body, now, now],
   );
-  await rebuildMemoLinks(memoId, body);
-  return {
+  if (indexMode === "async") {
+    runMemoIndexRebuildAsync(memoId, body);
+  } else {
+    await rebuildMemoIndexes(memoId, body);
+  }
+  const created = {
     id: memoId,
     taskId,
     body,
     createdAt: now,
     updatedAt: now,
   };
+  if (shouldEnqueueSync) {
+    const deviceId = await loadSyncDeviceId();
+    await persistAndEnqueueSyncEnvelope(
+      buildTaskMemoSyncEnvelope({
+        memo: created,
+        deviceId,
+      }),
+    );
+  }
+  return created;
+};
+
+export const upsertMemoRecord = async (
+  record: MemoRecord,
+  options?: { indexMode?: MemoIndexMode },
+): Promise<MemoRecord> => {
+  await ensureDbReady();
+  const result = await executeSql(
+    "SELECT id FROM memos WHERE id = ? LIMIT 1",
+    [record.id],
+  );
+  if (result.rows.length > 0) {
+    await executeSql(
+      "UPDATE memos SET task_id = ?, body = ?, created_at = ?, updated_at = ? WHERE id = ?",
+      [record.taskId, record.body, record.createdAt, record.updatedAt, record.id],
+    );
+  } else {
+    await executeSql(
+      "INSERT INTO memos (id, task_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      [record.id, record.taskId, record.body, record.createdAt, record.updatedAt],
+    );
+  }
+  const indexMode: MemoIndexMode = options?.indexMode ?? "sync";
+  if (indexMode === "async") {
+    runMemoIndexRebuildAsync(record.id, record.body);
+  } else {
+    await rebuildMemoIndexes(record.id, record.body);
+  }
+  return record;
+};
+
+export const deleteMemoById = async (
+  memoId: string,
+  options?: { enqueueSync?: boolean },
+): Promise<void> => {
+  await ensureDbReady();
+  const existing = await getMemoById(memoId);
+  await executeSql("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    await executeSql("DELETE FROM memo_links WHERE memo_id = ?", [memoId]);
+    await executeSql("DELETE FROM token_index WHERE memo_id = ?", [memoId]);
+    await executeSql("DELETE FROM chunk_index WHERE memo_id = ?", [memoId]);
+    await executeSql("DELETE FROM memos WHERE id = ?", [memoId]);
+    await executeSql("COMMIT");
+  } catch (error) {
+    await executeSql("ROLLBACK");
+    throw error;
+  }
+  invalidateHybridSearchCache();
+  if (options?.enqueueSync === false || !existing) {
+    return;
+  }
+  const deviceId = await loadSyncDeviceId();
+  await persistAndEnqueueSyncEnvelope(
+    buildTaskMemoSyncEnvelope({
+      memo: existing,
+      deletedAt: Date.now(),
+      deviceId,
+    }),
+  );
 };
 
 export const rebuildMemoLinks = async (
@@ -149,25 +296,32 @@ export const getTokensByMemoId = async (memoId: string): Promise<string[]> => {
   return (result.rows._array as MemoLinkRow[]).map((row) => row.token);
 };
 
+export const searchByToken = async (token: string): Promise<TokenIndexHit[]> =>
+  searchTokenIndexByToken(token);
+
 export const findMemosByToken = async (
   token: string,
 ): Promise<MemoSearchHit[]> => {
   await ensureDbReady();
+  const tokenHits = await searchByToken(token);
+  if (tokenHits.length === 0) {
+    return [];
+  }
+  const memoIds = tokenHits.map((hit) => hit.memoId);
+  const placeholders = memoIds.map(() => "?").join(", ");
   const result = await executeSql(
-    "SELECT m.id as memo_id, m.task_id as task_id, m.body as body, m.updated_at as updated_at FROM memo_links ml JOIN memos m ON m.id = ml.memo_id WHERE ml.token = ? ORDER BY m.updated_at DESC",
-    [token],
+    `SELECT id as memo_id, task_id as task_id, body as body, updated_at as updated_at FROM memos WHERE id IN (${placeholders}) ORDER BY updated_at DESC`,
+    memoIds,
   );
-  return (result.rows._array as Array<{
-    memo_id: string;
-    task_id: string;
-    body: string;
-    updated_at: number;
-  }>).map((row) => ({
+  const snippetByMemoId = new Map(
+    tokenHits.map((hit) => [hit.memoId, hit.snippet]),
+  );
+  return (result.rows._array as MemoSearchRow[]).map((row) => ({
     memoId: row.memo_id,
     taskId: row.task_id,
     taskTitle: taskTitleById.get(row.task_id) || "未設定",
     updatedAt: row.updated_at,
-    preview: buildPreview(row.body),
+    preview: snippetByMemoId.get(row.memo_id) || buildPreview(row.body),
   }));
 };
 
@@ -214,16 +368,12 @@ export const searchMemosByToken = async (
   }
   const likeQuery = `%${escapeLike(normalized)}%`;
   const result = await executeSql(
-    "SELECT m.id as memo_id, m.task_id as task_id, m.body as body, m.updated_at as updated_at, ml.token as token FROM memo_links ml JOIN memos m ON m.id = ml.memo_id WHERE ml.token LIKE ? ESCAPE '\\' ORDER BY m.updated_at DESC",
+    "SELECT m.id as memo_id, m.task_id as task_id, m.body as body, m.updated_at as updated_at, ti.token as token, ti.snippet as snippet FROM token_index ti JOIN memos m ON m.id = ti.memo_id WHERE ti.token LIKE ? ESCAPE '\\' ORDER BY m.updated_at DESC",
     [likeQuery],
   );
-  const rows = result.rows._array as Array<{
-    memo_id: string;
-    task_id: string;
-    body: string;
-    updated_at: number;
-    token: string;
-  }>;
+  const rows = result.rows._array as Array<
+    MemoSearchRow & { token: string; snippet: string | null }
+  >;
   const filtered = rows.filter((row) => row.token.includes(normalized));
   const hitByMemoId = new Map<string, MemoSearchHit>();
   for (const row of filtered) {
@@ -233,7 +383,7 @@ export const searchMemosByToken = async (
         taskId: row.task_id,
         taskTitle: taskTitleById.get(row.task_id) || "未設定",
         updatedAt: row.updated_at,
-        preview: buildPreview(row.body),
+        preview: row.snippet || buildPreview(row.body),
       });
     }
   }

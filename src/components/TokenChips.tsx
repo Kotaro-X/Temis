@@ -4,12 +4,13 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 type Props = {
   tokens: string[];
   onPressToken?: (token: string) => void;
+  emptyLabel?: string;
 };
 
-const TokenChips = ({ tokens, onPressToken }: Props) => {
+const TokenChips = ({ tokens, onPressToken, emptyLabel }: Props) => {
   if (tokens.length === 0) {
     return (
-      <Text style={styles.emptyText}>リンク単語はありません</Text>
+      <Text style={styles.emptyText}>{emptyLabel ?? "リンク単語はありません"}</Text>
     );
   }
   return (

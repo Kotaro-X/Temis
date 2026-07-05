@@ -9,12 +9,14 @@ import {
 } from "react-native";
 
 import { findMemosByToken, MemoSearchHit } from "../db/memoRepo";
+import { AppLanguage, t } from "../i18n";
 
 type Props = {
   visible: boolean;
   token: string | null;
   onClose: () => void;
   onSelectTaskId?: (taskId: string) => void;
+  language?: AppLanguage;
 };
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
@@ -31,7 +33,9 @@ const TokenReferenceOverlay = ({
   token,
   onClose,
   onSelectTaskId,
+  language = "ja",
 }: Props) => {
+  const tr = (key: string) => t(language, key);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<MemoSearchHit[]>([]);
 
@@ -74,13 +78,15 @@ const TokenReferenceOverlay = ({
           <View style={styles.header}>
             <Text style={styles.title}>{headerLabel}</Text>
             <Pressable style={styles.closeButton} onPress={onClose}>
-              <Text style={styles.closeText}>閉じる</Text>
+              <Text style={styles.closeText}>{tr("common.close")}</Text>
             </Pressable>
           </View>
           {loading ? (
-            <Text style={styles.helperText}>読み込み中...</Text>
+            <Text style={styles.helperText}>{tr("common.loading")}</Text>
           ) : items.length === 0 ? (
-            <Text style={styles.helperText}>該当メモがありません</Text>
+            <Text style={styles.helperText}>
+              {language === "en" ? "No matching memos" : "該当メモがありません"}
+            </Text>
           ) : (
             <ScrollView style={styles.list} contentContainerStyle={styles.listBody}>
               {items.map((item) => (

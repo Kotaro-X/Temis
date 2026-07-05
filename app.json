@@ -2,7 +2,7 @@
   "expo": {
     "name": "Temis",
     "slug": "temis",
-    "version": "1.0.0",
+    "version": "1.2.2",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,7 +14,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.WeMemo",
+      "bundleIdentifier": "com.dotbase.temis",
+      "googleServicesFile": "./ios/Temis/GoogleService-Info.plist",
       "icon": "./assets/icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -27,13 +28,30 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.WeMemo"
+      "package": "com.dotbase.temis"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-sqlite"
+      "expo-notifications",
+      "expo-sqlite",
+      "expo-build-properties",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.9459134170-nhk7cvil623qa6d2knlbsp7tv2gm7m6h"
+        }
+      ],
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": false,
+          "entitlementsProfile": "production",
+          "forceCxx20": true,
+          "enableOpenCL": true
+        }
+      ]
     ],
     "extra": {
       "eas": {
