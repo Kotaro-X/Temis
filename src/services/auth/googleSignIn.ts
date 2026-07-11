@@ -31,6 +31,8 @@ const isGoogleFirebaseUser = (user: User | null): user is User => {
   return user.providerData.some((provider) => provider?.providerId === "google.com");
 };
 
+export const isGoogleSyncFirebaseUser = isGoogleFirebaseUser;
+
 const toGoogleSyncUser = (user: User): GoogleSyncUser => ({
   id: user.uid,
   email: user.email,

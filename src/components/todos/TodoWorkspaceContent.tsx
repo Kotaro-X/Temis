@@ -1,18 +1,12 @@
 import React from "react";
-import {
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
-import Header from "../components/common/Header";
-
-type CalendarCell = {
-  iso: string;
-  day: number;
-  inCurrentMonth: boolean;
-};
+import Header from "../common/Header";
+import type {
+  CalendarDayCell,
+  TodoListEntry,
+  TodoListRange,
+} from "../../hooks/todos/todoWorkspaceUtils";
 
 type Props = {
   styles: Record<string, any>;
@@ -23,23 +17,27 @@ type Props = {
   tr: (key: string) => string;
   todoViewMode: "list" | "calendar";
   setTodoViewMode: (mode: "list" | "calendar") => void;
-  todoListRange: "today" | "week" | "month";
-  setTodoListRange: (range: "today" | "week" | "month") => void;
-  renderTodoListItems: (items: any[], emptyLabel: string) => React.ReactNode;
-  todoListEntries: any[];
+  todoListRange: TodoListRange;
+  setTodoListRange: (range: TodoListRange) => void;
+  renderTodoListItems: (
+    items: TodoListEntry[],
+    emptyLabel: string,
+  ) => React.ReactNode;
+  todoListEntries: TodoListEntry[];
   todoCalendarMonthLabel: string;
-  todoCalendarMonth: Date;
-  setTodoCalendarMonth: (updater: (prev: Date) => Date) => void;
+  setTodoCalendarMonth: React.Dispatch<React.SetStateAction<Date>>;
   calendarWeekdayLabels: string[];
-  todoScreenCalendarCells: CalendarCell[];
+  todoScreenCalendarCells: CalendarDayCell[];
   todoCalendarSelectedDate: string;
-  onSelectCalendarDate: (cell: CalendarCell) => void;
+  onSelectCalendarDate: (cell: CalendarDayCell) => void;
   todoCountsByDate: Map<string, number>;
-  selectedDateTodos: any[];
-  unscheduledTodos: any[];
+  selectedDateTodos: TodoListEntry[];
+  unscheduledTodos: TodoListEntry[];
 };
 
-const TodoScreen = ({
+const TODO_LIST_RANGES: TodoListRange[] = ["today", "week", "month"];
+
+const TodoWorkspaceContent = ({
   styles,
   insetsTop,
   title,
@@ -64,10 +62,7 @@ const TodoScreen = ({
 }: Props) => {
   return (
     <ScrollView
-      contentContainerStyle={[
-        styles.content,
-        { paddingTop: insetsTop },
-      ]}
+      contentContainerStyle={[styles.content, { paddingTop: insetsTop }]}
       keyboardShouldPersistTaps="handled"
     >
       <Header styles={styles} title={title} left={headerLeft} right={headerRight} />
@@ -113,7 +108,7 @@ const TodoScreen = ({
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.filterRow}
             >
-              {(["today", "week", "month"] as const).map((range) => (
+              {TODO_LIST_RANGES.map((range) => (
                 <Pressable
                   key={range}
                   style={[
@@ -225,4 +220,4 @@ const TodoScreen = ({
   );
 };
 
-export default TodoScreen;
+export default TodoWorkspaceContent;

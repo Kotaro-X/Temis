@@ -25,12 +25,14 @@ const MemoWorkspaceShell = ({
     openTasks,
     openMemoHome,
     memoScreen,
+    memoTab,
     memoDetailId,
     memoSearchOpen,
     memoSearchQuery,
     openMemoDetail,
     closeMemoDetail,
     closeMemoSearch,
+    setMemoTab,
   } = useAppUI();
 
   const handleCloseMemoDetail = () => {
@@ -47,9 +49,10 @@ const MemoWorkspaceShell = ({
     [openMemoDetail],
   );
 
-  const memoWorkspace = active ? (
+  const memoWorkspace =
     memoScreen === "research" ? (
       <ResearchScreen
+        visible={active}
         onBack={openMemoHome}
         onOpenMenu={openMenu}
         language={appLanguage}
@@ -57,15 +60,16 @@ const MemoWorkspaceShell = ({
       />
     ) : (
       <MemoScreen
+        visible={active}
         onBack={openTasks}
         onOpenMenu={openMenu}
         navigation={memoNavigation}
-        initialTab={memoScreen === "notes" ? "note" : undefined}
+        tab={memoTab}
+        onChangeTab={setMemoTab}
         refreshToken={refreshVersions.memos}
         language={appLanguage}
       />
-    )
-  ) : null;
+    );
 
   return (
     <>

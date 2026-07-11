@@ -7,6 +7,7 @@ export type TaskWorkspaceScreenKey =
   | "taskDetail";
 
 export type MemoWorkspaceScreenKey = "memo" | "notes" | "research";
+export type MemoWorkspaceTabKey = "all" | "task" | "note";
 
 export type SettingsWorkspaceScreenKey =
   | "settings"
@@ -20,6 +21,7 @@ export type AppWorkspaceNavigationState = {
   rootScreen: AppRootScreen;
   taskScreen: TaskWorkspaceScreenKey;
   memoScreen: MemoWorkspaceScreenKey;
+  memoTab: MemoWorkspaceTabKey;
   settingsScreen: SettingsWorkspaceScreenKey;
   memoDetailId: string | null;
   memoSearchOpen: boolean;
@@ -40,8 +42,9 @@ export const APP_WORKSPACE_TRANSITION_POLICY = {
     discardDraftOnDeactivate: true,
   },
   memos: {
-    // Keep the current memo/research tab, but close detail overlays when
-    // leaving the memo workspace. Search stays global because tasks can open it.
+    // Keep the current memo/research workspace and selected memo segment
+    // across tab switches, but close detail overlays when leaving.
+    // Search stays global because tasks can open it.
     resetDetailOnDeactivate: true,
     keepSearchOverlayAcrossTabs: true,
   },

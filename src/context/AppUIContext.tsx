@@ -8,6 +8,7 @@ import {
   APP_WORKSPACE_TRANSITION_POLICY,
   transitionAppRootScreen,
   type AppRootScreen,
+  type MemoWorkspaceTabKey,
   type AppWorkspaceNavigationState,
   type MemoWorkspaceScreenKey,
   type SettingsWorkspaceScreenKey,
@@ -34,6 +35,7 @@ type AppUIContextValue = {
   downloadCompleteNoticeOpen: boolean;
   taskScreen: TaskWorkspaceScreenKey;
   memoScreen: MemoWorkspaceScreenKey;
+  memoTab: MemoWorkspaceTabKey;
   settingsScreen: SettingsWorkspaceScreenKey;
   memoDetailId: string | null;
   memoSearchOpen: boolean;
@@ -49,6 +51,7 @@ type AppUIContextValue = {
   openMemoNotes: () => void;
   openMemoResearch: () => void;
   setMemoScreen: React.Dispatch<React.SetStateAction<MemoWorkspaceScreenKey>>;
+  setMemoTab: React.Dispatch<React.SetStateAction<MemoWorkspaceTabKey>>;
   openSettings: (screen?: SettingsWorkspaceScreenKey) => void;
   openSettingsHome: () => void;
   openSettingsSync: () => void;
@@ -150,6 +153,7 @@ export const AppUIProvider = ({
   const [rootScreen, setRootScreen] = useState<AppRootScreen>("tasks");
   const [taskScreen, setTaskScreen] = useState<TaskWorkspaceScreenKey>("today");
   const [memoScreen, setMemoScreen] = useState<MemoWorkspaceScreenKey>("memo");
+  const [memoTab, setMemoTab] = useState<MemoWorkspaceTabKey>("all");
   const [settingsScreen, setSettingsScreen] =
     useState<SettingsWorkspaceScreenKey>("settings");
   const [memoDetailId, setMemoDetailId] = useState<string | null>(null);
@@ -196,6 +200,7 @@ export const AppUIProvider = ({
         rootScreen,
         taskScreen,
         memoScreen,
+        memoTab,
         settingsScreen,
         memoDetailId,
         memoSearchOpen,
@@ -211,6 +216,9 @@ export const AppUIProvider = ({
       if (nextState.settingsScreen !== settingsScreen) {
         setSettingsScreen(nextState.settingsScreen);
       }
+      if (nextState.memoTab !== memoTab) {
+        setMemoTab(nextState.memoTab);
+      }
       if (nextState.memoDetailId !== memoDetailId) {
         setMemoDetailId(nextState.memoDetailId);
       }
@@ -219,6 +227,7 @@ export const AppUIProvider = ({
     [
       memoDetailId,
       memoScreen,
+      memoTab,
       memoSearchOpen,
       memoSearchQuery,
       rootScreen,
@@ -320,17 +329,22 @@ export const AppUIProvider = ({
   const openMemos = useCallback((screen?: MemoWorkspaceScreenKey) => {
     if (screen) {
       setMemoScreen(screen);
+      if (screen === "notes") {
+        setMemoTab("note");
+      }
     }
     switchRootScreen("memos");
   }, [switchRootScreen]);
 
   const openMemoHome = useCallback(() => {
     setMemoScreen("memo");
+    setMemoTab("all");
     switchRootScreen("memos");
   }, [switchRootScreen]);
 
   const openMemoNotes = useCallback(() => {
     setMemoScreen("notes");
+    setMemoTab("note");
     switchRootScreen("memos");
   }, [switchRootScreen]);
 
@@ -409,6 +423,7 @@ export const AppUIProvider = ({
       downloadCompleteNoticeOpen,
       taskScreen,
       memoScreen,
+      memoTab,
       settingsScreen,
       memoDetailId,
       memoSearchOpen,
@@ -424,6 +439,7 @@ export const AppUIProvider = ({
       openMemoNotes,
       openMemoResearch,
       setMemoScreen,
+      setMemoTab,
       openSettings,
       openSettingsHome,
       openSettingsSync,
@@ -466,6 +482,7 @@ export const AppUIProvider = ({
       jumpToToday,
       memoDetailId,
       memoScreen,
+      memoTab,
       memoSearchOpen,
       memoSearchQuery,
       menuOpen,

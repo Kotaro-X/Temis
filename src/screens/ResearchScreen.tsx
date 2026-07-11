@@ -35,6 +35,7 @@ import { ResearchNote } from "../types/research";
 const CHAT_URL = "https://ig.me/j/AbYeWHV2gCB--JLL/";
 
 type Props = {
+  visible: boolean;
   onBack: () => void;
   onOpenMenu: () => void;
   language: AppLanguage;
@@ -68,6 +69,7 @@ const buildTitle = (note: ResearchNote, fallback: string) => {
 };
 
 const ResearchScreen = ({
+  visible,
   onBack,
   onOpenMenu,
   language,
@@ -384,6 +386,10 @@ const ResearchScreen = ({
       </Pressable>
     );
   };
+
+  if (!visible) {
+    return null;
+  }
 
   return (
     <SafeAreaView style={styles.container}>

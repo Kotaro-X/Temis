@@ -39,13 +39,14 @@ import {
 import BracketToolbar from "../components/BracketToolbar";
 import { AppLanguage, t } from "../i18n";
 import { useAI } from "../hooks/useAI";
+import type { MemoWorkspaceTabKey } from "../types/appNavigation";
 import type { AIEvidence } from "../types";
 
 export type MemoNavigation = {
   push: (screen: "MemoDetail", params: { id: string }) => void;
 };
 
-type MemoTab = "all" | "task" | "note";
+type MemoTab = MemoWorkspaceTabKey;
 
 type MemoItem = {
   key: string;
@@ -70,10 +71,12 @@ type Section = {
 };
 
 type Props = {
+  visible: boolean;
   onBack: () => void;
   onOpenMenu: () => void;
   navigation: MemoNavigation;
-  initialTab?: MemoTab;
+  tab: MemoTab;
+  onChangeTab: (tab: MemoTab) => void;
   refreshToken?: number;
   language: AppLanguage;
 };
@@ -314,10 +317,12 @@ const CitationList = ({
 );
 
 const MemoScreen = ({
+  visible,
   onBack,
   onOpenMenu,
   navigation,
-  initialTab,
+  tab,
+  onChangeTab,
   refreshToken = 0,
   language,
 }: Props) => {
@@ -351,7 +356,6 @@ const MemoScreen = ({
     }
     return tankyuLabel;
   };
-  const [tab, setTab] = useState<MemoTab>(initialTab ?? "all");
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<MemoItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -397,12 +401,6 @@ const MemoScreen = ({
     answerError: tr("memo.qaErrorAnswer"),
     answerTimeoutError: tr("memo.qaErrorAnswerTimeout"),
   });
-
-  useEffect(() => {
-    if (initialTab) {
-      setTab(initialTab);
-    }
-  }, [initialTab]);
 
   const loadItems = useCallback(() => {
     let active = true;
@@ -837,6 +835,10 @@ const MemoScreen = ({
     setHeaderBottomY((prev) => (Math.abs(prev - next) > 1 ? next : prev));
   }, []);
 
+  if (!visible) {
+    return null;
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header} onLayout={handleHeaderLayout}>
@@ -869,7 +871,7 @@ const MemoScreen = ({
                 styles.segmentButton,
                 active && styles.segmentButtonActive,
               ]}
-              onPress={() => setTab(key)}
+              onPress={() => onChangeTab(key)}
             >
               <Text
                 style={[

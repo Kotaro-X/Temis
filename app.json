@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.dotbase.temis",
+      "bundleIdentifier": "com.anonymous.WeMemo",
       "googleServicesFile": "./ios/Temis/GoogleService-Info.plist",
       "icon": "./assets/icon.png",
       "infoPlist": {
@@ -40,7 +40,7 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.9459134170-nhk7cvil623qa6d2knlbsp7tv2gm7m6h"
+          "iosUrlScheme": "com.googleusercontent.apps.9459134170-t4lm1mns4hv6qli65jatpac757pbf4gf"
         }
       ],
       [

@@ -6,6 +6,7 @@ import { AppRefreshProvider } from "../../context/AppRefreshContext";
 import { AppSettingsProvider } from "../../context/AppSettingsContext";
 import { AppUIProvider } from "../../context/AppUIContext";
 import { useAppRefresh } from "../../context/AppRefreshContext";
+import { SubscriptionProvider } from "../../context/SubscriptionContext";
 
 const AppBootstrapBoundary = ({
   children,
@@ -23,15 +24,17 @@ const AppProviders = ({
 }: {
   children: React.ReactNode;
 }) => (
-  <AppSettingsProvider>
-    <AppUIProvider>
-      <AppRefreshProvider>
-        <CloudSyncProvider>
-          <AppBootstrapBoundary>{children}</AppBootstrapBoundary>
-        </CloudSyncProvider>
-      </AppRefreshProvider>
-    </AppUIProvider>
-  </AppSettingsProvider>
+  <SubscriptionProvider>
+    <AppSettingsProvider>
+      <AppUIProvider>
+        <AppRefreshProvider>
+          <CloudSyncProvider>
+            <AppBootstrapBoundary>{children}</AppBootstrapBoundary>
+          </CloudSyncProvider>
+        </AppRefreshProvider>
+      </AppUIProvider>
+    </AppSettingsProvider>
+  </SubscriptionProvider>
 );
 
 export default AppProviders;

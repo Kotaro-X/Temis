@@ -2,7 +2,6 @@ import { useEffect } from "react";
 
 import {
   loadCloudSyncEnabled,
-  loadCloudSyncEntitled,
   loadStoredAppLanguage,
   loadTimeBoxSchedule,
 } from "../../../storage";
@@ -24,7 +23,6 @@ type Args = {
   setArchivedTagLibrary: React.Dispatch<React.SetStateAction<Tag[]>>;
   setTimeBoxSchedule: React.Dispatch<React.SetStateAction<TimeBoxSchedule>>;
   setAppLanguage: React.Dispatch<React.SetStateAction<AppLanguage>>;
-  setCloudSyncEntitled: React.Dispatch<React.SetStateAction<boolean>>;
   setCloudSyncEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setLanguagePickerOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setStorageReady: React.Dispatch<React.SetStateAction<boolean>>;
@@ -40,7 +38,6 @@ export const useAppSettingsBootstrap = ({
   setArchivedTagLibrary,
   setTimeBoxSchedule,
   setAppLanguage,
-  setCloudSyncEntitled,
   setCloudSyncEnabled,
   setLanguagePickerOpen,
   setStorageReady,
@@ -53,14 +50,12 @@ export const useAppSettingsBootstrap = ({
         loadedTagState,
         loadedSchedule,
         loadedLanguage,
-        loadedCloudSyncEntitled,
         loadedCloudSyncEnabled,
       ] =
         await Promise.all([
           loadTagLibraries(),
           loadTimeBoxSchedule(),
           loadStoredAppLanguage(),
-          loadCloudSyncEntitled(),
           loadCloudSyncEnabled(),
         ]);
 
@@ -81,7 +76,6 @@ export const useAppSettingsBootstrap = ({
       setArchivedTagLibrary(normalizedTags.archivedTags);
       setTimeBoxSchedule(loadedSchedule);
       setAppLanguage(resolvedLanguage);
-      setCloudSyncEntitled(loadedCloudSyncEntitled);
       setCloudSyncEnabled(loadedCloudSyncEnabled);
       setLanguagePickerOpen(!loadedLanguage);
       setStorageReady(true);
@@ -109,7 +103,6 @@ export const useAppSettingsBootstrap = ({
     persistTagState,
     setAppLanguage,
     setCloudSyncEnabled,
-    setCloudSyncEntitled,
     setArchivedTagLibrary,
     setLanguagePickerOpen,
     setStorageReady,

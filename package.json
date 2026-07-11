@@ -8,7 +8,12 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test": "node --experimental-strip-types --experimental-specifier-resolution=node --test tests/*.test.ts",
+    "test:firestore-rules": "firebase emulators:exec --project demo-wememo --only firestore \"node --experimental-strip-types --experimental-specifier-resolution=node --test tests/firestore-rules.test.ts\"",
     "cloud-sync:preflight": "bash ./scripts/cloud-sync-preflight.sh",
+    "firebase:backfill-invite-grant-expiry": "node --experimental-strip-types ./scripts/backfill-invite-grant-expiry.ts",
+    "firebase:create-invite-code": "node --experimental-strip-types ./scripts/create-invite-code.ts",
+    "firebase:grant-cloud-sync": "node --experimental-strip-types ./scripts/upsert-cloud-sync-grant.ts",
+    "firebase:set-admin-claim": "node --experimental-strip-types ./scripts/set-firebase-admin-claim.ts",
     "ios:device:debug": "bash ./scripts/ios-device-debug.sh",
     "ios:device:logs": "bash ./scripts/ios-device-logs.sh"
   },
@@ -30,11 +35,14 @@
     "nanoid": "^5.1.6",
     "react": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-purchases": "^10.4.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-svg": "15.12.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/react": "~19.1.0",
+    "firebase-admin": "^14.1.0",
     "typescript": "~5.9.2"
   },
   "private": true

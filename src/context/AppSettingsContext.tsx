@@ -1,18 +1,24 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   loadCloudSyncEnabled,
-  loadCloudSyncEntitled,
   loadTimeBoxSchedule,
   saveAppLanguage,
   saveCloudSyncEnabled,
-  saveCloudSyncEntitled,
 } from "../../storage";
 import { useAppSettingsBootstrap } from "../hooks/app/useAppSettingsBootstrap";
 import { useTags } from "../hooks/useTags";
 import { AppLanguage, t, tf } from "../i18n";
 import { getDefaultTagsForLanguage, syncBuiltInTagLanguage } from "../tagLocalization";
 import { DEFAULT_TIMEBOX_SCHEDULE, type Tag, type TaskStatus, type TimeBoxSchedule } from "../types";
+import { useSubscription } from "./SubscriptionContext";
 
 type AppSettingsContextValue = {
   appLanguage: AppLanguage;
@@ -44,7 +50,6 @@ type AppSettingsContextValue = {
   restoreTag: (tag: Tag, deviceId?: string | null) => Promise<unknown>;
   setTimeBoxSchedule: React.Dispatch<React.SetStateAction<TimeBoxSchedule>>;
   changeLanguage: (language: AppLanguage) => void;
-  setCloudSyncEntitled: (value: boolean) => Promise<void>;
   setCloudSyncEnabled: (value: boolean) => Promise<void>;
   selectInitialLanguage: (language: AppLanguage) => void;
   refreshSettings: () => Promise<void>;
@@ -60,6 +65,7 @@ export const AppSettingsProvider = ({
 }: {
   children: React.ReactNode;
 }) => {
+  const { isCloudSyncEntitled, refresh: refreshSubscription } = useSubscription();
   const {
     activeTags: tagLibrary,
     archivedTags: archivedTagLibrary,
@@ -77,7 +83,6 @@ export const AppSettingsProvider = ({
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("ja");
   const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
-  const [cloudSyncEntitled, setCloudSyncEntitledState] = useState(false);
   const [cloudSyncEnabled, setCloudSyncEnabledState] = useState(false);
   const [timeBoxSchedule, setTimeBoxSchedule] = useState<TimeBoxSchedule>(
     DEFAULT_TIMEBOX_SCHEDULE,
@@ -90,7 +95,6 @@ export const AppSettingsProvider = ({
     setArchivedTagLibrary,
     setTimeBoxSchedule,
     setAppLanguage,
-    setCloudSyncEntitled: setCloudSyncEntitledState,
     setCloudSyncEnabled: setCloudSyncEnabledState,
     setLanguagePickerOpen,
     setStorageReady,
@@ -130,38 +134,32 @@ export const AppSettingsProvider = ({
     setLanguagePickerOpen(false);
   }, [applyLanguage]);
 
-  const setCloudSyncEntitled = useCallback(async (value: boolean) => {
-    setCloudSyncEntitledState(value);
-    await saveCloudSyncEntitled(value);
-    if (!value) {
-      setCloudSyncEnabledState(false);
-      await saveCloudSyncEnabled(false);
-    }
-  }, []);
-
   const setCloudSyncEnabled = useCallback(async (value: boolean) => {
-    setCloudSyncEnabledState(value);
-    await saveCloudSyncEnabled(value);
-  }, []);
+    const nextValue = isCloudSyncEntitled ? value : false;
+    setCloudSyncEnabledState(nextValue);
+    await saveCloudSyncEnabled(nextValue);
+  }, [isCloudSyncEntitled]);
+
+  useEffect(() => {
+    if (isCloudSyncEntitled || !cloudSyncEnabled) {
+      return;
+    }
+    setCloudSyncEnabledState(false);
+    void saveCloudSyncEnabled(false);
+  }, [cloudSyncEnabled, isCloudSyncEntitled]);
 
   const refreshSettings = useCallback(async () => {
-    const [
-      loadedTagState,
-      loadedSchedule,
-      loadedCloudSyncEntitled,
-      loadedCloudSyncEnabled,
-    ] = await Promise.all([
+    const [loadedTagState, loadedSchedule, loadedCloudSyncEnabled] = await Promise.all([
       loadTagLibraries(),
       loadTimeBoxSchedule(),
-      loadCloudSyncEntitled(),
       loadCloudSyncEnabled(),
+      refreshSubscription(),
     ]);
     setTagLibrary(loadedTagState.activeTags);
     setArchivedTagLibrary(loadedTagState.archivedTags);
     setTimeBoxSchedule(loadedSchedule);
-    setCloudSyncEntitledState(loadedCloudSyncEntitled);
     setCloudSyncEnabledState(loadedCloudSyncEnabled);
-  }, [loadTagLibraries, setArchivedTagLibrary, setTagLibrary]);
+  }, [loadTagLibraries, refreshSubscription, setArchivedTagLibrary, setTagLibrary]);
 
   const tr = useCallback((key: string) => t(appLanguage, key), [appLanguage]);
   const trf = useCallback(
@@ -194,8 +192,8 @@ export const AppSettingsProvider = ({
       appLanguage,
       languagePickerOpen,
       storageReady,
-      cloudSyncEntitled,
-      cloudSyncEnabled,
+      cloudSyncEntitled: isCloudSyncEntitled,
+      cloudSyncEnabled: isCloudSyncEntitled ? cloudSyncEnabled : false,
       tagLibrary,
       archivedTagLibrary,
       timeBoxSchedule,
@@ -216,7 +214,6 @@ export const AppSettingsProvider = ({
       restoreTag,
       setTimeBoxSchedule,
       changeLanguage: applyLanguage,
-      setCloudSyncEntitled,
       setCloudSyncEnabled,
       selectInitialLanguage,
       refreshSettings,
@@ -226,7 +223,7 @@ export const AppSettingsProvider = ({
       applyLanguage,
       archivedTagLibrary,
       cloudSyncEnabled,
-      cloudSyncEntitled,
+      isCloudSyncEntitled,
       languagePickerOpen,
       noTagLabel,
       persistActiveTags,
@@ -238,7 +235,6 @@ export const AppSettingsProvider = ({
       archiveTag,
       restoreTag,
       setCloudSyncEnabled,
-      setCloudSyncEntitled,
       selectInitialLanguage,
       setArchivedTagLibrary,
       setTagLibrary,

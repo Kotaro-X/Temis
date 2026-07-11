@@ -21,8 +21,10 @@ const SYNC_CAPABILITIES: SyncCapabilities = {
 
 export const useCloudSync = ({
   enabled,
+  entitled,
 }: {
   enabled: boolean;
+  entitled: boolean;
 }) => {
   const [status, setStatus] = useState<SyncStatus>("idle");
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -33,6 +35,14 @@ export const useCloudSync = ({
   >("restoring");
   const [user, setUser] = useState<GoogleSyncUser | null>(null);
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canSync = enabled && entitled;
+
+  const clearAutoSyncTimer = useCallback(() => {
+    if (autoSyncTimerRef.current) {
+      clearTimeout(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
+  }, []);
 
   const restoreSession = useCallback(async () => {
     try {
@@ -55,10 +65,18 @@ export const useCloudSync = ({
   }, [restoreSession]);
 
   const syncNow = useCallback(async () => {
+    if (!entitled) {
+      setStatus("idle");
+      setError(null);
+      setLastResultMessage(null);
+      clearAutoSyncTimer();
+      return null;
+    }
     if (!enabled) {
       setStatus("idle");
-      setError("Cloud Sync is disabled.");
-      setLastResultMessage("Cloud Sync is disabled.");
+      setError(null);
+      setLastResultMessage(null);
+      clearAutoSyncTimer();
       return null;
     }
     const restoredUser = getCurrentGoogleSyncUser() ?? (await restoreSession());
@@ -81,20 +99,19 @@ export const useCloudSync = ({
     setError(result.status === "error" ? result.message ?? null : null);
     setLastResultMessage(result.message ?? result.status);
     return result;
-  }, [enabled, restoreSession]);
+  }, [clearAutoSyncTimer, enabled, entitled, restoreSession]);
 
   const scheduleAutoSync = useCallback(() => {
-    if (!enabled || authStatus !== "signedIn") {
+    if (!canSync || authStatus !== "signedIn") {
+      clearAutoSyncTimer();
       return;
     }
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current);
-    }
+    clearAutoSyncTimer();
     autoSyncTimerRef.current = setTimeout(() => {
       autoSyncTimerRef.current = null;
       void syncNow();
     }, 750);
-  }, [authStatus, enabled, syncNow]);
+  }, [authStatus, canSync, clearAutoSyncTimer, syncNow]);
 
   const signIn = useCallback(async () => {
     setAuthStatus("signingIn");
@@ -154,23 +171,18 @@ export const useCloudSync = ({
   }, [scheduleAutoSync]);
 
   useEffect(() => {
-    if (enabled && authStatus === "signedIn") {
+    if (canSync && authStatus === "signedIn") {
       scheduleAutoSync();
       return;
     }
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current);
-      autoSyncTimerRef.current = null;
-    }
-  }, [authStatus, enabled, scheduleAutoSync]);
+    clearAutoSyncTimer();
+  }, [authStatus, canSync, clearAutoSyncTimer, scheduleAutoSync]);
 
   useEffect(
     () => () => {
-      if (autoSyncTimerRef.current) {
-        clearTimeout(autoSyncTimerRef.current);
-      }
+      clearAutoSyncTimer();
     },
-    [],
+    [clearAutoSyncTimer],
   );
 
   return {

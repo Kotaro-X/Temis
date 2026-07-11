@@ -4,6 +4,7 @@ import { useAppRefresh } from "../../context/AppRefreshContext";
 import { useAppSettings } from "../../context/AppSettingsContext";
 import { useAppUI } from "../../context/AppUIContext";
 import { useCloudSyncContext } from "../../context/CloudSyncContext";
+import { useSubscription } from "../../context/SubscriptionContext";
 import type { DeletedItemView } from "../settings/DeletedItemsSection";
 import GeneralSettingsBridge from "../settings-bridges/GeneralSettingsBridge";
 import TaskSettingsBridge from "../settings-bridges/TaskSettingsBridge";
@@ -159,6 +160,7 @@ const SettingsShell = ({
     tagLibrary,
     timeBoxSchedule,
     tr,
+    trf,
     addTag,
     renameTag,
     archiveTag,
@@ -166,6 +168,17 @@ const SettingsShell = ({
   } = useAppSettings();
   const { openMenu, settingsScreen, setSettingsScreen } = useAppUI();
   const { isRefreshing, refreshApp } = useAppRefresh();
+  const {
+    status: subscriptionStatus,
+    inviteStatus,
+    accessGrant,
+    cloudSyncAccessSource,
+    error: subscriptionError,
+    inviteError,
+    purchase: purchaseCloudSync,
+    restore: restoreCloudSync,
+    redeemInviteCode: redeemCloudSyncInviteCode,
+  } = useSubscription();
   const {
     status: syncStatus,
     lastSyncedAt,
@@ -205,6 +218,7 @@ const SettingsShell = ({
   const [restoringDeletedItemKey, setRestoringDeletedItemKey] = useState<string | null>(
     null,
   );
+  const [inviteCode, setInviteCode] = useState("");
   const [expandedTimeBoxes, setExpandedTimeBoxes] = useState<
     Record<SlotKey, boolean>
   >(
@@ -335,6 +349,30 @@ const SettingsShell = ({
       });
   };
 
+  const inviteCodeTrimmed = inviteCode.trim();
+  const inviteRedemptionDisabled =
+    syncAuthStatus !== "signedIn" ||
+    inviteCodeTrimmed.length === 0 ||
+    inviteStatus === "redeeming";
+  const cloudSyncAccessCaption =
+    cloudSyncAccessSource === "staff_free"
+      ? tr("settings.sync.staffGrantActive")
+      : cloudSyncAccessSource === "invite_free"
+        ? accessGrant?.inviteCode
+          ? trf("settings.sync.inviteGrantActiveWithCode", {
+              code: accessGrant.inviteCode,
+            })
+          : tr("settings.sync.inviteGrantActive")
+        : cloudSyncAccessSource === "invite_discount"
+          ? accessGrant?.inviteCode
+            ? trf("settings.sync.inviteDiscountReadyWithCode", {
+                code: accessGrant.inviteCode,
+              })
+            : tr("settings.sync.inviteDiscountReady")
+          : cloudSyncAccessSource === "revenuecat"
+            ? tr("settings.sync.revenueCatActive")
+            : null;
+
   const settingsWorkspace = active ? (
     <GeneralSettingsBridge
       language={dataConfig.language}
@@ -362,8 +400,34 @@ const SettingsShell = ({
           googleAccountName={syncUser?.name ?? null}
           cloudSyncEntitled={cloudSyncEntitled}
           cloudSyncEnabled={cloudSyncEnabled}
+          subscriptionStatus={subscriptionStatus}
+          subscriptionError={subscriptionError}
+          subscriptionAccessSource={cloudSyncAccessSource}
+          subscriptionAccessCaption={cloudSyncAccessCaption}
+          inviteStatus={inviteStatus}
+          inviteError={inviteError}
+          inviteCode={inviteCode}
+          onChangeInviteCode={setInviteCode}
+          inviteRedemptionDisabled={inviteRedemptionDisabled}
+          focusCloudSyncPurchase={settingsScreen === "sync"}
+          onOpenCloudSyncPurchase={() => {
+            setSettingsScreen("sync");
+          }}
           onToggleCloudSync={(value) => {
             void setCloudSyncEnabled(value);
+          }}
+          onPurchaseCloudSync={() => {
+            void purchaseCloudSync();
+          }}
+          onRestoreCloudSync={() => {
+            void restoreCloudSync();
+          }}
+          onRedeemInviteCode={() => {
+            void redeemCloudSyncInviteCode(inviteCodeTrimmed).then((grant) => {
+              if (grant) {
+                setInviteCode("");
+              }
+            });
           }}
           onSignInWithGoogle={() => {
             void signInToSync();

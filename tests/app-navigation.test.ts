@@ -13,6 +13,7 @@ const createState = (
   rootScreen: "tasks",
   taskScreen: "today",
   memoScreen: "memo",
+  memoTab: "all",
   settingsScreen: "settings",
   memoDetailId: null,
   memoSearchOpen: false,
@@ -38,6 +39,7 @@ test("leaving memo workspace clears detail but keeps search state", () => {
     createState({
       rootScreen: "memos",
       memoScreen: "research",
+      memoTab: "note",
       memoDetailId: "memo-1",
       memoSearchOpen: true,
       memoSearchQuery: "focus",
@@ -47,6 +49,7 @@ test("leaving memo workspace clears detail but keeps search state", () => {
 
   assert.equal(nextState.rootScreen, "tasks");
   assert.equal(nextState.memoScreen, "research");
+  assert.equal(nextState.memoTab, "note");
   assert.equal(nextState.memoDetailId, null);
   assert.equal(nextState.memoSearchOpen, true);
   assert.equal(nextState.memoSearchQuery, "focus");

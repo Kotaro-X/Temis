@@ -1,0 +1,192 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.keys().hasAny(["admin"])
+        && request.auth.token.admin == true;
+    }
+
+    function isGoogleUser() {
+      return signedIn()
+        && request.auth.token.keys().hasAny(["firebase"])
+        && request.auth.token.firebase.sign_in_provider == "google.com";
+    }
+
+    function subscriptionAccessPath(userId) {
+      return /databases/$(database)/documents/subscriptionAccess/$(userId);
+    }
+
+    function inviteCodePath(code) {
+      return /databases/$(database)/documents/inviteCodes/$(code);
+    }
+
+    function inviteRedemptionPath(code, userId) {
+      return /databases/$(database)/documents/inviteCodes/$(code)/redemptions/$(userId);
+    }
+
+    function isInviteGrantType(value) {
+      return value == "invite_free" || value == "invite_discount";
+    }
+
+    function grantKeysAreValid() {
+      return request.resource.data.keys().hasOnly([
+        "userId",
+        "active",
+        "grantType",
+        "inviteCode",
+        "offeringId",
+        "packageId",
+        "expiresAt",
+        "grantedBy",
+        "note",
+        "redeemedAt",
+        "updatedAt",
+      ]);
+    }
+
+    function inviteCodeFieldsAreValid() {
+      return request.resource.data.keys().hasOnly([
+        "code",
+        "active",
+        "grantType",
+        "offeringId",
+        "packageId",
+        "expiresAt",
+        "maxRedemptions",
+        "redeemedCount",
+        "createdBy",
+        "note",
+        "updatedAt",
+      ]);
+    }
+
+    function inviteRedemptionFieldsAreValid() {
+      return request.resource.data.keys().hasOnly([
+        "userId",
+        "inviteCode",
+        "grantType",
+        "email",
+        "name",
+        "redeemedAt",
+      ]);
+    }
+
+    function validInviteCodeForSelfRedemption(code) {
+      let invite = get(inviteCodePath(code));
+      return invite.data.active == true
+        && isInviteGrantType(invite.data.grantType)
+        && (invite.data.expiresAt == null || invite.data.expiresAt > request.time.toMillis())
+        && (
+          invite.data.maxRedemptions == null ||
+          invite.data.redeemedCount < invite.data.maxRedemptions ||
+          exists(inviteRedemptionPath(code, request.auth.uid))
+        );
+    }
+
+    function validSelfInviteGrantWrite(userId) {
+      let code = request.resource.data.inviteCode;
+      let invite = get(inviteCodePath(code));
+      let priorGrant = exists(subscriptionAccessPath(userId))
+        ? get(subscriptionAccessPath(userId)).data
+        : null;
+      return isSelf(userId)
+        && isGoogleUser()
+        && grantKeysAreValid()
+        && request.resource.data.userId == userId
+        && request.resource.data.active == true
+        && isInviteGrantType(request.resource.data.grantType)
+        && validInviteCodeForSelfRedemption(code)
+        && request.resource.data.grantType == invite.data.grantType
+        && request.resource.data.offeringId == invite.data.offeringId
+        && request.resource.data.packageId == invite.data.packageId
+        && request.resource.data.expiresAt == invite.data.expiresAt
+        && request.resource.data.note == invite.data.note
+        && request.resource.data.grantedBy == invite.data.createdBy
+        && request.resource.data.redeemedAt is int
+        && request.resource.data.updatedAt is int
+        && !(priorGrant != null && priorGrant.grantType == "staff_free" && priorGrant.active == true)
+        && (
+          priorGrant == null ||
+          priorGrant.inviteCode == null ||
+          priorGrant.inviteCode == code ||
+          priorGrant.active != true
+        );
+    }
+
+    function validSelfInviteCodeCounterUpdate(code) {
+      let updatedInvite = request.resource.data;
+      let accessAfter = getAfter(subscriptionAccessPath(request.auth.uid)).data;
+      let redemptionBeforeExists = exists(inviteRedemptionPath(code, request.auth.uid));
+      let redemptionAfter = getAfter(inviteRedemptionPath(code, request.auth.uid)).data;
+      return signedIn()
+        && !isAdmin()
+        && isGoogleUser()
+        && resource.data.active == true
+        && isInviteGrantType(resource.data.grantType)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "redeemedCount",
+          "updatedAt",
+        ])
+        && updatedInvite.redeemedCount == resource.data.redeemedCount + 1
+        && updatedInvite.updatedAt is int
+        && !redemptionBeforeExists
+        && accessAfter.userId == request.auth.uid
+        && accessAfter.inviteCode == code
+        && accessAfter.grantType == resource.data.grantType
+        && redemptionAfter.userId == request.auth.uid
+        && redemptionAfter.inviteCode == code
+        && redemptionAfter.grantType == resource.data.grantType;
+    }
+
+    function validSelfInviteRedemptionCreate(code, userId) {
+      let invite = get(inviteCodePath(code));
+      let accessAfter = getAfter(subscriptionAccessPath(userId)).data;
+      let inviteAfter = getAfter(inviteCodePath(code)).data;
+      return isSelf(userId)
+        && isGoogleUser()
+        && inviteRedemptionFieldsAreValid()
+        && validInviteCodeForSelfRedemption(code)
+        && request.resource.data.userId == userId
+        && request.resource.data.inviteCode == code
+        && request.resource.data.grantType == invite.data.grantType
+        && request.resource.data.redeemedAt is int
+        && accessAfter.userId == userId
+        && accessAfter.inviteCode == code
+        && accessAfter.grantType == invite.data.grantType
+        && inviteAfter.redeemedCount == invite.data.redeemedCount + 1;
+    }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if isSelf(userId) || isAdmin();
+    }
+
+    match /subscriptionAccess/{userId} {
+      allow read: if isSelf(userId) || isAdmin();
+      allow create, update: if isAdmin() || validSelfInviteGrantWrite(userId);
+      allow delete: if isAdmin();
+    }
+
+    match /inviteCodes/{code} {
+      allow get: if signedIn();
+      allow list: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || validSelfInviteCodeCounterUpdate(code);
+
+      match /redemptions/{userId} {
+        allow read: if isSelf(userId) || isAdmin();
+        allow create: if isAdmin() || validSelfInviteRedemptionCreate(code, userId);
+        allow update, delete: if isAdmin();
+      }
+    }
+  }
+}

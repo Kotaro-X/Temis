@@ -6,6 +6,7 @@ import {
   Switch,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -46,7 +47,26 @@ export type SettingsScreenProps = {
   googleAccountName?: string | null;
   cloudSyncEntitled?: boolean;
   cloudSyncEnabled?: boolean;
+  subscriptionStatus?: "idle" | "loading" | "ready" | "purchasing" | "error";
+  subscriptionError?: string | null;
+  subscriptionAccessSource?:
+    | "none"
+    | "revenuecat"
+    | "staff_free"
+    | "invite_free"
+    | "invite_discount";
+  subscriptionAccessCaption?: string | null;
+  inviteStatus?: "idle" | "redeeming" | "error";
+  inviteError?: string | null;
+  inviteCode?: string;
+  onChangeInviteCode?: (value: string) => void;
+  inviteRedemptionDisabled?: boolean;
+  focusCloudSyncPurchase?: boolean;
+  onOpenCloudSyncPurchase?: () => void;
   onToggleCloudSync?: (value: boolean) => void;
+  onPurchaseCloudSync?: () => void;
+  onRestoreCloudSync?: () => void;
+  onRedeemInviteCode?: () => void;
   onSignInWithGoogle?: () => void;
   onSignOutGoogle?: () => void;
   onSyncNow?: () => void;
@@ -79,7 +99,21 @@ const SettingsScreen = ({
   googleAccountName = null,
   cloudSyncEntitled = false,
   cloudSyncEnabled = false,
+  subscriptionStatus = "idle",
+  subscriptionError = null,
+  subscriptionAccessSource = "none",
+  subscriptionAccessCaption = null,
+  inviteStatus = "idle",
+  inviteError = null,
+  inviteCode = "",
+  onChangeInviteCode,
+  inviteRedemptionDisabled = false,
+  focusCloudSyncPurchase = false,
+  onOpenCloudSyncPurchase,
   onToggleCloudSync,
+  onPurchaseCloudSync,
+  onRestoreCloudSync,
+  onRedeemInviteCode,
   onSignInWithGoogle,
   onSignOutGoogle,
   onSyncNow,
@@ -121,14 +155,124 @@ const SettingsScreen = ({
   }, [initialSection, layoutReady]);
 
   const accountLabel = googleAccountName || googleAccountEmail;
-  const isSyncInProgress = cloudSyncEnabled;
-  const syncLabel = isSyncInProgress
-    ? t(language, "settings.sync.inProgress")
-    : t(language, "settings.sync.notSynced");
+  const isSubscriptionBusy =
+    subscriptionStatus === "loading" || subscriptionStatus === "purchasing";
+  const syncLabel = !cloudSyncEntitled
+    ? t(language, "settings.sync.locked")
+    : cloudSyncEnabled
+      ? t(language, "settings.sync.enabled")
+      : t(language, "settings.sync.disabled");
   const accountStatusLabel =
     googleAuthStatus === "signedIn"
       ? t(language, "settings.account.connected")
       : t(language, "settings.account.notConnected");
+  const showSubscriptionScreen = focusCloudSyncPurchase && !cloudSyncEntitled;
+  const headerTitle = showSubscriptionScreen
+    ? t(language, "settings.sync.subscriptionScreenTitle")
+    : t(language, "settings.title");
+
+  const renderGoogleAccountCard = () => (
+    <View style={styles.syncCard}>
+      <View style={styles.syncStatusRow}>
+        <Text style={styles.syncStatusLabel}>
+          {t(language, "settings.account.menu")}
+        </Text>
+        <Text
+          style={[
+            styles.syncStateText,
+            googleAuthStatus === "signedIn"
+              ? styles.syncStateActive
+              : styles.syncStateInactive,
+          ]}
+        >
+          {accountStatusLabel}
+        </Text>
+      </View>
+      <View style={styles.syncMeta}>
+        <Text style={styles.accountLabelText}>
+          {accountLabel ?? t(language, "settings.account.noAccount")}
+        </Text>
+        <Pressable
+          style={[
+            styles.googleAuthButton,
+            googleAuthStatus === "signedIn" && styles.googleAuthButtonSecondary,
+            (googleAuthStatus === "restoring" ||
+              googleAuthStatus === "signingIn") &&
+              styles.syncButtonDisabled,
+          ]}
+          onPress={
+            googleAuthStatus === "signedIn" ? onSignOutGoogle : onSignInWithGoogle
+          }
+          disabled={
+            googleAuthStatus === "restoring" ||
+            googleAuthStatus === "signingIn" ||
+            (googleAuthStatus === "signedIn" ? !onSignOutGoogle : !onSignInWithGoogle)
+          }
+        >
+          <Text
+            style={[
+              styles.googleAuthButtonText,
+              googleAuthStatus === "signedIn" &&
+                styles.googleAuthButtonTextSecondary,
+            ]}
+          >
+            {googleAuthStatus === "restoring"
+              ? t(language, "settings.sync.restoring")
+              : googleAuthStatus === "signingIn"
+                ? t(language, "settings.sync.signingIn")
+                : googleAuthStatus === "signedIn"
+                  ? t(language, "settings.sync.signOutGoogle")
+                  : t(language, "settings.sync.signInGoogle")}
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
+  const renderInviteSection = () => (
+    <View style={styles.syncCard}>
+      <Text style={styles.syncStatusLabel}>
+        {t(language, "settings.sync.inviteSectionTitle")}
+      </Text>
+      <View style={styles.inviteSectionCompact}>
+        <Text style={styles.syncToggleLabel}>
+          {t(language, "settings.sync.inviteCodeLabel")}
+        </Text>
+        <TextInput
+          style={styles.inviteInput}
+          value={inviteCode}
+          onChangeText={onChangeInviteCode}
+          placeholder={t(language, "settings.sync.inviteCodePlaceholder")}
+          placeholderTextColor="#9ca3af"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          editable={inviteStatus !== "redeeming"}
+        />
+        <View style={styles.syncActionsRow}>
+          <Pressable
+            style={[
+              styles.syncButton,
+              inviteRedemptionDisabled && styles.syncButtonDisabled,
+            ]}
+            onPress={onRedeemInviteCode}
+            disabled={inviteRedemptionDisabled || !onRedeemInviteCode}
+          >
+            <Text style={styles.googleAuthButtonText}>
+              {inviteStatus === "redeeming"
+                ? t(language, "settings.sync.redeemingInviteCode")
+                : t(language, "settings.sync.redeemInviteCode")}
+            </Text>
+          </Pressable>
+        </View>
+        {googleAuthStatus !== "signedIn" ? (
+          <Text style={styles.syncCaption}>
+            {t(language, "settings.sync.inviteRequiresGoogle")}
+          </Text>
+        ) : null}
+        {inviteError ? <Text style={styles.syncErrorText}>{inviteError}</Text> : null}
+      </View>
+    </View>
+  );
 
   return (
     <ScrollView
@@ -150,7 +294,7 @@ const SettingsScreen = ({
             <Text style={styles.linkText}>{t(language, "common.back")}</Text>
           </Pressable>
         </View>
-        <Text style={styles.headerTitle}>{t(language, "settings.title")}</Text>
+        <Text style={styles.headerTitle}>{headerTitle}</Text>
         <View style={styles.headerRight} />
       </View>
 
@@ -197,147 +341,188 @@ const SettingsScreen = ({
 
       {activeSections.includes("Account") && (
         <View onLayout={handleSectionLayout("Account")} style={styles.section}>
-          <Text style={styles.sectionTitle}>
-            {t(language, "settings.section.account")}
-          </Text>
-          <View style={styles.syncCard}>
-            <View style={styles.syncStatusRow}>
-              <Text style={styles.syncStatusLabel}>
-                {t(language, "settings.account.menu")}
-              </Text>
-              <Text
-                style={[
-                  styles.syncStateText,
-                  googleAuthStatus === "signedIn"
-                    ? styles.syncStateActive
-                    : styles.syncStateInactive,
-                ]}
-              >
-                {accountStatusLabel}
-              </Text>
-            </View>
-            <View style={styles.syncMeta}>
-              <Text style={styles.accountLabelText}>
-                {accountLabel ?? t(language, "settings.account.noAccount")}
-              </Text>
-              <Pressable
-                style={[
-                  styles.googleAuthButton,
-                  googleAuthStatus === "signedIn" && styles.googleAuthButtonSecondary,
-                  (googleAuthStatus === "restoring" ||
-                    googleAuthStatus === "signingIn") &&
-                    styles.syncButtonDisabled,
-                ]}
-                onPress={
-                  googleAuthStatus === "signedIn"
-                    ? onSignOutGoogle
-                    : onSignInWithGoogle
-                }
-                disabled={
-                  googleAuthStatus === "restoring" ||
-                  googleAuthStatus === "signingIn" ||
-                  (googleAuthStatus === "signedIn"
-                    ? !onSignOutGoogle
-                    : !onSignInWithGoogle)
-                }
-              >
-                <Text
-                  style={[
-                    styles.googleAuthButtonText,
-                    googleAuthStatus === "signedIn" &&
-                      styles.googleAuthButtonTextSecondary,
-                  ]}
-                >
-                  {googleAuthStatus === "restoring"
-                    ? t(language, "settings.sync.restoring")
-                    : googleAuthStatus === "signingIn"
-                      ? t(language, "settings.sync.signingIn")
-                      : googleAuthStatus === "signedIn"
-                        ? t(language, "settings.sync.signOutGoogle")
-                        : t(language, "settings.sync.signInGoogle")}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-          <View style={styles.nestedSection}>
-            <Text style={styles.sectionTitle}>
-              {t(language, "settings.section.sync")}
-            </Text>
-            <View style={styles.syncCard}>
-              <View style={styles.syncStatusRow}>
-                <Text style={styles.syncStatusLabel}>
-                  {t(language, "settings.sync.title")}
-                </Text>
-                <Text
-                  style={[
-                    styles.syncStateText,
-                    isSyncInProgress
-                      ? styles.syncStateActive
-                      : styles.syncStateInactive,
-                  ]}
-                >
-                  {syncLabel}
-                </Text>
-              </View>
-              <View style={styles.syncMeta}>
-                {cloudSyncEntitled ? (
-                  <View style={styles.syncToggleRow}>
-                    <Text style={styles.syncToggleLabel}>
-                      {t(language, "settings.sync.turnOn")}
-                    </Text>
-                    <Switch
-                      value={cloudSyncEnabled}
-                      onValueChange={(value) => onToggleCloudSync?.(value)}
-                      trackColor={{ false: "#d1d5db", true: "#111827" }}
-                      thumbColor="#ffffff"
-                      ios_backgroundColor="#d1d5db"
-                    />
-                  </View>
-                ) : (
-                  <Text style={styles.syncCaption}>
-                    {t(language, "settings.sync.lockedCaption")}
+          {showSubscriptionScreen ? (
+            <>
+              <View style={[styles.syncCard, styles.subscriptionCard]}>
+                <View style={styles.subscriptionBadge}>
+                  <Text style={styles.subscriptionBadgeText}>
+                    {t(language, "settings.sync.subscriptionBadge")}
                   </Text>
-                )}
+                </View>
+                <Text style={styles.subscriptionTitle}>
+                  {t(language, "settings.sync.subscriptionHeadline")}
+                </Text>
+                <Text style={styles.subscriptionDescription}>
+                  {t(language, "settings.sync.subscriptionBody")}
+                </Text>
+                {subscriptionAccessCaption ? (
+                  <Text style={styles.subscriptionHighlight}>
+                    {subscriptionAccessCaption}
+                  </Text>
+                ) : null}
+                {subscriptionError ? (
+                  <Text style={styles.syncErrorText}>{subscriptionError}</Text>
+                ) : null}
+                <Pressable
+                  style={[
+                    styles.subscriptionPrimaryButton,
+                    isSubscriptionBusy && styles.syncButtonDisabled,
+                  ]}
+                  onPress={onPurchaseCloudSync}
+                  disabled={isSubscriptionBusy || !onPurchaseCloudSync}
+                >
+                  <Text style={styles.subscriptionPrimaryButtonText}>
+                    {subscriptionStatus === "purchasing"
+                      ? t(language, "settings.sync.purchasing")
+                      : t(language, "settings.sync.subscriptionPurchase")}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.googleAuthButton,
+                    styles.googleAuthButtonSecondary,
+                    isSubscriptionBusy && styles.syncButtonDisabled,
+                  ]}
+                  onPress={onRestoreCloudSync}
+                  disabled={isSubscriptionBusy || !onRestoreCloudSync}
+                >
+                  <Text
+                    style={[
+                      styles.googleAuthButtonText,
+                      styles.googleAuthButtonTextSecondary,
+                    ]}
+                  >
+                    {subscriptionStatus === "loading"
+                      ? t(language, "settings.sync.restoringPurchase")
+                      : t(language, "settings.sync.restorePurchase")}
+                  </Text>
+                </Pressable>
+                <Text style={styles.subscriptionFootnote}>
+                  {t(language, "settings.sync.subscriptionRestoreCaption")}
+                </Text>
+              </View>
+              <View style={styles.nestedSection}>{renderGoogleAccountCard()}</View>
+              <View style={styles.nestedSection}>{renderInviteSection()}</View>
+            </>
+          ) : (
+            <>
+              <Text style={styles.sectionTitle}>
+                {t(language, "settings.section.account")}
+              </Text>
+              {renderGoogleAccountCard()}
+            </>
+          )}
+          {!showSubscriptionScreen ? (
+            <View style={styles.nestedSection}>
+              <Text style={styles.sectionTitle}>
+                {t(language, "settings.section.sync")}
+              </Text>
+              <View style={styles.syncCard}>
+                <View style={styles.syncStatusRow}>
+                  <Text style={styles.syncStatusLabel}>
+                    {t(language, "settings.sync.title")}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.syncStateText,
+                      cloudSyncEntitled && cloudSyncEnabled
+                        ? styles.syncStateActive
+                        : styles.syncStateInactive,
+                    ]}
+                  >
+                    {syncLabel}
+                  </Text>
+                </View>
+                <View style={styles.syncMeta}>
+                  {cloudSyncEntitled ? (
+                    <>
+                      <View style={styles.syncToggleRow}>
+                        <Text style={styles.syncToggleLabel}>
+                          {t(language, "settings.sync.turnOn")}
+                        </Text>
+                        <Switch
+                          value={cloudSyncEnabled}
+                          onValueChange={(value) => onToggleCloudSync?.(value)}
+                          trackColor={{ false: "#d1d5db", true: "#111827" }}
+                          thumbColor="#ffffff"
+                          ios_backgroundColor="#d1d5db"
+                        />
+                      </View>
+                      {subscriptionAccessCaption ? (
+                        <Text style={styles.syncCaption}>{subscriptionAccessCaption}</Text>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.syncCaption}>
+                        {subscriptionAccessSource === "invite_discount" &&
+                        subscriptionAccessCaption
+                          ? subscriptionAccessCaption
+                          : t(language, "settings.sync.lockedCaption")}
+                      </Text>
+                      <View style={styles.syncActionsRow}>
+                        <Pressable
+                          style={[
+                            styles.syncButton,
+                            (isSubscriptionBusy && !onOpenCloudSyncPurchase) &&
+                              styles.syncButtonDisabled,
+                          ]}
+                          onPress={onOpenCloudSyncPurchase ?? onPurchaseCloudSync}
+                          disabled={
+                            (isSubscriptionBusy && !onOpenCloudSyncPurchase) ||
+                            (!onOpenCloudSyncPurchase && !onPurchaseCloudSync)
+                          }
+                        >
+                          <Text style={styles.googleAuthButtonText}>
+                            {t(language, "settings.sync.openSubscription")}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  )}
+                </View>
               </View>
             </View>
-          </View>
-          <View style={styles.nestedSection}>
-            <Text style={styles.sectionTitle}>{t(language, "settings.language")}</Text>
-            <View style={styles.languageRow}>
-              <Pressable
-                style={[
-                  styles.languageButton,
-                  language === "ja" && styles.languageButtonActive,
-                ]}
-                onPress={() => onChangeLanguage("ja")}
-              >
-                <Text
+          ) : null}
+          {!showSubscriptionScreen ? (
+            <View style={styles.nestedSection}>
+              <Text style={styles.sectionTitle}>{t(language, "settings.language")}</Text>
+              <View style={styles.languageRow}>
+                <Pressable
                   style={[
-                    styles.languageButtonText,
-                    language === "ja" && styles.languageButtonTextActive,
+                    styles.languageButton,
+                    language === "ja" && styles.languageButtonActive,
                   ]}
+                  onPress={() => onChangeLanguage("ja")}
                 >
-                  {t(language, "settings.language.ja")}
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.languageButton,
-                  language === "en" && styles.languageButtonActive,
-                ]}
-                onPress={() => onChangeLanguage("en")}
-              >
-                <Text
+                  <Text
+                    style={[
+                      styles.languageButtonText,
+                      language === "ja" && styles.languageButtonTextActive,
+                    ]}
+                  >
+                    {t(language, "settings.language.ja")}
+                  </Text>
+                </Pressable>
+                <Pressable
                   style={[
-                    styles.languageButtonText,
-                    language === "en" && styles.languageButtonTextActive,
+                    styles.languageButton,
+                    language === "en" && styles.languageButtonActive,
                   ]}
+                  onPress={() => onChangeLanguage("en")}
                 >
-                  {t(language, "settings.language.en")}
-                </Text>
-              </Pressable>
+                  <Text
+                    style={[
+                      styles.languageButtonText,
+                      language === "en" && styles.languageButtonTextActive,
+                    ]}
+                  >
+                    {t(language, "settings.language.en")}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
-          </View>
+          ) : null}
         </View>
       )}
 
@@ -486,6 +671,30 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
   },
+  syncActionsRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  inviteSection: {
+    marginTop: 8,
+    gap: 8,
+  },
+  inviteSectionCompact: {
+    gap: 8,
+  },
+  inviteInput: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#111827",
+    backgroundColor: "#ffffff",
+  },
   googleAuthButton: {
     alignSelf: "flex-start",
     borderRadius: 8,
@@ -528,6 +737,55 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#111827",
     fontWeight: "500",
+  },
+  subscriptionCard: {
+    gap: 10,
+    backgroundColor: "#f8fafc",
+    borderColor: "#cbd5e1",
+  },
+  subscriptionBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    backgroundColor: "#111827",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  subscriptionBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#ffffff",
+  },
+  subscriptionTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  subscriptionDescription: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: "#374151",
+  },
+  subscriptionHighlight: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  subscriptionPrimaryButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+    backgroundColor: "#111827",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  subscriptionPrimaryButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#ffffff",
+  },
+  subscriptionFootnote: {
+    fontSize: 12,
+    color: "#6b7280",
   },
   languageRow: {
     flexDirection: "row",

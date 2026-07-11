@@ -1,0 +1,251 @@
+export const todoStyles = {
+  todoTopAddButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 32,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
+  },
+  todoTopAddButtonText: {
+    marginLeft: 4,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  todoList: {
+    gap: 10,
+    paddingBottom: 96,
+  },
+  todoViewSwitch: {
+    flexDirection: "row",
+    backgroundColor: "#f3f4f6",
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 12,
+  },
+  todoViewButton: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  todoViewButtonActive: {
+    backgroundColor: "#111827",
+  },
+  todoViewButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#4b5563",
+  },
+  todoViewButtonTextActive: {
+    color: "#ffffff",
+  },
+  todoItem: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: "#ffffff",
+  },
+  todoItemHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  todoToggle: {
+    width: 22,
+    height: 22,
+    borderWidth: 1,
+    borderColor: "#9ca3af",
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  todoToggleDone: {
+    borderColor: "#111827",
+    backgroundColor: "#111827",
+  },
+  todoToggleText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  todoText: {
+    fontSize: 13,
+    color: "#111827",
+    paddingVertical: 4,
+  },
+  todoTextPressable: {
+    flex: 1,
+  },
+  todoTextDone: {
+    color: "#9ca3af",
+    textDecorationLine: "line-through",
+  },
+  todoMetaRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  todoRepeatBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: "#e5eefc",
+  },
+  todoRepeatBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#1d4ed8",
+  },
+  todoDeleteButton: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  todoDeleteText: {
+    fontSize: 11,
+    color: "#dc2626",
+  },
+  todoMemoText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#4b5563",
+    lineHeight: 17,
+  },
+  todoTagsText: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  todoReminderText: {
+    fontSize: 11,
+    color: "#6b7280",
+    flex: 1,
+  },
+  todoCalendarCard: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "#ffffff",
+  },
+  todoCalendarCell: {
+    minHeight: 48,
+    gap: 4,
+  },
+  todoCalendarDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "transparent",
+  },
+  todoCalendarDotActive: {
+    backgroundColor: "#111827",
+  },
+  todoCalendarDotSelected: {
+    backgroundColor: "#ffffff",
+  },
+  todoCalendarSection: {
+    gap: 10,
+  },
+  todoCalendarSectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  todoMemoInput: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 96,
+    marginBottom: 10,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  todoDateButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  todoDateButtonText: {
+    fontSize: 12,
+    color: "#111827",
+  },
+  todoDateButtonPlaceholder: {
+    color: "#9ca3af",
+  },
+  todoTagSection: {
+    marginBottom: 8,
+  },
+  todoRepeatRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 4,
+  },
+  todoRepeatChip: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  todoRepeatChipSelected: {
+    borderColor: "#111827",
+    backgroundColor: "#111827",
+  },
+  todoRepeatChipText: {
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  todoRepeatChipTextSelected: {
+    color: "#ffffff",
+    fontWeight: "600",
+  },
+  todoRepeatStateText: {
+    fontSize: 11,
+    color: "#6b7280",
+    marginTop: 2,
+  },
+  todoTagChipRow: {
+    flexDirection: "row",
+    marginTop: 4,
+    paddingRight: 8,
+  },
+  todoTagChip: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  todoTagChipSelected: {
+    borderColor: "#111827",
+    backgroundColor: "#111827",
+  },
+  todoTagChipText: {
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  todoTagChipTextSelected: {
+    color: "#ffffff",
+    fontWeight: "600",
+  },
+};
