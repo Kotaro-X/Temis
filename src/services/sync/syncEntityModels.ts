@@ -9,6 +9,7 @@ import type {
   TodoSyncRecord,
 } from "../../types";
 import type { SlotKey } from "../../types";
+import { CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION } from "./syncEnvelopeValidator";
 
 const buildEnvelope = <TType extends SyncEntityEnvelope["entityType"]>(params: {
   entityType: TType;
@@ -18,10 +19,12 @@ const buildEnvelope = <TType extends SyncEntityEnvelope["entityType"]>(params: {
   deletedAt?: number | null;
   deviceId?: string | null;
 }): SyncEntityEnvelope<TType> => ({
+  schemaVersion: CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION,
   entityType: params.entityType,
   entityId: params.entityId,
   record: params.record,
   updatedAt: params.updatedAt,
+  isDeleted: params.deletedAt != null,
   deletedAt: params.deletedAt ?? null,
   deviceId: params.deviceId ?? null,
 });

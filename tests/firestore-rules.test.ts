@@ -22,6 +22,92 @@ const createGoogleToken = (overrides?: Record<string, unknown>): TokenOptions =>
   ...overrides,
 });
 
+const createTodoEnvelope = (id = "todo-1") => ({
+  schemaVersion: 3,
+  entityType: "todo",
+  entityId: id,
+  record: {
+    id,
+    text: "Buy milk",
+    memo: "",
+    tags: ["Home"],
+    isDone: false,
+    createdAt: 1_783_292_400_000,
+    doneAt: null,
+    reminderDate: null,
+    reminderTime: null,
+    repeat: "none",
+    notificationId: null,
+    notificationIds: [],
+    seriesId: null,
+    seriesAnchorDate: null,
+    occurrenceDate: null,
+    isDeleted: false,
+  },
+  updatedAt: 1_783_292_400_000,
+  isDeleted: false,
+  deletedAt: null,
+  deviceId: null,
+});
+
+const createTaskEnvelope = (id = "task-1") => ({
+  schemaVersion: 3,
+  entityType: "task",
+  entityId: id,
+  record: {
+    kind: "state",
+    date: "2026-07-11",
+    slotKey: "morning",
+    task: {
+      id: "task-state-1",
+      taskName: "Plan the day",
+      tags: ["Work"],
+      estimateMinutes: 30,
+      elapsedMinutes: 0,
+      status: "TODO",
+      isArchived: false,
+      startAt: null,
+    },
+  },
+  updatedAt: 1_783_292_400_000,
+  isDeleted: false,
+  deletedAt: null,
+  deviceId: "device-1",
+});
+
+const createMemoEnvelope = (id = "memo-1") => ({
+  schemaVersion: 3,
+  entityType: "memo",
+  entityId: id,
+  record: {
+    kind: "note",
+    data: {
+      id,
+      type: "free",
+      date: null,
+      title: "A note",
+      body: "The note body",
+      updatedAt: 1_783_292_400_000,
+    },
+  },
+  updatedAt: 1_783_292_400_000,
+  isDeleted: false,
+  deletedAt: null,
+  deviceId: null,
+});
+
+const createTag = (id = "tag-1") => ({
+  id,
+  name: "Home",
+  order: 0,
+  createdAt: 1_783_292_400_000,
+  updatedAt: 1_783_292_400_000,
+  archivedAt: null,
+  isDeleted: false,
+  deletedAt: null,
+  deviceId: null,
+});
+
 if (!FIRESTORE_EMULATOR_HOST) {
   test("firestore rules tests require emulator", { skip: true }, () => {
     assert.ok(true);
@@ -46,7 +132,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await env.clearFirestore();
   });
 
-  test("users can read and write only their own sync namespace", async () => {
+  test("users can read and write only their own four sync collections", async () => {
     const aliceDb = env.authenticatedContext(
       "alice",
       createGoogleToken({ email: "alice@example.com" }),
@@ -57,14 +143,138 @@ if (!FIRESTORE_EMULATOR_HOST) {
     ).firestore();
 
     await assertSucceeds(
-      aliceDb.collection("users").doc("alice").collection("todos").doc("todo-1").set({
-        id: "todo-1",
-      }),
+      aliceDb.collection("users").doc("alice").collection("tags").doc("tag-1").set(
+        createTag(),
+      ),
+    );
+    await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("todos").doc("todo-1").set(
+        createTodoEnvelope(),
+      ),
+    );
+    await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("tasks").doc("task-1").set(
+        createTaskEnvelope(),
+      ),
+    );
+    await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("memos").doc("memo-1").set(
+        createMemoEnvelope(),
+      ),
+    );
+    await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("tags").doc("tag-1").get(),
+    );
+    await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("todos").doc("todo-1").get(),
+    );
+    await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("tasks").doc("task-1").get(),
+    );
+    await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("memos").doc("memo-1").get(),
     );
 
     await assertFails(
-      bobDb.collection("users").doc("alice").collection("todos").doc("todo-2").set({
-        id: "todo-2",
+      bobDb.collection("users").doc("alice").collection("todos").doc("todo-2").set(
+        createTodoEnvelope("todo-2"),
+      ),
+    );
+  });
+
+  test("unknown user subcollections are denied to owners and admins", async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore()
+        .collection("users")
+        .doc("alice")
+        .collection("internalSettings")
+        .doc("sync")
+        .set({ secret: "not client data" });
+    });
+
+    const aliceDb = env.authenticatedContext(
+      "alice",
+      createGoogleToken({ email: "alice@example.com" }),
+    ).firestore();
+    const adminDb = env.authenticatedContext(
+      "admin-user",
+      createGoogleToken({ admin: true, email: "admin@example.com" }),
+    ).firestore();
+
+    const unknownRef = aliceDb.collection("users")
+      .doc("alice")
+      .collection("internalSettings")
+      .doc("sync");
+    const nestedUnknownRef = aliceDb.collection("users")
+      .doc("alice")
+      .collection("todos")
+      .doc("todo-1")
+      .collection("private")
+      .doc("metadata");
+
+    await assertFails(unknownRef.get());
+    await assertFails(unknownRef.set({ secret: "changed" }));
+    await assertFails(nestedUnknownRef.set({ secret: "nope" }));
+    await assertFails(
+      adminDb.collection("users").doc("alice").collection("internalSettings").doc("sync").get(),
+    );
+  });
+
+  test("sync documents reject unknown fields, invalid types, and oversized values", async () => {
+    const aliceDb = env.authenticatedContext(
+      "alice",
+      createGoogleToken({ email: "alice@example.com" }),
+    ).firestore();
+
+    await assertFails(
+      aliceDb.collection("users").doc("alice").collection("todos").doc("todo-1").set({
+        ...createTodoEnvelope(),
+        unexpectedInternalFlag: true,
+      }),
+    );
+    await assertFails(
+      aliceDb.collection("users").doc("alice").collection("todos").doc("todo-1").set({
+        ...createTodoEnvelope(),
+        updatedAt: "not-a-timestamp",
+      }),
+    );
+    await assertFails(
+      aliceDb.collection("users").doc("alice").collection("tags").doc("tag-1").set({
+        ...createTag(),
+        name: "x".repeat(201),
+      }),
+    );
+    await assertFails(
+      aliceDb.collection("users").doc("alice").collection("todos").doc("todo-1").set({
+        ...createTodoEnvelope(),
+        record: {
+          ...createTodoEnvelope().record,
+          tags: "not-a-list",
+        },
+      }),
+    );
+  });
+
+  test("sync documents reject stale updates and accept logical tombstones", async () => {
+    const aliceDb = env.authenticatedContext(
+      "alice",
+      createGoogleToken({ email: "alice@example.com" }),
+    ).firestore();
+    const todoRef = aliceDb.collection("users")
+      .doc("alice")
+      .collection("todos")
+      .doc("todo-1");
+    const current = { ...createTodoEnvelope(), updatedAt: 200 };
+
+    await assertSucceeds(todoRef.set(current));
+    await assertFails(todoRef.set({ ...current, updatedAt: 100 }));
+    await assertSucceeds(
+      todoRef.set({
+        ...current,
+        record: { ...current.record, isDeleted: true },
+        updatedAt: 300,
+        isDeleted: true,
+        deletedAt: 300,
       }),
     );
   });

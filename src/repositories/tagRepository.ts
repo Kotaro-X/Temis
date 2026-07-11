@@ -53,6 +53,9 @@ const normalizeOrders = (records: TagRecord[]): TagRecord[] =>
       order: index,
     }));
 
+const areTagRecordsEqual = (left: TagRecord, right: TagRecord) =>
+  JSON.stringify(left) === JSON.stringify(right);
+
 const upsertQueueRecord = async (record: TagRecord): Promise<void> => {
   const queue = await loadSyncQueue();
   const now = Date.now();
@@ -134,7 +137,16 @@ export const persistTagState = async (params: {
           record.deletedAt === null &&
           record.name === name,
       );
-    const record: TagRecord = {
+    const archivedAt = archived ? existingRecord?.archivedAt ?? now : null;
+    const unchanged =
+      existingRecord &&
+      existingRecord.name === name &&
+      existingRecord.order === order &&
+      existingRecord.archivedAt === archivedAt &&
+      existingRecord.deletedAt === null;
+    const record: TagRecord = unchanged
+      ? existingRecord
+      : {
       ...(existingRecord ?? {
         id: nanoid(),
         createdAt: now + order,
@@ -142,7 +154,7 @@ export const persistTagState = async (params: {
       name,
       order,
       updatedAt: now,
-      archivedAt: archived ? now : null,
+      archivedAt,
       deletedAt: null,
       deviceId: params.deviceId ?? existingRecord?.deviceId ?? null,
     };
@@ -159,15 +171,27 @@ export const persistTagState = async (params: {
     if (usedIds.has(record.id)) {
       continue;
     }
-    nextRecords.push({
-      ...record,
-      deletedAt: record.deletedAt ?? now,
-      updatedAt: now,
-      deviceId: params.deviceId ?? record.deviceId,
-    });
+    nextRecords.push(
+      record.deletedAt !== null
+        ? record
+        : {
+            ...record,
+            deletedAt: now,
+            updatedAt: now,
+            deviceId: params.deviceId ?? record.deviceId,
+          },
+    );
   }
 
-  return persistRecords(nextRecords);
+  const state = await persistRecords(nextRecords);
+  const existingById = new Map(existing.map((record) => [record.id, record]));
+  for (const record of state.records) {
+    const previous = existingById.get(record.id);
+    if (!previous || !areTagRecordsEqual(previous, record)) {
+      await upsertQueueRecord(record);
+    }
+  }
+  return state;
 };
 
 export const saveTags = async (tags: Tag[]): Promise<void> => {

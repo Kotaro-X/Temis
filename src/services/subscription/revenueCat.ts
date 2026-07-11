@@ -207,6 +207,38 @@ export const getCustomerInfo = async (): Promise<CustomerInfo | null> => {
   return Purchases.getCustomerInfo();
 };
 
+export const logInRevenueCatUser = async (
+  firebaseUid: string,
+): Promise<CustomerInfo | null> => {
+  const configured = await configurePurchases();
+  if (!configured) {
+    return null;
+  }
+
+  const currentAppUserId = await Purchases.getAppUserID();
+  if (currentAppUserId === firebaseUid) {
+    return Purchases.getCustomerInfo();
+  }
+
+  const result = await Purchases.logIn(firebaseUid);
+  return result.customerInfo;
+};
+
+export const logOutRevenueCatUser = async (): Promise<CustomerInfo | null> => {
+  const configured = await configurePurchases();
+  if (!configured) {
+    return null;
+  }
+
+  const currentAppUserId = await Purchases.getAppUserID();
+  // RevenueCat already uses an anonymous identity after a fresh configure/logOut.
+  if (currentAppUserId.startsWith("$RCAnonymousID:")) {
+    return Purchases.getCustomerInfo();
+  }
+
+  return Purchases.logOut();
+};
+
 export const purchaseCloudSyncPlan = async (
   override?: CloudSyncPurchaseOverride,
 ): Promise<CustomerInfo> => {

@@ -11,11 +11,12 @@ import {
 } from "../src/services/sync/syncRetention.ts";
 
 const NOW = 1_000_000;
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 const createTodoEnvelope = (
   overrides: Partial<SyncEntityEnvelope<"todo">> = {},
 ): SyncEntityEnvelope<"todo"> => ({
+  schemaVersion: 3,
   entityType: "todo",
   entityId: "todo-1",
   record: {
@@ -37,6 +38,7 @@ const createTodoEnvelope = (
     isDeleted: false,
   },
   updatedAt: NOW - 100,
+  isDeleted: false,
   deletedAt: null,
   deviceId: "device-a",
   ...overrides,

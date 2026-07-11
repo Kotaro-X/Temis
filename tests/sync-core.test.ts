@@ -12,6 +12,7 @@ import {
 const createTodoEnvelope = (
   overrides: Partial<SyncEntityEnvelope<"todo">> = {},
 ): SyncEntityEnvelope<"todo"> => ({
+  schemaVersion: 3,
   entityType: "todo",
   entityId: "todo-1",
   record: {
@@ -33,6 +34,7 @@ const createTodoEnvelope = (
     isDeleted: false,
   },
   updatedAt: 100,
+  isDeleted: false,
   deletedAt: null,
   deviceId: "device-a",
   ...overrides,
@@ -127,4 +129,27 @@ test("findReconciliationPushes selects local records that are missing or newer r
     pushes.map((entry) => entry.entityId),
     ["todo-1", "todo-3"],
   );
+});
+
+test("newer tombstones win, stay deleted on replay, and cannot be resurrected by stale data", () => {
+  const active = createTodoEnvelope({
+    updatedAt: 100,
+    isDeleted: false,
+    deletedAt: null,
+  });
+  const tombstone = createTodoEnvelope({
+    updatedAt: 200,
+    isDeleted: true,
+    deletedAt: 200,
+    record: { ...createTodoEnvelope().record, isDeleted: true },
+  });
+
+  const deleted = mergeSyncEnvelopes([active], [tombstone]);
+  const replayed = mergeSyncEnvelopes(deleted, [tombstone, active]);
+
+  assert.equal(replayed.length, 1);
+  assert.equal(replayed[0].isDeleted, true);
+  assert.equal(replayed[0].deletedAt, 200);
+  assert.equal(replayed[0].record.isDeleted, true);
+  assert.deepEqual(replayed, deleted);
 });

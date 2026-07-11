@@ -15,21 +15,12 @@ import {
   upsertResearchNoteRecord,
 } from "../researchNoteService";
 import type { MemoSyncRecord, SyncEntityEnvelope, SyncIdentity } from "../../types";
-import { pullSyncEnvelopes, pushSyncEnvelope } from "./firestoreSyncAdapter";
 import {
   buildNoteSyncEnvelope,
   buildResearchSyncEnvelope,
   buildTaskMemoSyncEnvelope,
 } from "./syncEntityModels";
-import { mergeSyncEnvelopes } from "./syncEnvelopeStore";
-import {
-  cleanupExpiredRemoteSyncEnvelopes,
-  finalizeExpiredLocalSyncEntityRecords,
-} from "./syncRetention";
-import {
-  findReconciliationPushes,
-  syncQueuedEnvelopes,
-} from "./syncQueueProcessor";
+import { runEnvelopeEntitySync } from "./syncEntityRunner";
 
 const buildBootstrapMemoRecords = async (): Promise<
   SyncEntityEnvelope<"memo">[]
@@ -112,63 +103,10 @@ const applyMergedMemoEnvelopes = async (
 export const syncMemoRecords = async (identity: SyncIdentity): Promise<{
   pushed: number;
   pulled: number;
-}> => {
-  const now = Date.now();
-  let localRecords = await loadMemoSyncRecords();
-  const localCleanup = await cleanupExpiredRemoteSyncEnvelopes(
-    identity.userId,
+}> =>
+  runEnvelopeEntitySync(
+    identity,
     "memo",
-    localRecords,
-    now,
+    loadMemoSyncRecords,
+    applyMergedMemoEnvelopes,
   );
-  if (localCleanup.expiredEntityIds.length > 0) {
-    await finalizeExpiredLocalSyncEntityRecords(
-      "memo",
-      localCleanup.keptRecords,
-      localCleanup.expiredEntityIds,
-    );
-  }
-  localRecords = localCleanup.keptRecords;
-  const { firstError, pushedCount } = await syncQueuedEnvelopes(
-    "memo",
-    async (envelope) => {
-      await pushSyncEnvelope(identity.userId, envelope);
-    },
-  );
-  const pulledRemoteRecords = await pullSyncEnvelopes(identity.userId, "memo");
-  const remoteCleanup = await cleanupExpiredRemoteSyncEnvelopes(
-    identity.userId,
-    "memo",
-    pulledRemoteRecords,
-    now,
-  );
-  const remoteRecords = remoteCleanup.keptRecords;
-  const reconciliationPushes = findReconciliationPushes(localRecords, remoteRecords);
-  let reconciliationError = firstError;
-  let pushed = 0;
-
-  for (const record of reconciliationPushes) {
-    try {
-      await pushSyncEnvelope(identity.userId, record);
-      pushed += 1;
-    } catch (error) {
-      if (!reconciliationError) {
-        reconciliationError =
-          error instanceof Error ? error : new Error(String(error));
-      }
-    }
-  }
-
-  const merged = mergeSyncEnvelopes(localRecords, remoteRecords);
-  await applyMergedMemoEnvelopes(merged);
-  await saveSyncEntityRecords("memo", merged);
-
-  if (reconciliationError) {
-    throw reconciliationError;
-  }
-
-  return {
-    pushed: pushedCount + pushed,
-    pulled: remoteRecords.length,
-  };
-};

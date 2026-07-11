@@ -1,45 +1,34 @@
 import {
-  loadLastCloudSyncedAt,
   loadSyncQueue,
+  loadSyncEntityMetadata,
   loadTagRecords,
-  saveLastCloudSyncedAt,
+  saveSyncEntityMetadata,
   saveSyncQueue,
   saveTagRecords,
 } from "../../../storage";
-import type { SyncIdentity, SyncQueueItem, TagRecord } from "../../types";
-import { pullTagRecords, pushTagRecord } from "./firestoreTagAdapter";
+import type {
+  SyncEntityMetadata,
+  SyncIdentity,
+  SyncQueueItem,
+  TagRecord,
+} from "../../types";
 import {
-  cleanupExpiredRemoteTagRecords,
-  finalizeExpiredLocalTagRecords,
-} from "./syncRetention";
+  pullTagRecordPage,
+  pushTagRecord,
+} from "./firestoreTagAdapter";
+import {
+  compareSyncVersions,
+  completeSyncEntityMetadata,
+  createEmptySyncEntityMetadata,
+  failSyncEntityMetadata,
+  runIncrementalPull,
+} from "./syncCore";
 
 const getRetryDelayMs = (attemptCount: number) =>
   Math.min(60_000, 1_000 * 2 ** Math.max(0, attemptCount));
 
-const compareTimestamps = (left: number, right: number) => {
-  if (left === right) {
-    return 0;
-  }
-  return left > right ? 1 : -1;
-};
-
 const compareRecords = (left: TagRecord, right: TagRecord) => {
-  const updatedAtOrder = compareTimestamps(left.updatedAt, right.updatedAt);
-  if (updatedAtOrder !== 0) {
-    return updatedAtOrder;
-  }
-  const deletedAtOrder = compareTimestamps(left.deletedAt ?? 0, right.deletedAt ?? 0);
-  if (deletedAtOrder !== 0) {
-    return deletedAtOrder;
-  }
-  const archivedAtOrder = compareTimestamps(
-    left.archivedAt ?? 0,
-    right.archivedAt ?? 0,
-  );
-  if (archivedAtOrder !== 0) {
-    return archivedAtOrder;
-  }
-  return (left.deviceId ?? "").localeCompare(right.deviceId ?? "");
+  return compareSyncVersions(left, right);
 };
 
 const mergeTagRecords = (local: TagRecord[], remote: TagRecord[]): TagRecord[] => {
@@ -63,11 +52,17 @@ const mergeTagRecords = (local: TagRecord[], remote: TagRecord[]): TagRecord[] =
 
 const syncQueuedTags = async (
   identity: SyncIdentity,
-): Promise<{ queue: SyncQueueItem[]; firstError: Error | null }> => {
+): Promise<{
+  queue: SyncQueueItem[];
+  firstError: Error | null;
+  pushedCount: number;
+  pendingCount: number;
+}> => {
   const now = Date.now();
   const queue = await loadSyncQueue();
   const nextQueue: SyncQueueItem[] = [];
   let firstError: Error | null = null;
+  let pushedCount = 0;
 
   for (const item of queue) {
     if (item.entityType !== "tag") {
@@ -84,6 +79,7 @@ const syncQueuedTags = async (
     }
     try {
       await pushTagRecord(identity.userId, record);
+      pushedCount += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const nextAttemptCount = item.attemptCount + 1;
@@ -101,69 +97,94 @@ const syncQueuedTags = async (
   }
 
   await saveSyncQueue(nextQueue);
-  return { queue: nextQueue, firstError };
+  return {
+    queue: nextQueue,
+    firstError,
+    pushedCount,
+    pendingCount: nextQueue.filter((item) => item.entityType === "tag").length,
+  };
+};
+
+const enqueueMissingTagRecords = async (records: TagRecord[]) => {
+  if (records.length === 0) {
+    return;
+  }
+  const queue = await loadSyncQueue();
+  const existingIds = new Set(
+    queue.filter((item) => item.entityType === "tag").map((item) => item.entityId),
+  );
+  const now = Date.now();
+  const additions: SyncQueueItem[] = records
+    .filter((record) => !existingIds.has(record.id))
+    .map((record) => ({
+      id: `tag-bootstrap:${record.id}`,
+      entityType: "tag" as const,
+      entityId: record.id,
+      operation: "upsert" as const,
+      payload: { record },
+      createdAt: now,
+      updatedAt: now,
+      attemptCount: 0,
+      lastError: null,
+      nextRetryAt: 0,
+    }));
+  if (additions.length > 0) {
+    await saveSyncQueue([...queue, ...additions]);
+  }
 };
 
 export const syncTagRecords = async (identity: SyncIdentity): Promise<{
   pushed: number;
   pulled: number;
 }> => {
-  const now = Date.now();
-  const [loadedLocalRecords, lastSyncedAt] = await Promise.all([
-    loadTagRecords(),
-    loadLastCloudSyncedAt(),
-  ]);
-  let localRecords = loadedLocalRecords;
-  const localCleanup = await cleanupExpiredRemoteTagRecords(
-    identity.userId,
-    localRecords,
-    now,
-  );
-  if (localCleanup.expiredEntityIds.length > 0) {
-    await finalizeExpiredLocalTagRecords(
-      localCleanup.keptRecords,
-      localCleanup.expiredEntityIds,
-    );
-  }
-  localRecords = localCleanup.keptRecords;
-  const { queue, firstError } = await syncQueuedTags(identity);
-  const pulledRemoteRecords = await pullTagRecords(identity.userId);
-  const remoteCleanup = await cleanupExpiredRemoteTagRecords(
-    identity.userId,
-    pulledRemoteRecords,
-    now,
-  );
-  const remoteRecords = remoteCleanup.keptRecords;
-  const remoteById = new Map(remoteRecords.map((record) => [record.id, record]));
-  const reconciliationPushes = localRecords.filter((record) => {
-    const remote = remoteById.get(record.id);
-    return !remote || compareRecords(record, remote) > 0;
-  });
-  let reconciliationError = firstError;
-  let pushed = 0;
-
-  for (const record of reconciliationPushes) {
-    try {
-      await pushTagRecord(identity.userId, record);
-      pushed += 1;
-    } catch (error) {
-      if (!reconciliationError) {
-        reconciliationError =
-          error instanceof Error ? error : new Error(String(error));
-      }
-    }
-  }
-
-  const merged = mergeTagRecords(localRecords, remoteRecords);
-  await saveTagRecords(merged);
-  await saveLastCloudSyncedAt(Date.now());
-
-  if (reconciliationError) {
-    throw reconciliationError;
-  }
-
-  return {
-    pushed: Math.max(pushed, localRecords.length - queue.length),
-    pulled: lastSyncedAt === null ? remoteRecords.length : remoteRecords.length,
+  let metadata: SyncEntityMetadata = {
+    ...createEmptySyncEntityMetadata(),
+    ...(await loadSyncEntityMetadata(identity.userId, "tag")),
+    status: "syncing",
+    error: null,
   };
+  const isFreshInitialSync =
+    !metadata.initialSyncCompleted &&
+    metadata.lastPulledAt === null &&
+    metadata.lastPulledId === null;
+  await saveSyncEntityMetadata(identity.userId, "tag", metadata);
+
+  try {
+    let localRecords = await loadTagRecords();
+    if (isFreshInitialSync) {
+      await enqueueMissingTagRecords(localRecords);
+    }
+    const queueResult = await syncQueuedTags(identity);
+    const pullResult = await runIncrementalPull({
+      metadata,
+      pullPage: (request) => pullTagRecordPage(identity.userId, request),
+      applyPage: async (remotePage) => {
+        localRecords = mergeTagRecords(localRecords, remotePage);
+        await saveTagRecords(localRecords);
+      },
+      saveProgress: async (progress) => {
+        metadata = progress;
+        await saveSyncEntityMetadata(identity.userId, "tag", progress);
+      },
+    });
+    metadata = pullResult.metadata;
+    if (queueResult.firstError) {
+      throw queueResult.firstError;
+    }
+    if (queueResult.pendingCount > 0) {
+      throw new Error(
+        `tag sync still has ${queueResult.pendingCount} pending upload(s).`,
+      );
+    }
+    metadata = completeSyncEntityMetadata(
+      metadata,
+      queueResult.pushedCount > 0 ? Date.now() : null,
+    );
+    await saveSyncEntityMetadata(identity.userId, "tag", metadata);
+    return { pushed: queueResult.pushedCount, pulled: pullResult.pulled };
+  } catch (error) {
+    metadata = failSyncEntityMetadata(metadata, error);
+    await saveSyncEntityMetadata(identity.userId, "tag", metadata);
+    throw error;
+  }
 };

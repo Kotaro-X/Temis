@@ -1,7 +1,34 @@
-import { collection, deleteDoc, doc, getDocs, setDoc } from "firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  documentId,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  runTransaction,
+  setDoc,
+  startAfter,
+  where,
+  type QueryConstraint,
+} from "firebase/firestore";
 
-import type { SyncEntityEnvelope, SyncEntityType } from "../../types";
+import type {
+  SyncEntityEnvelope,
+  SyncEntityType,
+  SyncPullCursor,
+} from "../../types";
 import { getFirebaseFirestore } from "./firebaseApp";
+import { compareSyncVersions, SYNC_PAGE_SIZE } from "./syncCore";
+import {
+  CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION,
+  assertValidSyncEnvelopeForWrite,
+} from "./syncEnvelopeValidator";
+import {
+  inspectPulledSyncEnvelopes,
+  rewriteMigratedSyncEnvelopes,
+} from "./syncEnvelopePullProcessor";
 
 const COLLECTION_BY_ENTITY: Record<SyncEntityType, string> = {
   tag: "tags",
@@ -21,12 +48,39 @@ const getEntityCollection = (userId: string, entityType: SyncEntityType) =>
 export const pushSyncEnvelope = async <TType extends Exclude<SyncEntityType, "tag">>(
   userId: string,
   envelope: SyncEntityEnvelope<TType>,
-): Promise<void> => {
-  await setDoc(
-    doc(getEntityCollection(userId, envelope.entityType), envelope.entityId),
-    envelope,
-    { merge: true },
+): Promise<boolean> => {
+  const validatedEnvelope = assertValidSyncEnvelopeForWrite(envelope);
+  const firestore = getFirebaseFirestore();
+  const documentRef = doc(
+    getEntityCollection(userId, validatedEnvelope.entityType),
+    validatedEnvelope.entityId,
   );
+  return runTransaction(firestore, async (transaction) => {
+    const currentSnapshot = await transaction.get(documentRef);
+    if (currentSnapshot.exists()) {
+      const current = currentSnapshot.data();
+      if (
+        typeof current.schemaVersion === "number" &&
+        current.schemaVersion > CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION
+      ) {
+        return false;
+      }
+      if (
+        typeof current.updatedAt === "number" &&
+        compareSyncVersions(validatedEnvelope, {
+          updatedAt: current.updatedAt,
+          deletedAt:
+            typeof current.deletedAt === "number" ? current.deletedAt : null,
+          deviceId: typeof current.deviceId === "string" ? current.deviceId : null,
+        }) <= 0
+      ) {
+        return false;
+      }
+    }
+    // Replace the document so old/unknown fields cannot survive a migration.
+    transaction.set(documentRef, validatedEnvelope);
+    return true;
+  });
 };
 
 export const deleteSyncEnvelope = async <
@@ -45,22 +99,76 @@ export const pullSyncEnvelopes = async <
   userId: string,
   entityType: TType,
 ): Promise<SyncEntityEnvelope<TType>[]> => {
-  const snapshot = await getDocs(getEntityCollection(userId, entityType));
-  return snapshot.docs
-    .map((entry) => entry.data() as Partial<SyncEntityEnvelope<TType>>)
-    .filter(
-      (entry) =>
-        entry.entityType === entityType &&
-        typeof entry.entityId === "string" &&
-        typeof entry.updatedAt === "number",
-    )
-    .map((entry) => ({
-      entityType,
-      entityId: entry.entityId as string,
-      record: entry.record as SyncEntityEnvelope<TType>["record"],
-      updatedAt: entry.updatedAt as number,
-      deletedAt:
-        typeof entry.deletedAt === "number" ? entry.deletedAt : null,
-      deviceId: typeof entry.deviceId === "string" ? entry.deviceId : null,
-    }));
+  const records: SyncEntityEnvelope<TType>[] = [];
+  let after: SyncPullCursor | null = null;
+  while (true) {
+    const page: {
+      records: SyncEntityEnvelope<TType>[];
+      nextCursor: SyncPullCursor | null;
+      hasMore: boolean;
+    } = await pullSyncEnvelopePage(userId, entityType, {
+      updatedAfter: null,
+      after,
+      pageSize: SYNC_PAGE_SIZE,
+    });
+    records.push(...page.records);
+    if (!page.hasMore || !page.nextCursor) {
+      return records;
+    }
+    after = page.nextCursor;
+  }
+};
+
+export const pullSyncEnvelopePage = async <
+  TType extends Exclude<SyncEntityType, "tag">,
+>(
+  userId: string,
+  entityType: TType,
+  request: {
+    updatedAfter: number | null;
+    after: SyncPullCursor | null;
+    pageSize?: number;
+  },
+): Promise<{
+  records: SyncEntityEnvelope<TType>[];
+  nextCursor: SyncPullCursor | null;
+  hasMore: boolean;
+}> => {
+  const pageSize = request.pageSize ?? SYNC_PAGE_SIZE;
+  const constraints: QueryConstraint[] = [];
+  if (request.updatedAfter !== null) {
+    constraints.push(where("updatedAt", ">", request.updatedAfter));
+  }
+  constraints.push(orderBy("updatedAt", "asc"), orderBy(documentId(), "asc"));
+  if (request.after) {
+    constraints.push(startAfter(request.after.updatedAt, request.after.entityId));
+  }
+  constraints.push(limit(pageSize));
+  const snapshot = await getDocs(
+    query(getEntityCollection(userId, entityType), ...constraints),
+  );
+  const inspected = inspectPulledSyncEnvelopes(
+    entityType,
+    snapshot.docs.map((entry) => ({ id: entry.id, data: entry.data() })),
+  );
+  await rewriteMigratedSyncEnvelopes(entityType, inspected.migrations, async (
+    documentId,
+    envelope,
+  ) => {
+    await setDoc(
+      doc(getEntityCollection(userId, entityType), documentId),
+      envelope,
+      { merge: true },
+    );
+  });
+  const lastDocument = snapshot.docs.at(-1);
+  const lastUpdatedAt = lastDocument?.data()?.updatedAt;
+  return {
+    records: inspected.envelopes,
+    nextCursor:
+      lastDocument && typeof lastUpdatedAt === "number"
+        ? { updatedAt: lastUpdatedAt, entityId: lastDocument.id }
+        : null,
+    hasMore: snapshot.docs.length === pageSize,
+  };
 };

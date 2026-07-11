@@ -6,7 +6,7 @@ import type {
   TagRecord,
 } from "../../types";
 
-export const DELETED_ITEM_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const DELETED_ITEM_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 const loadStorageModule = () => import("../../../storage.ts");
 

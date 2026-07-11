@@ -360,48 +360,82 @@ const SettingsScreen = ({
                     {subscriptionAccessCaption}
                   </Text>
                 ) : null}
-                {subscriptionError ? (
-                  <Text style={styles.syncErrorText}>{subscriptionError}</Text>
-                ) : null}
-                <Pressable
-                  style={[
-                    styles.subscriptionPrimaryButton,
-                    isSubscriptionBusy && styles.syncButtonDisabled,
-                  ]}
-                  onPress={onPurchaseCloudSync}
-                  disabled={isSubscriptionBusy || !onPurchaseCloudSync}
-                >
-                  <Text style={styles.subscriptionPrimaryButtonText}>
-                    {subscriptionStatus === "purchasing"
-                      ? t(language, "settings.sync.purchasing")
-                      : t(language, "settings.sync.subscriptionPurchase")}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[
-                    styles.googleAuthButton,
-                    styles.googleAuthButtonSecondary,
-                    isSubscriptionBusy && styles.syncButtonDisabled,
-                  ]}
-                  onPress={onRestoreCloudSync}
-                  disabled={isSubscriptionBusy || !onRestoreCloudSync}
-                >
-                  <Text
-                    style={[
-                      styles.googleAuthButtonText,
-                      styles.googleAuthButtonTextSecondary,
-                    ]}
-                  >
-                    {subscriptionStatus === "loading"
-                      ? t(language, "settings.sync.restoringPurchase")
-                      : t(language, "settings.sync.restorePurchase")}
-                  </Text>
-                </Pressable>
-                <Text style={styles.subscriptionFootnote}>
-                  {t(language, "settings.sync.subscriptionRestoreCaption")}
-                </Text>
+                {googleAuthStatus === "signedIn" ? (
+                  <>
+                    {subscriptionError ? (
+                      <Text style={styles.syncErrorText}>{subscriptionError}</Text>
+                    ) : null}
+                    <Pressable
+                      style={[
+                        styles.subscriptionPrimaryButton,
+                        isSubscriptionBusy && styles.syncButtonDisabled,
+                      ]}
+                      onPress={onPurchaseCloudSync}
+                      disabled={isSubscriptionBusy || !onPurchaseCloudSync}
+                    >
+                      <Text style={styles.subscriptionPrimaryButtonText}>
+                        {subscriptionStatus === "purchasing"
+                          ? t(language, "settings.sync.purchasing")
+                          : t(language, "settings.sync.subscriptionPurchase")}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.googleAuthButton,
+                        styles.googleAuthButtonSecondary,
+                        isSubscriptionBusy && styles.syncButtonDisabled,
+                      ]}
+                      onPress={onRestoreCloudSync}
+                      disabled={isSubscriptionBusy || !onRestoreCloudSync}
+                    >
+                      <Text
+                        style={[
+                          styles.googleAuthButtonText,
+                          styles.googleAuthButtonTextSecondary,
+                        ]}
+                      >
+                        {subscriptionStatus === "loading"
+                          ? t(language, "settings.sync.restoringPurchase")
+                          : t(language, "settings.sync.restorePurchase")}
+                      </Text>
+                    </Pressable>
+                    <Text style={styles.subscriptionFootnote}>
+                      {t(language, "settings.sync.subscriptionRestoreCaption")}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.subscriptionFootnote}>
+                      {t(language, "settings.sync.subscriptionLoginRequired")}
+                    </Text>
+                    <Pressable
+                      style={[
+                        styles.subscriptionPrimaryButton,
+                        (googleAuthStatus === "restoring" ||
+                          googleAuthStatus === "signingIn") &&
+                          styles.syncButtonDisabled,
+                      ]}
+                      onPress={onSignInWithGoogle}
+                      disabled={
+                        googleAuthStatus === "restoring" ||
+                        googleAuthStatus === "signingIn" ||
+                        !onSignInWithGoogle
+                      }
+                    >
+                      <Text style={styles.subscriptionPrimaryButtonText}>
+                        {googleAuthStatus === "signingIn"
+                          ? t(language, "settings.sync.signingIn")
+                          : googleAuthStatus === "restoring"
+                            ? t(language, "settings.sync.restoring")
+                            : t(language, "settings.sync.signInGoogle")}
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
-              <View style={styles.nestedSection}>{renderGoogleAccountCard()}</View>
+              {googleAuthStatus === "signedIn" ? (
+                <View style={styles.nestedSection}>{renderGoogleAccountCard()}</View>
+              ) : null}
               <View style={styles.nestedSection}>{renderInviteSection()}</View>
             </>
           ) : (

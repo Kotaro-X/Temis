@@ -7,6 +7,7 @@ import { processSyncQueue } from "../src/services/sync/syncQueueProcessor.ts";
 const createTodoEnvelope = (
   overrides: Partial<SyncEntityEnvelope<"todo">> = {},
 ): SyncEntityEnvelope<"todo"> => ({
+  schemaVersion: 3,
   entityType: "todo",
   entityId: "todo-1",
   record: {
@@ -28,6 +29,7 @@ const createTodoEnvelope = (
     isDeleted: false,
   },
   updatedAt: 100,
+  isDeleted: false,
   deletedAt: null,
   deviceId: "device-a",
   ...overrides,
@@ -132,4 +134,49 @@ test("processSyncQueue retries failed items with exponential backoff and keeps l
       }),
     ],
   );
+});
+
+test("processSyncQueue migrates supported legacy envelopes and drops corrupt ones", async () => {
+  const pushedVersions: number[] = [];
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (message?: unknown) => warnings.push(String(message));
+
+  try {
+    const result = await processSyncQueue(
+      "todo",
+      [
+        createQueueItem({
+          id: "queue-legacy",
+          payload: {
+            envelope: { ...createTodoEnvelope(), schemaVersion: 2 },
+          },
+        }),
+        createQueueItem({
+          id: "queue-corrupt",
+          payload: {
+            envelope: {
+              ...createTodoEnvelope(),
+              record: {
+                ...createTodoEnvelope().record,
+                repeat: "invalid",
+              },
+            } as unknown as SyncEntityEnvelope<"todo">,
+          },
+        }),
+      ],
+      1_000,
+      async (envelope) => {
+        pushedVersions.push(envelope.schemaVersion);
+      },
+    );
+
+    assert.deepEqual(pushedVersions, [3]);
+    assert.equal(result.firstError, null);
+    assert.deepEqual(result.queue, []);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /reason=corrupt/);
+  } finally {
+    console.warn = originalWarn;
+  }
 });

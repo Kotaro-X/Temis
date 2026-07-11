@@ -22,17 +22,30 @@ export const runCloudSync = async (): Promise<SyncResult> => {
         throw new Error(createFirebaseConfigErrorMessage(process.env));
       }
       const identity = await getSyncIdentity();
-      const tagResult = await syncTagRecords(identity);
-      const todoResult = await syncTodoRecords(identity);
-      const taskResult = await syncTaskRecords(identity);
-      const memoResult = await syncMemoRecords(identity);
+      const syncJobs = [
+        ["tag", syncTagRecords],
+        ["todo", syncTodoRecords],
+        ["task", syncTaskRecords],
+        ["memo", syncMemoRecords],
+      ] as const;
+      const summaries: string[] = [];
+      const errors: string[] = [];
+      for (const [entityType, syncEntity] of syncJobs) {
+        try {
+          const result = await syncEntity(identity);
+          summaries.push(
+            `${entityType} pushed=${result.pushed} pulled=${result.pulled}`,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          errors.push(`${entityType}: ${message}`);
+        }
+      }
+      if (errors.length > 0) {
+        throw new Error(errors.join(" | "));
+      }
       return mapSyncSuccess(
-        [
-          `tag pushed=${tagResult.pushed} pulled=${tagResult.pulled}`,
-          `todo pushed=${todoResult.pushed} pulled=${todoResult.pulled}`,
-          `task pushed=${taskResult.pushed} pulled=${taskResult.pulled}`,
-          `memo pushed=${memoResult.pushed} pulled=${memoResult.pulled}`,
-        ].join(" | "),
+        summaries.join(" | "),
       );
     } catch (error) {
       return mapSyncError(error);

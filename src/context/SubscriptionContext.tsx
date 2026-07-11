@@ -17,6 +17,8 @@ import {
   getCustomerInfo,
   isCloudSyncEntitled as isRevenueCatCloudSyncEntitled,
   isRevenueCatSupportedPlatform,
+  logInRevenueCatUser,
+  logOutRevenueCatUser,
   purchaseCloudSyncPlan,
   restorePurchases,
 } from "../services/subscription/revenueCat";
@@ -98,7 +100,10 @@ export const SubscriptionProvider = ({
   const [accessGrant, setAccessGrant] = useState<CloudSyncAccessGrant | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(
+    () => getFirebaseAuth().currentUser,
+  );
+  const [purchasesConfigured, setPurchasesConfigured] = useState(false);
 
   const applyCustomerInfo = useCallback((nextCustomerInfo: CustomerInfo | null) => {
     setCustomerInfo(nextCustomerInfo);
@@ -142,9 +147,22 @@ export const SubscriptionProvider = ({
   }, [applyCustomerInfo, firebaseUser, refreshAccessGrant]);
 
   const purchase = useCallback(async (): Promise<CustomerInfo | null> => {
+    const purchaseUser =
+      firebaseUser && isGoogleSyncFirebaseUser(firebaseUser)
+        ? firebaseUser
+        : getFirebaseAuth().currentUser;
+    if (!isGoogleSyncFirebaseUser(purchaseUser)) {
+      setStatus("error");
+      setError("Sign in with Google before purchasing Temis Plus.");
+      return null;
+    }
+
     setStatus("purchasing");
     setError(null);
     try {
+      // Firebase's auth observer can arrive just after the Google sign-in UI closes.
+      // Identify the RevenueCat customer here as well so the first purchase is attributed.
+      await logInRevenueCatUser(purchaseUser.uid);
       const nextCustomerInfo = await purchaseCloudSyncPlan(
         hasInviteDiscountAccess(accessGrant)
           ? {
@@ -164,12 +182,23 @@ export const SubscriptionProvider = ({
       setError(formatError(purchaseError));
       return null;
     }
-  }, [accessGrant, applyCustomerInfo, customerInfo]);
+  }, [accessGrant, applyCustomerInfo, customerInfo, firebaseUser]);
 
   const restore = useCallback(async (): Promise<CustomerInfo | null> => {
+    const restoreUser =
+      firebaseUser && isGoogleSyncFirebaseUser(firebaseUser)
+        ? firebaseUser
+        : getFirebaseAuth().currentUser;
+    if (!isGoogleSyncFirebaseUser(restoreUser)) {
+      setStatus("error");
+      setError("Sign in with Google before restoring purchases.");
+      return null;
+    }
+
     setStatus("loading");
     setError(null);
     try {
+      await logInRevenueCatUser(restoreUser.uid);
       const nextCustomerInfo = await restorePurchases();
       return applyCustomerInfo(nextCustomerInfo);
     } catch (restoreError) {
@@ -177,7 +206,7 @@ export const SubscriptionProvider = ({
       setError(formatError(restoreError));
       return null;
     }
-  }, [applyCustomerInfo]);
+  }, [applyCustomerInfo, firebaseUser]);
 
   const redeemInviteCodeForAccess = useCallback(
     async (code: string): Promise<CloudSyncAccessGrant | null> => {
@@ -235,11 +264,7 @@ export const SubscriptionProvider = ({
         if (configured) {
           Purchases.addCustomerInfoUpdateListener(handleCustomerInfoUpdate);
           removeCustomerInfoListener = true;
-          const nextCustomerInfo = await getCustomerInfo();
-          if (!active) {
-            return;
-          }
-          applyCustomerInfo(nextCustomerInfo);
+          setPurchasesConfigured(true);
           return;
         }
       } catch (bootstrapError) {
@@ -264,6 +289,42 @@ export const SubscriptionProvider = ({
       }
     };
   }, [applyCustomerInfo, refreshAccessGrant]);
+
+  useEffect(() => {
+    if (!purchasesConfigured) {
+      return;
+    }
+
+    let active = true;
+    const user =
+      firebaseUser && isGoogleSyncFirebaseUser(firebaseUser) ? firebaseUser : null;
+
+    const syncRevenueCatIdentity = async () => {
+      setStatus("loading");
+      setError(null);
+      try {
+        const nextCustomerInfo = user
+          ? await logInRevenueCatUser(user.uid)
+          : await logOutRevenueCatUser();
+        if (!active) {
+          return;
+        }
+        applyCustomerInfo(nextCustomerInfo);
+      } catch (identityError) {
+        if (!active) {
+          return;
+        }
+        setStatus("error");
+        setError(formatError(identityError));
+      }
+    };
+
+    void syncRevenueCatIdentity();
+
+    return () => {
+      active = false;
+    };
+  }, [applyCustomerInfo, firebaseUser, purchasesConfigured]);
 
   const revenueCatEntitled = isRevenueCatCloudSyncEntitled(customerInfo);
   const isCloudSyncEntitled =

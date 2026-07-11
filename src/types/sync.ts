@@ -5,23 +5,34 @@ import type { SlotKey } from "./timer";
 import type { SimpleTodoItem } from "./todo";
 
 export type SyncStatus = "idle" | "syncing" | "synced" | "error";
+export type SyncEntityStatus = "idle" | "syncing" | "succeeded" | "failed";
 
 export type SyncEntityType = "tag" | "todo" | "task" | "memo";
 export type SyncOperation = "upsert";
 export type SyncCapabilityStatus = "enabled" | "planned";
 
-export type SyncMetadata = {
-  updatedAt?: number | null;
-  deletedAt?: number | null;
-  syncStatus?: SyncStatus;
-  deviceId?: string | null;
-  lastSyncedAt?: number | null;
+export type SyncPullCursor = {
+  updatedAt: number;
+  entityId: string;
 };
+
+export type SyncEntityMetadata = {
+  lastPulledAt: number | null;
+  /** Present only while a paginated pull still has unapplied pages. */
+  lastPulledId: string | null;
+  lastPushedAt: number | null;
+  initialSyncCompleted: boolean;
+  status: SyncEntityStatus;
+  error: string | null;
+};
+
+export type SyncMetadata = Record<SyncEntityType, SyncEntityMetadata>;
 
 export type SyncResult = {
   status: Exclude<SyncStatus, "idle">;
   syncedAt: number;
   message?: string;
+  initialSyncCompleted: boolean;
 };
 
 export type SyncIdentity = {
@@ -83,10 +94,16 @@ export type SyncPayloadByEntity = {
 };
 
 export type SyncEntityEnvelope<TType extends SyncEntityType = SyncEntityType> = {
+  /**
+   * Wire-format version for the envelope and its record. All newly written
+   * envelopes use the current version; old versions are normalized on read.
+   */
+  schemaVersion: number;
   entityType: TType;
   entityId: string;
   record: SyncPayloadByEntity[TType]["record"];
   updatedAt: number;
+  isDeleted: boolean;
   deletedAt: number | null;
   deviceId: string | null;
 };

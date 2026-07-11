@@ -166,8 +166,275 @@ service cloud.firestore {
         && inviteAfter.redeemedCount == invite.data.redeemedCount + 1;
     }
 
-    match /users/{userId}/{document=**} {
-      allow read, write: if isSelf(userId) || isAdmin();
+    // User-owned sync data is an explicit allowlist. Do not add a recursive
+    // match below /users: an unmatched path is denied, including to admins.
+    function validString(value, maxLength) {
+      return value is string && value.size() <= maxLength;
+    }
+
+    function validNullableString(value, maxLength) {
+      return value == null || validString(value, maxLength);
+    }
+
+    function validNullableInt(value) {
+      return value == null || value is int;
+    }
+
+    function validStringList(value, maxItems) {
+      // Rules cannot express a generic "every list member is a string" check.
+      // We still constrain the container and each nested schema that uses it.
+      return value is list && value.size() <= maxItems;
+    }
+
+    function validTagDocument(data, tagId) {
+      return data.keys().hasAll([
+          "id", "name", "order", "createdAt", "updatedAt", "archivedAt",
+          "isDeleted", "deletedAt", "deviceId",
+        ])
+        && data.keys().hasOnly([
+          "id", "name", "order", "createdAt", "updatedAt", "archivedAt",
+          "isDeleted", "deletedAt", "deviceId",
+        ])
+        && data.id == tagId
+        && validString(data.id, 128)
+        && validString(data.name, 200)
+        && data.order is number
+        && data.createdAt is int
+        && data.updatedAt is int
+        && validNullableInt(data.archivedAt)
+        && data.isDeleted is bool
+        && data.isDeleted == (data.deletedAt != null)
+        && validNullableInt(data.deletedAt)
+        && validNullableString(data.deviceId, 128);
+    }
+
+    function validTodoRecord(data, entityId) {
+      return data.keys().hasAll([
+          "id", "text", "memo", "tags", "isDone", "createdAt", "doneAt",
+          "reminderDate", "reminderTime", "repeat", "notificationId",
+          "notificationIds", "seriesId", "seriesAnchorDate", "occurrenceDate",
+          "isDeleted",
+        ])
+        && data.keys().hasOnly([
+          "id", "text", "memo", "tags", "isDone", "createdAt", "doneAt",
+          "reminderDate", "reminderTime", "repeat", "notificationId",
+          "notificationIds", "seriesId", "seriesAnchorDate", "occurrenceDate",
+          "isDeleted",
+        ])
+        && data.id == entityId
+        && validString(data.id, 512)
+        && validString(data.text, 10000)
+        && validString(data.memo, 50000)
+        && validStringList(data.tags, 100)
+        && data.isDone is bool
+        && data.createdAt is int
+        && validNullableInt(data.doneAt)
+        && validNullableString(data.reminderDate, 32)
+        && validNullableString(data.reminderTime, 16)
+        && data.repeat in ["none", "daily", "weekly", "monthly", "yearly"]
+        && validNullableString(data.notificationId, 256)
+        && validStringList(data.notificationIds, 100)
+        && validNullableString(data.seriesId, 512)
+        && validNullableString(data.seriesAnchorDate, 32)
+        && validNullableString(data.occurrenceDate, 32)
+        && data.isDeleted is bool;
+    }
+
+    function validTaskState(data) {
+      return data.keys().hasAll([
+          "id", "taskName", "tags", "estimateMinutes", "elapsedMinutes",
+          "status", "isArchived", "startAt",
+        ])
+        && data.keys().hasOnly([
+          "id", "taskName", "tags", "estimateMinutes", "elapsedMinutes",
+          "status", "isArchived", "startAt",
+        ])
+        && validString(data.id, 512)
+        && validString(data.taskName, 1000)
+        && validStringList(data.tags, 100)
+        && data.estimateMinutes is number
+        && data.elapsedMinutes is number
+        && data.status in ["TODO", "IN_PROGRESS", "PAUSED", "DONE"]
+        && data.isArchived is bool
+        && validNullableInt(data.startAt);
+    }
+
+    function validTaskLog(data) {
+      return data.keys().hasAll([
+          "id", "date", "slot", "taskId", "taskName", "tags",
+          "estimateMinutes", "actualMinutes", "result", "endedAt",
+        ])
+        && data.keys().hasOnly([
+          "id", "date", "slot", "taskId", "taskName", "tags",
+          "estimateMinutes", "actualMinutes", "result", "endedAt",
+        ])
+        && validString(data.id, 512)
+        && validString(data.date, 32)
+        && data.slot in ["morning", "forenoon", "afternoon", "night"]
+        && validString(data.taskId, 512)
+        && validString(data.taskName, 1000)
+        && validStringList(data.tags, 100)
+        && data.estimateMinutes is number
+        && data.actualMinutes is number
+        && data.result in ["completed", "failed"]
+        && data.endedAt is int;
+    }
+
+    function validTaskRecord(data) {
+      return (
+        data.kind == "state"
+        && data.keys().hasAll(["kind", "date", "slotKey", "task"])
+        && data.keys().hasOnly(["kind", "date", "slotKey", "task"])
+        && validString(data.date, 32)
+        && data.slotKey in ["morning", "forenoon", "afternoon", "night"]
+        && data.task is map
+        && validTaskState(data.task)
+      ) || (
+        data.kind == "log"
+        && data.keys().hasAll(["kind", "log"])
+        && data.keys().hasOnly(["kind", "log"])
+        && data.log is map
+        && validTaskLog(data.log)
+      );
+    }
+
+    function validTaskMemo(data, entityId) {
+      return data.keys().hasAll(["id", "taskId", "body", "createdAt", "updatedAt"])
+        && data.keys().hasOnly(["id", "taskId", "body", "createdAt", "updatedAt"])
+        && data.id == entityId
+        && validString(data.id, 512)
+        && validString(data.taskId, 512)
+        && validString(data.body, 200000)
+        && data.createdAt is int
+        && data.updatedAt is int;
+    }
+
+    function validNote(data, entityId) {
+      return data.keys().hasAll(["id", "type", "date", "title", "body", "updatedAt"])
+        && data.keys().hasOnly(["id", "type", "date", "title", "body", "updatedAt"])
+        && data.id == entityId
+        && validString(data.id, 512)
+        && data.type in ["daily", "free"]
+        && validNullableString(data.date, 32)
+        && validNullableString(data.title, 1000)
+        && validString(data.body, 200000)
+        && data.updatedAt is int;
+    }
+
+    function validResearchNote(data, entityId) {
+      return data.keys().hasAll([
+          "id", "title", "body", "tags", "createdAt", "updatedAt", "weekId",
+          "weeklyPromptId",
+        ])
+        && data.keys().hasOnly([
+          "id", "title", "body", "tags", "createdAt", "updatedAt", "weekId",
+          "weeklyPromptId",
+        ])
+        && data.id == entityId
+        && validString(data.id, 512)
+        && validString(data.title, 1000)
+        && validString(data.body, 200000)
+        && validStringList(data.tags, 100)
+        && data.createdAt is int
+        && data.updatedAt is int
+        && validString(data.weekId, 128)
+        && validString(data.weeklyPromptId, 512);
+    }
+
+    function validMemoRecord(data, entityId) {
+      return (
+        data.kind == "taskMemo"
+        && data.keys().hasAll(["kind", "data"])
+        && data.keys().hasOnly(["kind", "data"])
+        && data.data is map
+        && validTaskMemo(data.data, entityId)
+      ) || (
+        data.kind == "note"
+        && data.keys().hasAll(["kind", "data"])
+        && data.keys().hasOnly(["kind", "data"])
+        && data.data is map
+        && validNote(data.data, entityId)
+      ) || (
+        data.kind == "research"
+        && data.keys().hasAll(["kind", "data"])
+        && data.keys().hasOnly(["kind", "data"])
+        && data.data is map
+        && validResearchNote(data.data, entityId)
+      );
+    }
+
+    function validSyncEnvelope(data, entityType, documentId) {
+      return data.keys().hasAll([
+          "schemaVersion", "entityType", "entityId", "record", "updatedAt", "isDeleted", "deletedAt", "deviceId",
+        ])
+        && data.keys().hasOnly([
+          "schemaVersion", "entityType", "entityId", "record", "updatedAt", "isDeleted", "deletedAt", "deviceId",
+        ])
+        && data.schemaVersion == 3
+        && data.entityType == entityType
+        && data.entityId == documentId
+        && validString(data.entityId, 512)
+        && data.record is map
+        && data.updatedAt is int
+        && data.isDeleted is bool
+        && data.isDeleted == (data.deletedAt != null)
+        && validNullableInt(data.deletedAt)
+        && validNullableString(data.deviceId, 128);
+    }
+
+    function validTodoEnvelope(data, documentId) {
+      return validSyncEnvelope(data, "todo", documentId)
+        && validTodoRecord(data.record, documentId);
+    }
+
+    function validTaskEnvelope(data, documentId) {
+      return validSyncEnvelope(data, "task", documentId)
+        && validTaskRecord(data.record);
+    }
+
+    function validMemoEnvelope(data, documentId) {
+      return validSyncEnvelope(data, "memo", documentId)
+        && validMemoRecord(data.record, documentId);
+    }
+
+    match /users/{userId}/tags/{tagId} {
+      allow read: if isSelf(userId);
+      allow create: if isSelf(userId)
+        && validTagDocument(request.resource.data, tagId);
+      allow update: if isSelf(userId)
+        && validTagDocument(request.resource.data, tagId)
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
+      allow delete: if isSelf(userId);
+    }
+
+    match /users/{userId}/todos/{todoId} {
+      allow read: if isSelf(userId);
+      allow create: if isSelf(userId)
+        && validTodoEnvelope(request.resource.data, todoId);
+      allow update: if isSelf(userId)
+        && validTodoEnvelope(request.resource.data, todoId)
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
+      allow delete: if isSelf(userId);
+    }
+
+    match /users/{userId}/tasks/{taskId} {
+      allow read: if isSelf(userId);
+      allow create: if isSelf(userId)
+        && validTaskEnvelope(request.resource.data, taskId);
+      allow update: if isSelf(userId)
+        && validTaskEnvelope(request.resource.data, taskId)
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
+      allow delete: if isSelf(userId);
+    }
+
+    match /users/{userId}/memos/{memoId} {
+      allow read: if isSelf(userId);
+      allow create: if isSelf(userId)
+        && validMemoEnvelope(request.resource.data, memoId);
+      allow update: if isSelf(userId)
+        && validMemoEnvelope(request.resource.data, memoId)
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
+      allow delete: if isSelf(userId);
     }
 
     match /subscriptionAccess/{userId} {

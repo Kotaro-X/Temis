@@ -1,4 +1,8 @@
 import type { SyncEntityEnvelope, SyncEntityType, SyncQueueItem } from "../../types";
+import {
+  logSkippedSyncEnvelope,
+  validateSyncEnvelope,
+} from "./syncEnvelopeValidator.ts";
 
 export { findReconciliationPushes } from "./syncCore.ts";
 
@@ -16,6 +20,7 @@ export const processSyncQueue = async <
   queue: SyncQueueItem[];
   firstError: Error | null;
   pushedCount: number;
+  pendingCount: number;
 }> => {
   const nextQueue: SyncQueueItem[] = [];
   let firstError: Error | null = null;
@@ -36,8 +41,13 @@ export const processSyncQueue = async <
     if (!envelope || envelope.entityType !== entityType) {
       continue;
     }
+    const validation = validateSyncEnvelope(entityType, envelope);
+    if (!validation.ok) {
+      logSkippedSyncEnvelope(entityType, `queue:${item.id}`, validation);
+      continue;
+    }
     try {
-      await pushEnvelope(envelope);
+      await pushEnvelope(validation.envelope);
       pushedCount += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -55,7 +65,12 @@ export const processSyncQueue = async <
     }
   }
 
-  return { queue: nextQueue, firstError, pushedCount };
+  return {
+    queue: nextQueue,
+    firstError,
+    pushedCount,
+    pendingCount: nextQueue.filter((item) => item.entityType === entityType).length,
+  };
 };
 
 export const syncQueuedEnvelopes = async <
@@ -67,6 +82,7 @@ export const syncQueuedEnvelopes = async <
   queue: SyncQueueItem[];
   firstError: Error | null;
   pushedCount: number;
+  pendingCount: number;
 }> => {
   const { loadSyncQueue, saveSyncQueue } = await import("../../../storage.ts");
   const now = Date.now();

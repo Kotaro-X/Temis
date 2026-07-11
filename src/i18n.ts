@@ -61,6 +61,8 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.subscriptionBody":
       "サブスクリプションを購入すると、Temis のデータを複数端末で同期できます。",
     "settings.sync.subscriptionPurchase": "サブスクリプションを購入",
+    "settings.sync.subscriptionLoginRequired":
+      "購入内容を Temis アカウントに紐付けるため、先に Google でログインしてください。",
     "settings.sync.subscriptionRestoreCaption": "以前購入した場合は購入を復元してください",
     "settings.sync.inviteSectionTitle": "招待コードを使う",
     "settings.sync.inviteCodeLabel": "招待コード",
@@ -314,6 +316,8 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.subscriptionBody":
       "Purchase the subscription to sync your Temis data across devices.",
     "settings.sync.subscriptionPurchase": "Purchase subscription",
+    "settings.sync.subscriptionLoginRequired":
+      "Sign in with Google first so your purchase is linked to your Temis account.",
     "settings.sync.subscriptionRestoreCaption":
       "If you already purchased before, restore your purchase.",
     "settings.sync.inviteSectionTitle": "Use an invite code",

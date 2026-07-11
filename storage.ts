@@ -15,10 +15,15 @@ import {
   TodayState,
   SLOT_KEYS,
   SyncEntityEnvelope,
+  SyncEntityMetadata,
   SyncEntityType,
   SyncQueueItem,
 } from "./types";
 import { getBuiltinTagId } from "./src/tagLocalization";
+import {
+  logSkippedSyncEnvelope,
+  validateSyncEnvelope,
+} from "./src/services/sync/syncEnvelopeValidator";
 import { mergeTodayStatesWithLegacy } from "./src/utils/todayStateMerge";
 
 const TODAY_STATE_KEY_PREFIX = "todayState:";
@@ -37,6 +42,7 @@ const SYNC_QUEUE_KEY = "syncQueue";
 const SYNC_RECORDS_KEY_PREFIX = "syncRecords:";
 const SYNC_DEVICE_ID_KEY = "syncDeviceId";
 const LAST_SYNCED_AT_KEY = "lastCloudSyncedAt";
+const SYNC_METADATA_KEY_PREFIX = "syncMetadata:v2";
 
 const createTaskId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -44,6 +50,8 @@ const createTaskId = () =>
 const getTodayStateKey = (date: string) => `${TODAY_STATE_KEY_PREFIX}${date}`;
 const getSyncRecordsKey = (entityType: SyncEntityType) =>
   `${SYNC_RECORDS_KEY_PREFIX}${entityType}`;
+const getSyncMetadataKey = (userId: string, entityType: SyncEntityType) =>
+  `${SYNC_METADATA_KEY_PREFIX}:${encodeURIComponent(userId)}:${entityType}`;
 
 const isSyncEntityType = (value: unknown): value is SyncEntityType =>
   value === "tag" || value === "todo" || value === "task" || value === "memo";
@@ -590,25 +598,17 @@ const normalizeSyncEntityEnvelope = <TType extends SyncEntityType>(
   entityType: TType,
   value: unknown,
 ): SyncEntityEnvelope<TType> | null => {
-  if (!value || typeof value !== "object") {
+  const result = validateSyncEnvelope(entityType, value);
+  if (!result.ok) {
+    const documentId =
+      value && typeof value === "object" && "entityId" in value &&
+      typeof value.entityId === "string"
+        ? value.entityId
+        : "unknown";
+    logSkippedSyncEnvelope(entityType, `local:${documentId}`, result);
     return null;
   }
-  const entry = value as Partial<SyncEntityEnvelope<TType>>;
-  if (entry.entityType !== entityType || typeof entry.entityId !== "string") {
-    return null;
-  }
-  if (typeof entry.updatedAt !== "number") {
-    return null;
-  }
-  return {
-    entityType,
-    entityId: entry.entityId,
-    record: entry.record as SyncEntityEnvelope<TType>["record"],
-    updatedAt: entry.updatedAt,
-    deletedAt:
-      typeof entry.deletedAt === "number" ? entry.deletedAt : null,
-    deviceId: typeof entry.deviceId === "string" ? entry.deviceId : null,
-  };
+  return result.envelope;
 };
 
 export const loadSyncEntityRecords = async <TType extends SyncEntityType>(
@@ -644,6 +644,60 @@ export const saveSyncEntityRecords = async <TType extends SyncEntityType>(
   await AsyncStorage.setItem(
     getSyncRecordsKey(entityType),
     JSON.stringify(sorted),
+  );
+};
+
+const normalizeSyncEntityMetadata = (value: unknown): SyncEntityMetadata => {
+  const entry = value && typeof value === "object"
+    ? value as Partial<SyncEntityMetadata>
+    : {};
+  return {
+    lastPulledAt:
+      typeof entry.lastPulledAt === "number" && Number.isFinite(entry.lastPulledAt)
+        ? entry.lastPulledAt
+        : null,
+    lastPulledId:
+      typeof entry.lastPulledId === "string" && entry.lastPulledId.length > 0
+        ? entry.lastPulledId
+        : null,
+    lastPushedAt:
+      typeof entry.lastPushedAt === "number" && Number.isFinite(entry.lastPushedAt)
+        ? entry.lastPushedAt
+        : null,
+    initialSyncCompleted: entry.initialSyncCompleted === true,
+    status:
+      entry.status === "syncing" ||
+      entry.status === "succeeded" ||
+      entry.status === "failed"
+        ? entry.status
+        : "idle",
+    error: typeof entry.error === "string" ? entry.error : null,
+  };
+};
+
+export const loadSyncEntityMetadata = async (
+  userId: string,
+  entityType: SyncEntityType,
+): Promise<SyncEntityMetadata> => {
+  const raw = await AsyncStorage.getItem(getSyncMetadataKey(userId, entityType));
+  if (!raw) {
+    return normalizeSyncEntityMetadata(null);
+  }
+  try {
+    return normalizeSyncEntityMetadata(JSON.parse(raw));
+  } catch {
+    return normalizeSyncEntityMetadata(null);
+  }
+};
+
+export const saveSyncEntityMetadata = async (
+  userId: string,
+  entityType: SyncEntityType,
+  metadata: SyncEntityMetadata,
+): Promise<void> => {
+  await AsyncStorage.setItem(
+    getSyncMetadataKey(userId, entityType),
+    JSON.stringify(normalizeSyncEntityMetadata(metadata)),
   );
 };
 

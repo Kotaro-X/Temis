@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { runCloudSync } from "../services/sync/syncService";
-import type { SyncCapabilities, SyncStatus } from "../types";
+import type {
+  SyncCapabilities,
+  SyncEntityStatus,
+  SyncStatus,
+} from "../types";
 import {
   getCurrentGoogleSyncUser,
   restoreGoogleSyncUser,
@@ -30,6 +34,8 @@ export const useCloudSync = ({
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastResultMessage, setLastResultMessage] = useState<string | null>(null);
+  const [initialSyncStatus, setInitialSyncStatus] =
+    useState<SyncEntityStatus>("idle");
   const [authStatus, setAuthStatus] = useState<
     "restoring" | "signedOut" | "signingIn" | "signedIn"
   >("restoring");
@@ -91,6 +97,7 @@ export const useCloudSync = ({
     setUser(restoredUser);
     setAuthStatus("signedIn");
     setStatus("syncing");
+    setInitialSyncStatus("syncing");
     setError(null);
     setLastResultMessage("Sync started.");
     const result = await runCloudSync();
@@ -98,6 +105,9 @@ export const useCloudSync = ({
     setLastSyncedAt(result.syncedAt);
     setError(result.status === "error" ? result.message ?? null : null);
     setLastResultMessage(result.message ?? result.status);
+    setInitialSyncStatus(
+      result.initialSyncCompleted ? "succeeded" : "failed",
+    );
     return result;
   }, [clearAutoSyncTimer, enabled, entitled, restoreSession]);
 
@@ -151,6 +161,7 @@ export const useCloudSync = ({
       setUser(null);
       setAuthStatus("signedOut");
       setStatus("idle");
+      setInitialSyncStatus("idle");
       setError(null);
       setLastResultMessage("Signed out.");
     } catch (signOutError) {
@@ -196,5 +207,11 @@ export const useCloudSync = ({
     signIn,
     signOut,
     capabilities: SYNC_CAPABILITIES,
+    initialSyncStatus,
+    isInitialSyncBlocking:
+      canSync &&
+      (authStatus === "restoring" ||
+        authStatus === "signingIn" ||
+        (authStatus === "signedIn" && initialSyncStatus !== "succeeded")),
   };
 };
