@@ -2,9 +2,12 @@ import { Platform } from "react-native";
 import Purchases, {
   LOG_LEVEL,
   type CustomerInfo,
+  type LogHandler,
   type PurchasesOfferings,
   type PurchasesPackage,
 } from "react-native-purchases";
+
+import { shouldSuppressRevenueCatLog } from "./revenueCatErrors";
 
 export const REVENUECAT_ENV_KEYS = [
   "EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY",
@@ -31,6 +34,29 @@ type RevenueCatEnvSource = Record<string, string | undefined>;
 const DEFAULT_CLOUD_SYNC_ENTITLEMENT_ID = "cloud_sync";
 
 let configurePromise: Promise<boolean> | null = null;
+
+const revenueCatLogHandler: LogHandler = (logLevel, message) => {
+  if (shouldSuppressRevenueCatLog(logLevel, message)) {
+    return;
+  }
+
+  switch (logLevel) {
+    case LOG_LEVEL.DEBUG:
+      console.debug(`[RevenueCat] ${message}`);
+      return;
+    case LOG_LEVEL.INFO:
+      console.info(`[RevenueCat] ${message}`);
+      return;
+    case LOG_LEVEL.WARN:
+      console.warn(`[RevenueCat] ${message}`);
+      return;
+    case LOG_LEVEL.ERROR:
+      console.error(`[RevenueCat] ${message}`);
+      return;
+    default:
+      console.log(`[RevenueCat] ${message}`);
+  }
+};
 
 const normalizeEnvValue = (value: string | undefined): string => {
   const trimmed = (value ?? "").trim();
@@ -161,6 +187,7 @@ export const configurePurchases = async (): Promise<boolean> => {
       throw new Error(createRevenueCatConfigErrorMessage(process.env));
     }
 
+    Purchases.setLogHandler(revenueCatLogHandler);
     await Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.INFO);
     Purchases.configure({ apiKey });
     return true;

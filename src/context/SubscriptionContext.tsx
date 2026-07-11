@@ -20,6 +20,7 @@ import {
   purchaseCloudSyncPlan,
   restorePurchases,
 } from "../services/subscription/revenueCat";
+import { isRevenueCatPurchaseCancelledError } from "../services/subscription/revenueCatErrors";
 import {
   grantsFreeCloudSyncAccess,
   hasInviteDiscountAccess,
@@ -154,11 +155,16 @@ export const SubscriptionProvider = ({
       );
       return applyCustomerInfo(nextCustomerInfo);
     } catch (purchaseError) {
+      if (isRevenueCatPurchaseCancelledError(purchaseError)) {
+        setStatus("ready");
+        setError(null);
+        return customerInfo;
+      }
       setStatus("error");
       setError(formatError(purchaseError));
       return null;
     }
-  }, [accessGrant, applyCustomerInfo]);
+  }, [accessGrant, applyCustomerInfo, customerInfo]);
 
   const restore = useCallback(async (): Promise<CustomerInfo | null> => {
     setStatus("loading");
