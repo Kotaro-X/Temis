@@ -8,6 +8,7 @@ import { syncMemoRecords } from "./memoSync";
 import { syncTagRecords } from "./tagSync";
 import { syncTaskRecords } from "./taskSync";
 import { syncTodoRecords } from "./todoSync";
+import { createSyncRunDiagnosticContext } from "./syncTelemetry";
 
 let inflightSync: Promise<SyncResult> | null = null;
 
@@ -18,10 +19,13 @@ export const runCloudSync = async (): Promise<SyncResult> => {
   inflightSync = (async () => {
     try {
       await maybeRefreshWeeklyPrompts();
+      const identity = await getSyncIdentity();
+      const diagnosticContext = await createSyncRunDiagnosticContext(
+        identity.userId,
+      );
       if (!isFirebaseConfigured()) {
         throw new Error(createFirebaseConfigErrorMessage(process.env));
       }
-      const identity = await getSyncIdentity();
       const syncJobs = [
         ["tag", syncTagRecords],
         ["todo", syncTodoRecords],
@@ -29,20 +33,19 @@ export const runCloudSync = async (): Promise<SyncResult> => {
         ["memo", syncMemoRecords],
       ] as const;
       const summaries: string[] = [];
-      const errors: string[] = [];
+      const errors: unknown[] = [];
       for (const [entityType, syncEntity] of syncJobs) {
         try {
-          const result = await syncEntity(identity);
+          const result = await syncEntity(identity, diagnosticContext);
           summaries.push(
             `${entityType} pushed=${result.pushed} pulled=${result.pulled}`,
           );
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          errors.push(`${entityType}: ${message}`);
+          errors.push(error);
         }
       }
       if (errors.length > 0) {
-        throw new Error(errors.join(" | "));
+        return mapSyncError(errors[0]);
       }
       return mapSyncSuccess(
         summaries.join(" | "),

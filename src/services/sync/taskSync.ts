@@ -12,6 +12,7 @@ import {
   buildTaskSyncEnvelope,
 } from "./syncEntityModels";
 import { runEnvelopeEntitySync } from "./syncEntityRunner";
+import type { SyncRunDiagnosticContext } from "./syncDiagnosticObserver";
 
 const inferTaskUpdatedAt = (record: {
   date: string;
@@ -113,7 +114,10 @@ const applyMergedTaskEnvelopes = async (
   await taskRepository.saveTaskLogs(nextLogs, { enqueueSync: false });
 };
 
-export const syncTaskRecords = async (identity: SyncIdentity): Promise<{
+export const syncTaskRecords = async (
+  identity: SyncIdentity,
+  diagnosticContext: SyncRunDiagnosticContext,
+): Promise<{
   pushed: number;
   pulled: number;
 }> =>
@@ -122,4 +126,5 @@ export const syncTaskRecords = async (identity: SyncIdentity): Promise<{
     "task",
     loadTaskSyncRecords,
     applyMergedTaskEnvelopes,
+    diagnosticContext,
   );

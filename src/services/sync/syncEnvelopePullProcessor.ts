@@ -2,6 +2,7 @@ import type { SyncEntityEnvelope, SyncEntityType } from "../../types";
 import {
   logSkippedSyncEnvelope,
   validateSyncEnvelope,
+  type SyncEnvelopeValidationFailure,
 } from "./syncEnvelopeValidator.ts";
 
 type SyncableEntityType = Exclude<SyncEntityType, "tag">;
@@ -26,13 +27,16 @@ export const inspectPulledSyncEnvelopes = <TType extends SyncableEntityType>(
 ): {
   envelopes: SyncEntityEnvelope<TType>[];
   migrations: MigratedFirestoreEnvelope<TType>[];
+  validationFailures: SyncEnvelopeValidationFailure[];
 } => {
   const envelopes: SyncEntityEnvelope<TType>[] = [];
   const migrations: MigratedFirestoreEnvelope<TType>[] = [];
+  const validationFailures: SyncEnvelopeValidationFailure[] = [];
   for (const document of documents) {
     const result = validateSyncEnvelope(entityType, document.data);
     if (!result.ok) {
       logSkippedSyncEnvelope(entityType, document.id, result);
+      validationFailures.push(result);
       continue;
     }
     envelopes.push(result.envelope);
@@ -40,7 +44,7 @@ export const inspectPulledSyncEnvelopes = <TType extends SyncableEntityType>(
       migrations.push({ documentId: document.id, envelope: result.envelope });
     }
   }
-  return { envelopes, migrations };
+  return { envelopes, migrations, validationFailures };
 };
 
 export const validatePulledSyncEnvelopes = <TType extends SyncableEntityType>(
@@ -58,10 +62,9 @@ export const rewriteMigratedSyncEnvelopes = async <TType extends SyncableEntityT
     migrations.map(async ({ documentId, envelope }) => {
       try {
         await rewrite(documentId, envelope);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
+      } catch {
         console.warn(
-          `[sync] failed to rewrite migrated ${entityType} record documentId=${documentId} detail=${detail}`,
+          `[sync] failed to rewrite migrated ${entityType} record`,
         );
       }
     }),

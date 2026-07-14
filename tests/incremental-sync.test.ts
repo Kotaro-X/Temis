@@ -151,7 +151,7 @@ test("initial sync becomes available only after success and remains retryable on
   const failed = failSyncEntityMetadata(syncing, new Error("network"));
   assert.equal(failed.initialSyncCompleted, false);
   assert.equal(failed.status, "failed");
-  assert.equal(failed.error, "network");
+  assert.equal(failed.error, "SYNC-UNK-001");
 
   const completed = completeSyncEntityMetadata(failed);
   assert.equal(completed.initialSyncCompleted, true);

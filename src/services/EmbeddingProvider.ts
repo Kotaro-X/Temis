@@ -6,6 +6,7 @@ export interface EmbeddingProvider {
   embedBatch: (texts: string[]) => Promise<EmbeddingBatch>;
   getDim: () => number;
   getModel: () => string;
+  getModelVersion: () => string;
 }
 
 const DUMMY_VECTOR_DIMENSION = 32;
@@ -38,6 +39,8 @@ class DummyEmbeddingProvider implements EmbeddingProvider {
   getDim = (): number => DUMMY_VECTOR_DIMENSION;
 
   getModel = (): string => "dummy-embedding-v1";
+
+  getModelVersion = (): string => this.getModel();
 }
 
 let provider: EmbeddingProvider = new DummyEmbeddingProvider();
@@ -55,3 +58,6 @@ export const embedBatchText = (texts: string[]): Promise<EmbeddingBatch> =>
   provider.embedBatch(texts);
 
 export const getEmbeddingDimension = (): number => provider.getDim();
+
+export const getEmbeddingModelVersion = (): string =>
+  provider.getModelVersion();

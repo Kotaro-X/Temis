@@ -11,6 +11,9 @@ import {
 } from "@firebase/rules-unit-testing";
 
 const FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST;
+const REQUIRE_FIRESTORE_EMULATOR =
+  process.env.CI === "true" ||
+  process.env.FIRESTORE_RULES_TEST_REQUIRED === "1";
 const RULES_PATH = decodeURIComponent(
   new URL("../firestore.rules", import.meta.url).pathname,
 );
@@ -109,9 +112,17 @@ const createTag = (id = "tag-1") => ({
 });
 
 if (!FIRESTORE_EMULATOR_HOST) {
-  test("firestore rules tests require emulator", { skip: true }, () => {
-    assert.ok(true);
-  });
+  if (REQUIRE_FIRESTORE_EMULATOR) {
+    test("firestore rules tests require emulator", () => {
+      assert.fail(
+        "FIRESTORE_EMULATOR_HOST is required in CI and dedicated rules tests. Run npm run test:firestore-rules.",
+      );
+    });
+  } else {
+    test("firestore rules tests require emulator", { skip: true }, () => {
+      assert.ok(true);
+    });
+  }
 } else {
   let env: RulesTestEnvironment;
 

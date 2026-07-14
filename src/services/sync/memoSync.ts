@@ -21,6 +21,7 @@ import {
   buildTaskMemoSyncEnvelope,
 } from "./syncEntityModels";
 import { runEnvelopeEntitySync } from "./syncEntityRunner";
+import type { SyncRunDiagnosticContext } from "./syncDiagnosticObserver";
 
 const buildBootstrapMemoRecords = async (): Promise<
   SyncEntityEnvelope<"memo">[]
@@ -100,7 +101,10 @@ const applyMergedMemoEnvelopes = async (
   }
 };
 
-export const syncMemoRecords = async (identity: SyncIdentity): Promise<{
+export const syncMemoRecords = async (
+  identity: SyncIdentity,
+  diagnosticContext: SyncRunDiagnosticContext,
+): Promise<{
   pushed: number;
   pulled: number;
 }> =>
@@ -109,4 +113,5 @@ export const syncMemoRecords = async (identity: SyncIdentity): Promise<{
     "memo",
     loadMemoSyncRecords,
     applyMergedMemoEnvelopes,
+    diagnosticContext,
   );

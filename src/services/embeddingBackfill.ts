@@ -47,16 +47,20 @@ const DEFAULT_JOB_KEY = "embedding-backfill-v1";
 
 const buildStaleWhereSql = (embeddingDim: number | null) => {
   if (embeddingDim && embeddingDim > 0) {
-    return "(embedding IS NULL OR trim(embedding) = '' OR embedding_model IS NULL OR embedding_model <> ? OR embedded_at IS NULL OR embedding_dim IS NULL OR embedding_dim <> ?)";
+    return "(embedding_status IS NULL OR embedding_status <> 'completed' OR embedding IS NULL OR trim(embedding) = '' OR embedding = '[]' OR embedding_model_version IS NULL OR embedding_model_version <> ? OR embedding_model IS NULL OR embedding_model <> ? OR embedded_at IS NULL OR embedding_dim IS NULL OR embedding_dim <> ?)";
   }
-  return "(embedding IS NULL OR trim(embedding) = '' OR embedding_model IS NULL OR embedding_model <> ? OR embedded_at IS NULL)";
+  return "(embedding_status IS NULL OR embedding_status <> 'completed' OR embedding IS NULL OR trim(embedding) = '' OR embedding = '[]' OR embedding_model_version IS NULL OR embedding_model_version <> ? OR embedding_model IS NULL OR embedding_model <> ? OR embedded_at IS NULL)";
 };
 
-const buildStaleParams = (embeddingModel: string, embeddingDim: number | null) => {
+const buildStaleParams = (
+  embeddingModelVersion: string,
+  embeddingModel: string,
+  embeddingDim: number | null,
+) => {
   if (embeddingDim && embeddingDim > 0) {
-    return [embeddingModel, embeddingDim];
+    return [embeddingModelVersion, embeddingModel, embeddingDim];
   }
-  return [embeddingModel];
+  return [embeddingModelVersion, embeddingModel];
 };
 
 const toProgress = (
@@ -155,11 +159,16 @@ const loadIndexTextByDocumentId = async (
 
 const selectStaleChunks = async (params: {
   embeddingModel: string;
+  embeddingModelVersion: string;
   embeddingDim: number | null;
   batchSize: number;
 }): Promise<StaleChunkRow[]> => {
   const whereSql = buildStaleWhereSql(params.embeddingDim);
-  const whereParams = buildStaleParams(params.embeddingModel, params.embeddingDim);
+  const whereParams = buildStaleParams(
+    params.embeddingModelVersion,
+    params.embeddingModel,
+    params.embeddingDim,
+  );
   const result = await executeSql(
     `SELECT chunk_id, memo_id FROM chunk_index WHERE ${whereSql} ORDER BY created_at ASC LIMIT ?`,
     [...whereParams, params.batchSize],
@@ -169,10 +178,15 @@ const selectStaleChunks = async (params: {
 
 const countStaleChunks = async (params: {
   embeddingModel: string;
+  embeddingModelVersion: string;
   embeddingDim: number | null;
 }): Promise<number> => {
   const whereSql = buildStaleWhereSql(params.embeddingDim);
-  const whereParams = buildStaleParams(params.embeddingModel, params.embeddingDim);
+  const whereParams = buildStaleParams(
+    params.embeddingModelVersion,
+    params.embeddingModel,
+    params.embeddingDim,
+  );
   const result = await executeSql(
     `SELECT COUNT(1) as count FROM chunk_index WHERE ${whereSql}`,
     whereParams,
@@ -188,6 +202,7 @@ export const getEmbeddingBackfillProgress = async (
   const provider = getEmbeddingProvider();
   const remainingChunks = await countStaleChunks({
     embeddingModel: provider.getModel(),
+    embeddingModelVersion: provider.getModelVersion(),
     embeddingDim: provider.getDim() > 0 ? provider.getDim() : null,
   });
   const row = await readProgress(jobKey);
@@ -207,10 +222,12 @@ export const backfillEmbeddings = async (options?: {
 
   const provider = getEmbeddingProvider();
   const embeddingModel = provider.getModel();
+  const embeddingModelVersion = provider.getModelVersion();
   const embeddingDim = provider.getDim() > 0 ? provider.getDim() : null;
 
   const staleChunks = await selectStaleChunks({
     embeddingModel,
+    embeddingModelVersion,
     embeddingDim,
     batchSize,
   });
@@ -232,6 +249,7 @@ export const backfillEmbeddings = async (options?: {
     await saveProgress(nextProgress);
     const remainingChunks = await countStaleChunks({
       embeddingModel,
+      embeddingModelVersion,
       embeddingDim,
     });
     console.log(
@@ -279,6 +297,7 @@ export const backfillEmbeddings = async (options?: {
 
   const remainingChunks = await countStaleChunks({
     embeddingModel,
+    embeddingModelVersion,
     embeddingDim,
   });
   console.log(

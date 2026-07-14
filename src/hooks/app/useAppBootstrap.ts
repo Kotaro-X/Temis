@@ -4,6 +4,7 @@ import { AppState } from "react-native";
 import { backfillNoteIndexes } from "../../db/noteRepo";
 import { ensureDbReady } from "../../db/sqlite";
 import { backfillEmbeddings } from "../../services/embeddingBackfill";
+import { runPendingEmbeddingJobs } from "../../services/embeddingJobs";
 import {
   configureEmbeddingProviderFromEnv,
   runEmbeddingProviderProbe,
@@ -13,6 +14,7 @@ import {
   runLLMProviderProbe,
 } from "../../services/llmSettings";
 import { cleanupExpiredLocalDeletedState } from "../../services/sync/syncRetention";
+import { classifySyncError } from "../../services/sync/syncDiagnostics";
 
 type Args = {
   syncNow: () => Promise<unknown>;
@@ -30,8 +32,8 @@ export const useAppBootstrap = ({ syncNow, onSynced }: Args) => {
 
   useEffect(() => {
     runSyncCycle().catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[cloudSync] bootstrap failed: ${message}`);
+      const { errorCode } = classifySyncError(error, "load_local_changes");
+      console.warn(`[cloudSync] bootstrap failed code=${errorCode}`);
     });
   }, [runSyncCycle]);
 
@@ -41,8 +43,8 @@ export const useAppBootstrap = ({ syncNow, onSynced }: Args) => {
         return;
       }
       runSyncCycle().catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[cloudSync] resume failed: ${message}`);
+        const { errorCode } = classifySyncError(error, "load_local_changes");
+        console.warn(`[cloudSync] resume failed code=${errorCode}`);
       });
     });
     return () => {
@@ -92,9 +94,10 @@ export const useAppBootstrap = ({ syncNow, onSynced }: Args) => {
           jobKey: "embedding-backfill-v1",
         }),
       )
+      .then(() => runPendingEmbeddingJobs({ limit: 20 }))
       .then((progress) => {
         console.log(
-          `[Backfill][Embedding] processed=${progress.processedChunks} remaining=${progress.remainingChunks} errors=${progress.errorCount}`,
+          `[Backfill][Embedding] resumedJobs=${progress.processedJobs} completedJobs=${progress.completedJobs} failedJobs=${progress.failedJobs}`,
         );
       })
       .catch((error) => {

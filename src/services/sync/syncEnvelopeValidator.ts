@@ -253,11 +253,11 @@ export const assertValidSyncEnvelopeForWrite = <
 
 export const logSkippedSyncEnvelope = (
   entityType: SyncableEntityType,
-  documentId: string,
+  _documentId: string,
   failure: SyncEnvelopeValidationFailure,
 ) => {
   // Do not log the record itself: it can contain memo text and other user data.
   console.warn(
-    `[sync] skipped ${entityType} record documentId=${documentId} reason=${failure.reason} detail=${failure.detail}`,
+    `[sync] skipped ${entityType} record reason=${failure.reason}`,
   );
 };

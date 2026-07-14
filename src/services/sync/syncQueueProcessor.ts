@@ -3,6 +3,10 @@ import {
   logSkippedSyncEnvelope,
   validateSyncEnvelope,
 } from "./syncEnvelopeValidator.ts";
+import {
+  ClassifiedSyncError,
+  classifySyncError,
+} from "./syncDiagnostics.ts";
 
 export { findReconciliationPushes } from "./syncCore.ts";
 
@@ -21,10 +25,12 @@ export const processSyncQueue = async <
   firstError: Error | null;
   pushedCount: number;
   pendingCount: number;
+  retryCount: number;
 }> => {
   const nextQueue: SyncQueueItem[] = [];
   let firstError: Error | null = null;
   let pushedCount = 0;
+  let retryCount = 0;
 
   for (const item of queue) {
     if (item.entityType !== entityType) {
@@ -50,17 +56,18 @@ export const processSyncQueue = async <
       await pushEnvelope(validation.envelope);
       pushedCount += 1;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const classified = classifySyncError(error, "upload_local_changes");
       const nextAttemptCount = item.attemptCount + 1;
+      retryCount = Math.max(retryCount, nextAttemptCount);
       nextQueue.push({
         ...item,
         attemptCount: nextAttemptCount,
-        lastError: message,
+        lastError: classified.errorCode,
         updatedAt: now,
         nextRetryAt: now + getRetryDelayMs(nextAttemptCount),
       });
       if (!firstError) {
-        firstError = error instanceof Error ? error : new Error(message);
+        firstError = new ClassifiedSyncError(classified);
       }
     }
   }
@@ -70,6 +77,7 @@ export const processSyncQueue = async <
     firstError,
     pushedCount,
     pendingCount: nextQueue.filter((item) => item.entityType === entityType).length,
+    retryCount,
   };
 };
 
@@ -83,6 +91,7 @@ export const syncQueuedEnvelopes = async <
   firstError: Error | null;
   pushedCount: number;
   pendingCount: number;
+  retryCount: number;
 }> => {
   const { loadSyncQueue, saveSyncQueue } = await import("../../../storage.ts");
   const now = Date.now();

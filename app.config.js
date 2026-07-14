@@ -5,6 +5,11 @@ module.exports = () => {
   const isDevBuild = process.env.NODE_ENV !== "production";
 
   const ios = expoConfig.ios || {};
+  const android = expoConfig.android || {};
+  const iosGoogleServicesFile =
+    process.env.GOOGLE_SERVICES_PLIST?.trim() || ios.googleServicesFile;
+  const androidGoogleServicesFile =
+    process.env.GOOGLE_SERVICES_JSON?.trim() || android.googleServicesFile;
   const infoPlist = ios.infoPlist || {};
   const ats = infoPlist.NSAppTransportSecurity || {};
   const exceptionDomains = ats.NSExceptionDomains || {};
@@ -37,11 +42,24 @@ module.exports = () => {
     ...expoConfig,
     ios: {
       ...ios,
+      ...(iosGoogleServicesFile
+        ? { googleServicesFile: iosGoogleServicesFile }
+        : {}),
       infoPlist: {
         ...infoPlist,
         ...devAts,
       },
     },
-    plugins: [...(expoConfig.plugins || []), "./plugins/withBundledModel"],
+    android: {
+      ...android,
+      ...(androidGoogleServicesFile
+        ? { googleServicesFile: androidGoogleServicesFile }
+        : {}),
+    },
+    plugins: [
+      ...(expoConfig.plugins || []),
+      "./plugins/withBundledModel",
+      "./plugins/withReactNativeFirebaseIos",
+    ],
   };
 };

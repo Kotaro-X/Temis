@@ -63,6 +63,8 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   getModel = (): string => this.model;
 
+  getModelVersion = (): string => this.model;
+
   embed = async (text: string): Promise<EmbeddingVector> => {
     const embeddings = await this.embedBatch([text]);
     const first = embeddings[0];

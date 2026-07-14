@@ -129,6 +129,11 @@ export const pullSyncEnvelopePage = async <
     after: SyncPullCursor | null;
     pageSize?: number;
   },
+  callbacks: {
+    onValidationFailure?: (
+      failure: import("./syncEnvelopeValidator").SyncEnvelopeValidationFailure,
+    ) => void | Promise<void>;
+  } = {},
 ): Promise<{
   records: SyncEntityEnvelope<TType>[];
   nextCursor: SyncPullCursor | null;
@@ -151,6 +156,11 @@ export const pullSyncEnvelopePage = async <
     entityType,
     snapshot.docs.map((entry) => ({ id: entry.id, data: entry.data() })),
   );
+  if (callbacks.onValidationFailure) {
+    for (const failure of inspected.validationFailures) {
+      await callbacks.onValidationFailure(failure);
+    }
+  }
   await rewriteMigratedSyncEnvelopes(entityType, inspected.migrations, async (
     documentId,
     envelope,

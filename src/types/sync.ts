@@ -32,6 +32,7 @@ export type SyncResult = {
   status: Exclude<SyncStatus, "idle">;
   syncedAt: number;
   message?: string;
+  errorCode?: string;
   initialSyncCompleted: boolean;
 };
 

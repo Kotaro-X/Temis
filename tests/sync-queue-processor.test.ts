@@ -119,7 +119,7 @@ test("processSyncQueue retries failed items with exponential backoff and keeps l
   );
 
   assert.equal(result.pushedCount, 1);
-  assert.equal(result.firstError?.message, "push failed");
+  assert.equal(result.firstError?.message, "Firestore write failed");
   assert.deepEqual(
     result.queue,
     [
@@ -127,7 +127,7 @@ test("processSyncQueue retries failed items with exponential backoff and keeps l
         id: "queue-fail",
         entityId: "todo-fail",
         attemptCount: 3,
-        lastError: "push failed",
+        lastError: "SYNC-RDB-002",
         updatedAt: 10_000,
         nextRetryAt: 18_000,
         payload: { envelope: createTodoEnvelope({ entityId: "todo-fail" }) },

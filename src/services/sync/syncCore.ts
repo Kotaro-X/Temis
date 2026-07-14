@@ -37,7 +37,10 @@ export const failSyncEntityMetadata = (
 ): SyncEntityMetadata => ({
   ...metadata,
   status: "failed",
-  error: error instanceof Error ? error.message : String(error),
+  error:
+    typeof error === "string" && /^SYNC-[A-Z]+-\d{3}$/.test(error)
+      ? error
+      : "SYNC-UNK-001",
 });
 
 export type IncrementalPullRequest = {

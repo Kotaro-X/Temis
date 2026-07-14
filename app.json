@@ -37,7 +37,16 @@
     "plugins": [
       "expo-notifications",
       "expo-sqlite",
-      "expo-build-properties",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/crashlytics",
       [
         "@react-native-google-signin/google-signin",
         {

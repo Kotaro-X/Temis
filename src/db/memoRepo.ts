@@ -3,10 +3,15 @@ import { nanoid } from "nanoid/non-secure";
 import { loadSyncDeviceId } from "../../storage";
 import { extractTokens, normalizeSearchToken } from "../utils/wikiLink";
 import { ensureDbReady, executeSql } from "./sqlite";
-import { rebuildChunkIndexForMemo } from "./chunkIndexRepo";
+import { replaceChunkIndexTextForMemo } from "./chunkIndexRepo";
 import { invalidateHybridSearchCache } from "../services/hybridSearch";
 import { buildTaskMemoSyncEnvelope } from "../services/sync/syncEntityModels";
 import { persistAndEnqueueSyncEnvelope } from "../services/sync/syncEnvelopeStore";
+import {
+  enqueueMemoEmbeddingJob,
+  runPendingEmbeddingJobs,
+} from "../services/embeddingJobs";
+import { getEmbeddingModelVersion } from "../services/EmbeddingProvider";
 import {
   rebuildTokenIndexForMemo,
   searchByToken as searchTokenIndexByToken,
@@ -127,14 +132,16 @@ const rebuildMemoIndexes = async (
 ): Promise<void> => {
   await rebuildMemoLinks(memoId, body);
   await rebuildTokenIndexForMemo(memoId, body);
-  await rebuildChunkIndexForMemo(memoId, body);
+  await replaceChunkIndexTextForMemo(memoId, body, {
+    embeddingModelVersion: getEmbeddingModelVersion(),
+  });
   invalidateHybridSearchCache();
 };
 
-const runMemoIndexRebuildAsync = (memoId: string, body: string): void => {
-  void rebuildMemoIndexes(memoId, body).catch((error) => {
+const runMemoEmbeddingJobAsync = (memoId: string): void => {
+  void runPendingEmbeddingJobs({ limit: 1 }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[Index][Memo] async rebuild failed memoId=${memoId} ${message}`);
+    console.warn(`[Embedding][Memo] async job failed memoId=${memoId} ${message}`);
   });
 };
 
@@ -145,68 +152,62 @@ export const upsertMemoForTask = async (
 ): Promise<MemoRecord> => {
   await ensureDbReady();
   const now = Date.now();
-  const indexMode: MemoIndexMode = options?.indexMode ?? "sync";
   const shouldEnqueueSync = options?.enqueueSync !== false;
-  const existing = await executeSql(
-    "SELECT id, created_at FROM memos WHERE task_id = ? LIMIT 1",
-    [taskId],
-  );
-  if (existing.rows.length > 0) {
-    const row = existing.rows.item(0) as Pick<MemoRow, "id" | "created_at">;
-    await executeSql(
-      "UPDATE memos SET body = ?, updated_at = ? WHERE id = ?",
-      [body, now, row.id],
+  let memo: MemoRecord;
+  await executeSql("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    const existing = await executeSql(
+      "SELECT id, created_at FROM memos WHERE task_id = ? LIMIT 1",
+      [taskId],
     );
-    if (indexMode === "async") {
-      runMemoIndexRebuildAsync(row.id, body);
-    } else {
-      await rebuildMemoIndexes(row.id, body);
-    }
-    const updated = {
-      id: row.id,
-      taskId,
-      body,
-      createdAt: row.created_at,
-      updatedAt: now,
-    };
-    if (shouldEnqueueSync) {
-      const deviceId = await loadSyncDeviceId();
-      await persistAndEnqueueSyncEnvelope(
-        buildTaskMemoSyncEnvelope({
-          memo: updated,
-          deviceId,
-        }),
+    if (existing.rows.length > 0) {
+      const row = existing.rows.item(0) as Pick<MemoRow, "id" | "created_at">;
+      await executeSql(
+        "UPDATE memos SET body = ?, updated_at = ? WHERE id = ?",
+        [body, now, row.id],
       );
+      await rebuildMemoIndexes(row.id, body);
+      await enqueueMemoEmbeddingJob(row.id);
+      memo = {
+        id: row.id,
+        taskId,
+        body,
+        createdAt: row.created_at,
+        updatedAt: now,
+      };
+    } else {
+      const memoId = nanoid();
+      await executeSql(
+        "INSERT INTO memos (id, task_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        [memoId, taskId, body, now, now],
+      );
+      await rebuildMemoIndexes(memoId, body);
+      await enqueueMemoEmbeddingJob(memoId);
+      memo = {
+        id: memoId,
+        taskId,
+        body,
+        createdAt: now,
+        updatedAt: now,
+      };
     }
-    return updated;
+    await executeSql("COMMIT");
+  } catch (error) {
+    await executeSql("ROLLBACK");
+    throw error;
   }
-  const memoId = nanoid();
-  await executeSql(
-    "INSERT INTO memos (id, task_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-    [memoId, taskId, body, now, now],
-  );
-  if (indexMode === "async") {
-    runMemoIndexRebuildAsync(memoId, body);
-  } else {
-    await rebuildMemoIndexes(memoId, body);
-  }
-  const created = {
-    id: memoId,
-    taskId,
-    body,
-    createdAt: now,
-    updatedAt: now,
-  };
+
+  runMemoEmbeddingJobAsync(memo.id);
   if (shouldEnqueueSync) {
     const deviceId = await loadSyncDeviceId();
     await persistAndEnqueueSyncEnvelope(
       buildTaskMemoSyncEnvelope({
-        memo: created,
+        memo,
         deviceId,
       }),
     );
   }
-  return created;
+  return memo;
 };
 
 export const upsertMemoRecord = async (
@@ -214,27 +215,31 @@ export const upsertMemoRecord = async (
   options?: { indexMode?: MemoIndexMode },
 ): Promise<MemoRecord> => {
   await ensureDbReady();
-  const result = await executeSql(
-    "SELECT id FROM memos WHERE id = ? LIMIT 1",
-    [record.id],
-  );
-  if (result.rows.length > 0) {
-    await executeSql(
-      "UPDATE memos SET task_id = ?, body = ?, created_at = ?, updated_at = ? WHERE id = ?",
-      [record.taskId, record.body, record.createdAt, record.updatedAt, record.id],
+  await executeSql("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    const result = await executeSql(
+      "SELECT id FROM memos WHERE id = ? LIMIT 1",
+      [record.id],
     );
-  } else {
-    await executeSql(
-      "INSERT INTO memos (id, task_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      [record.id, record.taskId, record.body, record.createdAt, record.updatedAt],
-    );
-  }
-  const indexMode: MemoIndexMode = options?.indexMode ?? "sync";
-  if (indexMode === "async") {
-    runMemoIndexRebuildAsync(record.id, record.body);
-  } else {
+    if (result.rows.length > 0) {
+      await executeSql(
+        "UPDATE memos SET task_id = ?, body = ?, created_at = ?, updated_at = ? WHERE id = ?",
+        [record.taskId, record.body, record.createdAt, record.updatedAt, record.id],
+      );
+    } else {
+      await executeSql(
+        "INSERT INTO memos (id, task_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        [record.id, record.taskId, record.body, record.createdAt, record.updatedAt],
+      );
+    }
     await rebuildMemoIndexes(record.id, record.body);
+    await enqueueMemoEmbeddingJob(record.id);
+    await executeSql("COMMIT");
+  } catch (error) {
+    await executeSql("ROLLBACK");
+    throw error;
   }
+  runMemoEmbeddingJobAsync(record.id);
   return record;
 };
 
@@ -249,6 +254,7 @@ export const deleteMemoById = async (
     await executeSql("DELETE FROM memo_links WHERE memo_id = ?", [memoId]);
     await executeSql("DELETE FROM token_index WHERE memo_id = ?", [memoId]);
     await executeSql("DELETE FROM chunk_index WHERE memo_id = ?", [memoId]);
+    await executeSql("DELETE FROM embedding_jobs WHERE memo_id = ?", [memoId]);
     await executeSql("DELETE FROM memos WHERE id = ?", [memoId]);
     await executeSql("COMMIT");
   } catch (error) {

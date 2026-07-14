@@ -82,6 +82,9 @@ export const pullTagRecordPage = async (
     after: SyncPullCursor | null;
     pageSize?: number;
   },
+  callbacks: {
+    onValidationFailure?: () => void | Promise<void>;
+  } = {},
 ): Promise<{
   records: TagRecord[];
   nextCursor: SyncPullCursor | null;
@@ -98,9 +101,21 @@ export const pullTagRecordPage = async (
   }
   constraints.push(limit(pageSize));
   const snapshot = await getDocs(query(getTagCollection(userId), ...constraints));
-  const records = snapshot.docs
-    .map((entry) => entry.data() as Partial<TagRecord>)
-    .filter((entry) => typeof entry.id === "string" && typeof entry.name === "string")
+  const rawRecords = snapshot.docs.map(
+    (entry) => entry.data() as Partial<TagRecord>,
+  );
+  const invalidRecords = rawRecords.filter(
+    (entry) => typeof entry.id !== "string" || typeof entry.name !== "string",
+  );
+  if (callbacks.onValidationFailure) {
+    for (const _invalidRecord of invalidRecords) {
+      await callbacks.onValidationFailure();
+    }
+  }
+  const records = rawRecords
+    .filter(
+      (entry) => typeof entry.id === "string" && typeof entry.name === "string",
+    )
     .map((entry) => ({
       id: entry.id as string,
       name: entry.name as string,

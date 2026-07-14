@@ -5,6 +5,8 @@ import { chunkMemoBody } from "../utils/memoChunk";
 import { cosineSimilarity, stableTopK } from "../utils/similarity";
 import { ensureDbReady, executeSql } from "./sqlite";
 
+export type EmbeddingStatus = "pending" | "processing" | "completed" | "failed";
+
 type ChunkIndexRow = {
   chunk_id: string;
   memo_id: string;
@@ -15,6 +17,10 @@ type ChunkIndexRow = {
   embedding_model: string | null;
   embedding_dim: number | null;
   embedded_at: number | null;
+  embedding_status: EmbeddingStatus | null;
+  embedding_model_version: string | null;
+  embedding_error: string | null;
+  embedding_attempts: number | null;
 };
 
 export type ChunkIndexRecord = {
@@ -27,6 +33,10 @@ export type ChunkIndexRecord = {
   embeddingModel: string | null;
   embeddingDim: number | null;
   embeddedAt: number | null;
+  embeddingStatus: EmbeddingStatus;
+  embeddingModelVersion: string | null;
+  embeddingError: string | null;
+  embeddingAttempts: number;
 };
 
 export type ChunkSimilarityHit = ChunkIndexRecord & {
@@ -39,6 +49,25 @@ export type ChunkIndexRebuildStats = {
   embeddingModel: string;
   embeddingDim: number;
   embeddedAt: number | null;
+};
+
+export type ChunkIndexTextStats = {
+  chunkCount: number;
+  indexedTextLength: number;
+};
+
+export type MemoEmbeddingStatus =
+  | "unbuilt"
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed";
+
+export type PendingEmbeddingChunk = {
+  chunkId: string;
+  memoId: string;
+  text: string;
+  attempts: number;
 };
 
 const parseJsonArray = <T>(value: string | null, fallback: T[]): T[] => {
@@ -70,17 +99,228 @@ const toChunkRecord = (row: ChunkIndexRow): ChunkIndexRecord => ({
   embeddingModel: row.embedding_model,
   embeddingDim: row.embedding_dim,
   embeddedAt: row.embedded_at,
+  embeddingStatus: row.embedding_status ?? "completed",
+  embeddingModelVersion: row.embedding_model_version,
+  embeddingError: row.embedding_error,
+  embeddingAttempts: Number(row.embedding_attempts) || 0,
 });
+
+export const replaceChunkIndexTextForDocument = async (
+  documentId: string,
+  text: string,
+  options?: { embeddingModelVersion?: string },
+): Promise<ChunkIndexTextStats> => {
+  await ensureDbReady();
+  const chunks = chunkMemoBody(text);
+  const now = Date.now();
+  await executeSql("DELETE FROM chunk_index WHERE memo_id = ?", [documentId]);
+  for (const chunk of chunks) {
+    await executeSql(
+      "INSERT INTO chunk_index (chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at, embedding_status, embedding_model_version, embedding_error, embedding_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        nanoid(),
+        documentId,
+        chunk.text,
+        now,
+        chunk.tags.length > 0 ? JSON.stringify(chunk.tags) : null,
+        "[]",
+        null,
+        null,
+        null,
+        "pending",
+        options?.embeddingModelVersion ?? null,
+        null,
+        0,
+      ],
+    );
+  }
+  return {
+    chunkCount: chunks.length,
+    indexedTextLength: text.length,
+  };
+};
+
+export const replaceChunkIndexTextForMemo = async (
+  memoId: string,
+  body: string,
+  options?: { embeddingModelVersion?: string },
+): Promise<void> => {
+  await replaceChunkIndexTextForDocument(memoId, body, options);
+};
+
+const buildEmbeddingStaleWhereSql = (embeddingDim: number | null): string => {
+  if (embeddingDim && embeddingDim > 0) {
+    return "(embedding_status <> 'completed' OR embedding_model_version IS NULL OR embedding_model_version <> ? OR embedded_at IS NULL OR embedding_model IS NULL OR embedding_model <> ? OR embedding_dim IS NULL OR embedding_dim <> ?)";
+  }
+  return "(embedding_status <> 'completed' OR embedding_model_version IS NULL OR embedding_model_version <> ? OR embedded_at IS NULL OR embedding_model IS NULL OR embedding_model <> ?)";
+};
+
+const buildEmbeddingStaleParams = (
+  embeddingModelVersion: string,
+  embeddingModel: string,
+  embeddingDim: number | null,
+): Array<string | number> => {
+  if (embeddingDim && embeddingDim > 0) {
+    return [embeddingModelVersion, embeddingModel, embeddingDim];
+  }
+  return [embeddingModelVersion, embeddingModel];
+};
+
+export const getChunksNeedingEmbeddingForMemo = async (
+  memoId: string,
+  options: {
+    embeddingModel: string;
+    embeddingModelVersion: string;
+    embeddingDim: number | null;
+  },
+): Promise<PendingEmbeddingChunk[]> => {
+  await ensureDbReady();
+  const whereSql = buildEmbeddingStaleWhereSql(options.embeddingDim);
+  const whereParams = buildEmbeddingStaleParams(
+    options.embeddingModelVersion,
+    options.embeddingModel,
+    options.embeddingDim,
+  );
+  const result = await executeSql(
+    `SELECT chunk_id, memo_id, text, embedding_attempts FROM chunk_index WHERE memo_id = ? AND ${whereSql} ORDER BY created_at ASC`,
+    [memoId, ...whereParams],
+  );
+  return (result.rows._array as Array<{
+    chunk_id: string;
+    memo_id: string;
+    text: string;
+    embedding_attempts: number | null;
+  }>).map((row) => ({
+    chunkId: row.chunk_id,
+    memoId: row.memo_id,
+    text: row.text,
+    attempts: Number(row.embedding_attempts) || 0,
+  }));
+};
+
+export const markEmbeddingChunksProcessing = async (
+  chunkIds: string[],
+): Promise<void> => {
+  await ensureDbReady();
+  for (const chunkId of chunkIds) {
+    await executeSql(
+      "UPDATE chunk_index SET embedding_status = 'processing', embedding_error = NULL, embedding_attempts = embedding_attempts + 1 WHERE chunk_id = ?",
+      [chunkId],
+    );
+  }
+};
+
+export const writeChunkEmbeddings = async (
+  entries: Array<{
+    chunkId: string;
+    embedding: number[];
+    embeddingModel: string;
+    embeddingModelVersion: string;
+    embeddingDim: number;
+    embeddedAt: number;
+  }>,
+): Promise<void> => {
+  await ensureDbReady();
+  for (const entry of entries) {
+    await executeSql(
+      "UPDATE chunk_index SET embedding = ?, embedding_model = ?, embedding_dim = ?, embedded_at = ?, embedding_status = 'completed', embedding_model_version = ?, embedding_error = NULL WHERE chunk_id = ?",
+      [
+        JSON.stringify(entry.embedding),
+        entry.embeddingModel,
+        entry.embeddingDim,
+        entry.embeddedAt,
+        entry.embeddingModelVersion,
+        entry.chunkId,
+      ],
+    );
+  }
+};
+
+export const markMemoEmbeddingFailed = async (
+  memoId: string,
+  message: string,
+): Promise<void> => {
+  await ensureDbReady();
+  await executeSql(
+    "UPDATE chunk_index SET embedding_status = 'failed', embedding_error = ? WHERE memo_id = ? AND embedding_status <> 'completed'",
+    [message, memoId],
+  );
+};
+
+export const markMemoEmbeddingPending = async (
+  memoId: string,
+  embeddingModelVersion: string,
+): Promise<void> => {
+  await ensureDbReady();
+  await executeSql(
+    "UPDATE chunk_index SET embedding_status = 'pending', embedding_model_version = ?, embedding_error = NULL WHERE memo_id = ?",
+    [embeddingModelVersion, memoId],
+  );
+};
+
+export const countChunksNeedingEmbeddingForMemo = async (
+  memoId: string,
+  options: {
+    embeddingModel: string;
+    embeddingModelVersion: string;
+    embeddingDim: number | null;
+  },
+): Promise<number> => {
+  await ensureDbReady();
+  const whereSql = buildEmbeddingStaleWhereSql(options.embeddingDim);
+  const whereParams = buildEmbeddingStaleParams(
+    options.embeddingModelVersion,
+    options.embeddingModel,
+    options.embeddingDim,
+  );
+  const result = await executeSql(
+    `SELECT COUNT(1) as count FROM chunk_index WHERE memo_id = ? AND ${whereSql}`,
+    [memoId, ...whereParams],
+  );
+  const row = result.rows.item(0) as { count: number };
+  return Number(row.count) || 0;
+};
+
+export const getMemoEmbeddingStatus = async (
+  memoId: string,
+): Promise<MemoEmbeddingStatus> => {
+  await ensureDbReady();
+  const result = await executeSql(
+    "SELECT embedding_status, COUNT(1) as count FROM chunk_index WHERE memo_id = ? GROUP BY embedding_status",
+    [memoId],
+  );
+  const rows = result.rows._array as Array<{
+    embedding_status: EmbeddingStatus | null;
+    count: number;
+  }>;
+  if (rows.length === 0) {
+    return "unbuilt";
+  }
+  const statuses = new Set(rows.map((row) => row.embedding_status ?? "completed"));
+  if (statuses.has("failed")) {
+    return "failed";
+  }
+  if (statuses.has("processing")) {
+    return "processing";
+  }
+  if (statuses.has("pending")) {
+    return "pending";
+  }
+  return "completed";
+};
 
 export const rebuildChunkIndexForDocument = async (
   documentId: string,
   text: string,
 ): Promise<ChunkIndexRebuildStats> => {
   await ensureDbReady();
-  const chunks = chunkMemoBody(text);
-  await executeSql("DELETE FROM chunk_index WHERE memo_id = ?", [documentId]);
+  await replaceChunkIndexTextForDocument(documentId, text, {
+    embeddingModelVersion: getEmbeddingProvider().getModelVersion(),
+  });
   const provider = getEmbeddingProvider();
   const model = provider.getModel();
+  const modelVersion = provider.getModelVersion();
+  const chunks = await getChunksByMemoId(documentId);
   if (chunks.length === 0) {
     return {
       chunkCount: 0,
@@ -108,17 +348,14 @@ export const rebuildChunkIndexForDocument = async (
       throw new Error("EmbeddingProvider returned invalid vector dimension.");
     }
     await executeSql(
-      "INSERT INTO chunk_index (chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "UPDATE chunk_index SET embedding = ?, embedding_model = ?, embedding_dim = ?, embedded_at = ?, embedding_status = 'completed', embedding_model_version = ?, embedding_error = NULL WHERE chunk_id = ?",
       [
-        nanoid(),
-        documentId,
-        chunk.text,
-        now,
-        chunk.tags.length > 0 ? JSON.stringify(chunk.tags) : null,
         JSON.stringify(embedding),
         model,
         embeddingDim,
         now,
+        modelVersion,
+        chunk.chunkId,
       ],
     );
   }
@@ -143,7 +380,7 @@ export const getChunksByMemoId = async (
 ): Promise<ChunkIndexRecord[]> => {
   await ensureDbReady();
   const result = await executeSql(
-    "SELECT chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at FROM chunk_index WHERE memo_id = ? ORDER BY created_at ASC",
+    "SELECT chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at, embedding_status, embedding_model_version, embedding_error, embedding_attempts FROM chunk_index WHERE memo_id = ? ORDER BY created_at ASC",
     [memoId],
   );
   return (result.rows._array as ChunkIndexRow[]).map((row) =>
@@ -160,7 +397,7 @@ export const getChunksByMemoIds = async (
   }
   const placeholders = memoIds.map(() => "?").join(", ");
   const result = await executeSql(
-    `SELECT chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at FROM chunk_index WHERE memo_id IN (${placeholders}) ORDER BY created_at DESC`,
+    `SELECT chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at, embedding_status, embedding_model_version, embedding_error, embedding_attempts FROM chunk_index WHERE memo_id IN (${placeholders}) ORDER BY created_at DESC`,
     memoIds,
   );
   return (result.rows._array as ChunkIndexRow[]).map((row) =>
@@ -180,7 +417,7 @@ export const searchTopChunksByEmbedding = async (
   const normalizedTopK = Math.min(10, Math.max(5, Math.floor(topK)));
   const embeddingDim = options.embeddingDim ?? queryEmbedding.length;
   const result = await executeSql(
-    "SELECT chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at FROM chunk_index WHERE embedding_model = ? AND embedding_dim = ?",
+    "SELECT chunk_id, memo_id, text, created_at, tags, embedding, embedding_model, embedding_dim, embedded_at, embedding_status, embedding_model_version, embedding_error, embedding_attempts FROM chunk_index WHERE embedding_model = ? AND embedding_dim = ? AND embedding_status = 'completed'",
     [options.embeddingModel, embeddingDim],
   );
   const scored = (result.rows._array as ChunkIndexRow[]).flatMap((row) => {

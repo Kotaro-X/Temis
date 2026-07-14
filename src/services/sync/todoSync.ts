@@ -7,6 +7,7 @@ import type {
 } from "../../types";
 import { buildTodoSyncEnvelope } from "./syncEntityModels";
 import { runEnvelopeEntitySync } from "./syncEntityRunner";
+import type { SyncRunDiagnosticContext } from "./syncDiagnosticObserver";
 
 const buildBootstrapTodoRecords = async (): Promise<
   SyncEntityEnvelope<"todo">[]
@@ -52,7 +53,10 @@ const applyMergedTodoEnvelopes = async (
   await todoRepository.saveTodos(nextTodos, { enqueueSync: false });
 };
 
-export const syncTodoRecords = async (identity: SyncIdentity): Promise<{
+export const syncTodoRecords = async (
+  identity: SyncIdentity,
+  diagnosticContext: SyncRunDiagnosticContext,
+): Promise<{
   pushed: number;
   pulled: number;
 }> =>
@@ -61,4 +65,5 @@ export const syncTodoRecords = async (identity: SyncIdentity): Promise<{
     "todo",
     loadTodoSyncRecords,
     applyMergedTodoEnvelopes,
+    diagnosticContext,
   );

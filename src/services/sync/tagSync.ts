@@ -23,6 +23,15 @@ import {
   failSyncEntityMetadata,
   runIncrementalPull,
 } from "./syncCore";
+import {
+  createSyncDiagnosticObserver,
+  type SyncRunDiagnosticContext,
+} from "./syncDiagnosticObserver";
+import { syncDiagnosticReporter } from "./syncTelemetry";
+import {
+  ClassifiedSyncError,
+  classifySyncError,
+} from "./syncDiagnostics";
 
 const getRetryDelayMs = (attemptCount: number) =>
   Math.min(60_000, 1_000 * 2 ** Math.max(0, attemptCount));
@@ -57,12 +66,14 @@ const syncQueuedTags = async (
   firstError: Error | null;
   pushedCount: number;
   pendingCount: number;
+  retryCount: number;
 }> => {
   const now = Date.now();
   const queue = await loadSyncQueue();
   const nextQueue: SyncQueueItem[] = [];
   let firstError: Error | null = null;
   let pushedCount = 0;
+  let retryCount = 0;
 
   for (const item of queue) {
     if (item.entityType !== "tag") {
@@ -81,17 +92,18 @@ const syncQueuedTags = async (
       await pushTagRecord(identity.userId, record);
       pushedCount += 1;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const classified = classifySyncError(error, "upload_local_changes");
       const nextAttemptCount = item.attemptCount + 1;
+      retryCount = Math.max(retryCount, nextAttemptCount);
       nextQueue.push({
         ...item,
         attemptCount: nextAttemptCount,
-        lastError: message,
+        lastError: classified.errorCode,
         updatedAt: now,
         nextRetryAt: now + getRetryDelayMs(nextAttemptCount),
       });
       if (!firstError) {
-        firstError = error instanceof Error ? error : new Error(message);
+        firstError = new ClassifiedSyncError(classified);
       }
     }
   }
@@ -102,6 +114,7 @@ const syncQueuedTags = async (
     firstError,
     pushedCount,
     pendingCount: nextQueue.filter((item) => item.entityType === "tag").length,
+    retryCount,
   };
 };
 
@@ -133,33 +146,66 @@ const enqueueMissingTagRecords = async (records: TagRecord[]) => {
   }
 };
 
-export const syncTagRecords = async (identity: SyncIdentity): Promise<{
+export const syncTagRecords = async (
+  identity: SyncIdentity,
+  diagnosticContext: SyncRunDiagnosticContext,
+): Promise<{
   pushed: number;
   pulled: number;
 }> => {
-  let metadata: SyncEntityMetadata = {
-    ...createEmptySyncEntityMetadata(),
-    ...(await loadSyncEntityMetadata(identity.userId, "tag")),
-    status: "syncing",
-    error: null,
-  };
-  const isFreshInitialSync =
-    !metadata.initialSyncCompleted &&
-    metadata.lastPulledAt === null &&
-    metadata.lastPulledId === null;
-  await saveSyncEntityMetadata(identity.userId, "tag", metadata);
+  const diagnostics = createSyncDiagnosticObserver({
+    context: diagnosticContext,
+    entity: "tag",
+    reporter: syncDiagnosticReporter,
+  });
+  await diagnostics.start();
+  let metadata: SyncEntityMetadata = createEmptySyncEntityMetadata();
+  let retryCount = 0;
 
   try {
+    await diagnostics.phase("load_local_changes");
+    metadata = {
+      ...metadata,
+      ...(await loadSyncEntityMetadata(identity.userId, "tag")),
+      status: "syncing",
+      error: null,
+    };
+    const isFreshInitialSync =
+      !metadata.initialSyncCompleted &&
+      metadata.lastPulledAt === null &&
+      metadata.lastPulledId === null;
+    await saveSyncEntityMetadata(identity.userId, "tag", metadata);
     let localRecords = await loadTagRecords();
     if (isFreshInitialSync) {
       await enqueueMissingTagRecords(localRecords);
     }
+    await diagnostics.phase("upload_local_changes");
     const queueResult = await syncQueuedTags(identity);
+    retryCount = queueResult.retryCount;
+    await diagnostics.phase("upload_local_changes", {
+      successCount: queueResult.pushedCount,
+      failedCount: queueResult.firstError ? 1 : 0,
+      retryCount,
+    });
     const pullResult = await runIncrementalPull({
       metadata,
-      pullPage: (request) => pullTagRecordPage(identity.userId, request),
+      pullPage: async (request) => {
+        await diagnostics.phase("fetch_remote_changes", { retryCount });
+        const page = await pullTagRecordPage(identity.userId, request, {
+          onValidationFailure: async () => {
+            await diagnostics.validationFailure("corrupt");
+          },
+        });
+        await diagnostics.phase("validate_remote_records", {
+          successCount: queueResult.pushedCount + page.records.length,
+          retryCount,
+        });
+        return page;
+      },
       applyPage: async (remotePage) => {
+        await diagnostics.phase("resolve_conflicts", { retryCount });
         localRecords = mergeTagRecords(localRecords, remotePage);
+        await diagnostics.phase("write_local_db", { retryCount });
         await saveTagRecords(localRecords);
       },
       saveProgress: async (progress) => {
@@ -169,22 +215,43 @@ export const syncTagRecords = async (identity: SyncIdentity): Promise<{
     });
     metadata = pullResult.metadata;
     if (queueResult.firstError) {
+      await diagnostics.phase("upload_local_changes", {
+        failedCount: 1,
+        retryCount,
+      });
       throw queueResult.firstError;
     }
     if (queueResult.pendingCount > 0) {
+      await diagnostics.phase("upload_local_changes", {
+        failedCount: queueResult.pendingCount,
+        retryCount,
+      });
       throw new Error(
         `tag sync still has ${queueResult.pendingCount} pending upload(s).`,
       );
     }
+    await diagnostics.phase("mark_synced", { retryCount });
     metadata = completeSyncEntityMetadata(
       metadata,
       queueResult.pushedCount > 0 ? Date.now() : null,
     );
     await saveSyncEntityMetadata(identity.userId, "tag", metadata);
+    await diagnostics.complete({
+      successCount: queueResult.pushedCount + pullResult.pulled,
+      retryCount,
+    });
     return { pushed: queueResult.pushedCount, pulled: pullResult.pulled };
   } catch (error) {
-    metadata = failSyncEntityMetadata(metadata, error);
-    await saveSyncEntityMetadata(identity.userId, "tag", metadata);
-    throw error;
+    const classifiedError = await diagnostics.fail(error);
+    metadata = failSyncEntityMetadata(
+      metadata,
+      classifiedError.classification.errorCode,
+    );
+    try {
+      await saveSyncEntityMetadata(identity.userId, "tag", metadata);
+    } catch {
+      // Preserve the primary failure; diagnostics and recovery metadata are best effort.
+    }
+    throw classifiedError;
   }
 };
