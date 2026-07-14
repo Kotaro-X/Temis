@@ -124,10 +124,6 @@ if (!FIRESTORE_EMULATOR_HOST) {
     });
   }
 } else {
-  test("temporary required-check verification failure", () => {
-    assert.fail("Intentional failure used to verify required status checks.");
-  });
-
   let env: RulesTestEnvironment;
 
   test.before(async () => {
