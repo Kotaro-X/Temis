@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --experimental-specifier-resolution=node --test tests/*.test.ts",
+    "test:all": "npm run lint && npm run typecheck && npm run test:unit && npm run test:migrations && npm run test:firestore-rules",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:migrations": "node --experimental-strip-types --experimental-specifier-resolution=node --test tests/migrations.test.ts",
     "test:firestore-rules": "node scripts/run-firestore-rules-tests.mjs",

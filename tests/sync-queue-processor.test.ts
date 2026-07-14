@@ -119,7 +119,7 @@ test("processSyncQueue retries failed items with exponential backoff and keeps l
   );
 
   assert.equal(result.pushedCount, 1);
-  assert.equal(result.firstError?.message, "Firestore write failed");
+  assert.equal(result.firstError?.message, "firestore_write_failed");
   assert.deepEqual(
     result.queue,
     [

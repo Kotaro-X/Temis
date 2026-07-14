@@ -1,12 +1,14 @@
 # Firestore Rules Emulatorテスト運用
 
-最終更新: 2026-07-14
+最終更新: 2026-07-15
 
 ## 実行方法
 
 ```bash
 npm run test:firestore-rules
 ```
+
+`npm run test:all`でも、このFirestore Rules Emulator testが最後に実行される。
 
 このコマンドはlocal devDependencyの`firebase-tools`を使い、次を行う。
 

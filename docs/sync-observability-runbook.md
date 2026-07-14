@@ -118,9 +118,22 @@ SHA256(EXPO_PUBLIC_SYNC_LOG_SALT + NUL + Firebase UID)
 
 ## sanitizedReason
 
-`sanitizedReason` は分類器が返す固定辞書値だけを許可する。生の例外messageを正規表現で部分マスクして保存する方式は採用しない。未知の例外は詳細を破棄し、`Unknown` / `SYNC-UNK-001` / `Unexpected sync failure` のみを残す。
+`sanitizedReason` は分類器が返すsnake_caseの固定辞書値だけを許可する。生の例外messageを正規表現で部分マスクして保存する方式は採用しない。未知の例外は詳細を破棄し、`Unknown` / `SYNC-UNK-001` / `unknown_sync_failure` のみを残す。
 
 分類器は例外の `code` とmessageをメモリ内で分類条件として読むことがあるが、読み取った値をevent、console、Crashlytics、ユーザー表示へコピーしない。
+
+代表的な定型理由は次のとおり。`phase`と組み合わせることで、PIIや生例外なしに読み取り・検証・書き込みを区別する。
+
+| phase・分類 | sanitizedReason |
+|---|---|
+| `fetch_remote_changes` + RemoteDB | `firestore_read_failed` |
+| schema不一致 | `schema_version_mismatch` |
+| remote record形式不正 | `remote_record_format_invalid` |
+| remote record検証失敗 | `remote_record_validation_failed` |
+| `load_local_changes` + LocalDB | `sqlite_read_failed` |
+| `write_local_db` + LocalDB | `sqlite_write_failed` |
+| `mark_synced` + LocalDB | `sqlite_mark_synced_failed` |
+| `upload_local_changes` + RemoteDB | `firestore_write_failed` |
 
 ## Crashlytics
 
@@ -143,7 +156,7 @@ Crashlyticsへ送るcustom keysは次の14項目だけである。
 
 重大な同期失敗は、安全な `errorCode: sanitizedReason` から新規作成した `SanitizedSyncError` をnon-fatalとして記録する。元のErrorを `recordError` へ渡してはいけない。成功phaseはCrashlytics breadcrumb logとcustom keysに残り、その後のnon-fatal/crashの文脈として利用される。
 
-Crashlyticsの初期化、custom key設定、log、recordErrorが失敗しても同期を継続する。debug buildからの送信は `firebase.json` で無効、production collectionは有効である。JS exception handler chainingは重複issue回避のため無効にしている。
+Crashlyticsの初期化、custom key設定、log、recordErrorが失敗しても同期を継続する。debug buildからの送信は `firebase.json` の `crashlytics_debug_enabled: false` とJS sinkの `__DEV__` guardの両方で無効、release/RC collectionは `crashlytics_auto_collection_enabled: true` で有効である。JS exception handler chainingは重複issue回避のため無効にしている。
 
 ### Native設定
 
@@ -153,6 +166,11 @@ Crashlyticsの初期化、custom key設定、log、recordErrorが失敗しても
 - Androidで有効化する前に、Firebase Consoleで `com.dotbase.temis` のAndroid appを登録し、正しい `google-services.json` をEAS file secret `GOOGLE_SERVICES_JSON` または `android.googleServicesFile` で指定する。iOS用plistやWeb app IDからAndroid設定を推測・生成してはいけない。
 - config plugin変更後はnative project/dev clientを再生成・再ビルドする。
 - リリース前にFirebase ConsoleのCrashlytics dashboardでテスト用non-fatalを確認する。テストへ本文や実在ユーザー情報を使わない。
+
+### Platform対応状況（2026-07-14）
+
+- **iOS: RC実送信確認待ち。** `com.anonymous.WeMemo` と一致する `GoogleService-Info.plist`、RNFirebase Crashlytics Pod、dSYM upload build phaseは設定済み。Release Candidateから匿名fixtureによるnon-fatalを1件送信し、Firebase Consoleの `temis-c05aa` で `SanitizedSyncError`、`errorCode`、`phase`、`entity` が見えることをリリース前に確認する。Console受信確認前は本番確認完了と扱わない。
+- **Android: 未完了・同時リリース時の残タスク。** 2026-07-14時点のFirebase project `temis-c05aa` のapps一覧はiOSとWebのみで、`platform: ANDROID` の登録はない。repository内にも `google-services.json` がなく、`android.googleServicesFile` は未解決である。Firebase ConsoleでAndroid app `com.dotbase.temis` を登録し、取得した `google-services.json` をEAS file secret `GOOGLE_SERVICES_JSON` に設定する。その後Android RCを再ビルドし、匿名non-fatalのConsole受信とmapping file uploadを確認する。これらが完了するまでAndroid Crashlyticsをリリース完了と扱わない。
 
 ## 問い合わせ時の確認手順
 

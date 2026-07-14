@@ -1,14 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   SYNC_ERROR_TYPES,
   classifySyncError,
   createAnonymousUserId,
+  createSanitizedSyncError,
   createSyncDiagnosticReporter,
   createUserFacingSyncError,
   sanitizeSyncDiagnosticEvent,
+  shouldSendSyncDiagnosticsToCrashlytics,
   toCrashlyticsAttributes,
   type SyncDiagnosticEvent,
   type SyncErrorType,
@@ -100,7 +103,7 @@ test("Crashlytics custom keys contain only the approved anonymous diagnostic fie
       phase: "write_local_db",
       errorType: "LocalDB",
       errorCode: "SYNC-LDB-001",
-      sanitizedReason: "Local database operation failed",
+      sanitizedReason: "sqlite_write_failed",
     }),
   );
   assert.ok(event);
@@ -122,7 +125,76 @@ test("Crashlytics custom keys contain only the approved anonymous diagnostic fie
     "successCount",
     "syncId",
   ]);
-  assert.equal(JSON.stringify(attributes).includes("firebase-uid"), false);
+  const serialized = JSON.stringify(attributes);
+  for (const prohibited of [
+    "firebase-uid",
+    "secret memo body",
+    "secret title",
+    "person@example.com",
+    "private search query",
+    "private AI prompt",
+    "private stack detail",
+  ]) {
+    assert.equal(serialized.includes(prohibited), false);
+  }
+});
+
+test("sanitized reasons retain safe diagnostic granularity without raw exceptions", () => {
+  const firestore = classifySyncError(
+    new Error("memo body person@example.com private stack"),
+    "fetch_remote_changes",
+  );
+  const schema = classifySyncError(
+    new Error("refusing to write legacy secret title"),
+    "validate_remote_records",
+  );
+  const sqlite = classifySyncError(
+    new Error("SQLite row contains private AI prompt"),
+    "write_local_db",
+  );
+
+  assert.equal(firestore.sanitizedReason, "firestore_read_failed");
+  assert.equal(schema.sanitizedReason, "schema_version_mismatch");
+  assert.equal(sqlite.sanitizedReason, "sqlite_write_failed");
+
+  const safeError = createSanitizedSyncError(sqlite);
+  assert.equal(safeError.name, "SanitizedSyncError");
+  assert.equal(safeError.message, "SYNC-LDB-001: sqlite_write_failed");
+  const safeErrorOutput = `${safeError.message}\n${safeError.stack ?? ""}`;
+  for (const prohibited of [
+    "SQLite row contains",
+    "private AI prompt",
+    "person@example.com",
+    "secret title",
+    "memo body",
+  ]) {
+    assert.equal(safeErrorOutput.includes(prohibited), false);
+  }
+});
+
+test("Crashlytics collection stays disabled for debug and enabled for release candidates", () => {
+  const firebaseConfig = JSON.parse(
+    readFileSync(
+      decodeURIComponent(new URL("../firebase.json", import.meta.url).pathname),
+      "utf8",
+    ),
+  ) as {
+    "react-native": {
+      crashlytics_auto_collection_enabled: boolean;
+      crashlytics_debug_enabled: boolean;
+    };
+  };
+
+  assert.equal(
+    firebaseConfig["react-native"].crashlytics_debug_enabled,
+    false,
+  );
+  assert.equal(
+    firebaseConfig["react-native"].crashlytics_auto_collection_enabled,
+    true,
+  );
+  assert.equal(shouldSendSyncDiagnosticsToCrashlytics(true), false);
+  assert.equal(shouldSendSyncDiagnosticsToCrashlytics(false), true);
 });
 
 test("all required error types map to stable codes without returning raw messages", () => {

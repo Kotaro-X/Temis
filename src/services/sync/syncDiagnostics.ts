@@ -47,18 +47,20 @@ export const SYNC_ERROR_CODES = [
 export type SyncErrorCode = (typeof SYNC_ERROR_CODES)[number];
 
 const SANITIZED_REASONS = [
-  "Network unavailable",
-  "Authentication required",
-  "Permission denied",
-  "Remote schema version unsupported",
-  "Remote record format invalid",
-  "Remote record validation failed",
-  "Local database operation failed",
-  "Firestore read failed",
-  "Firestore write failed",
-  "Conflict resolution failed",
-  "Rate limit exceeded",
-  "Unexpected sync failure",
+  "network_unavailable",
+  "authentication_required",
+  "permission_denied",
+  "schema_version_mismatch",
+  "remote_record_format_invalid",
+  "remote_record_validation_failed",
+  "sqlite_read_failed",
+  "sqlite_write_failed",
+  "sqlite_mark_synced_failed",
+  "firestore_read_failed",
+  "firestore_write_failed",
+  "conflict_resolution_failed",
+  "rate_limit_exceeded",
+  "unknown_sync_failure",
 ] as const;
 
 export type SanitizedSyncReason = (typeof SANITIZED_REASONS)[number];
@@ -143,13 +145,13 @@ export const classifyValidationFailure = (
     return classification(
       "Validation",
       "SYNC-VAL-001",
-      "Remote schema version unsupported",
+      "schema_version_mismatch",
     );
   }
   return classification(
     "Validation",
     "SYNC-VAL-003",
-    "Remote record validation failed",
+    "remote_record_validation_failed",
   );
 };
 
@@ -171,15 +173,15 @@ export const classifySyncError = (
     message.includes("sign in with google") ||
     message.includes("authentication required")
   ) {
-    return classification("Auth", "SYNC-AUTH-001", "Authentication required");
+    return classification("Auth", "SYNC-AUTH-001", "authentication_required");
   }
   if (code === "permission-denied") {
-    return classification("Permission", "SYNC-PERM-001", "Permission denied");
+    return classification("Permission", "SYNC-PERM-001", "permission_denied");
   }
   if (
     ["resource-exhausted", "quota-exceeded", "too-many-requests"].includes(code)
   ) {
-    return classification("RateLimit", "SYNC-RATE-001", "Rate limit exceeded");
+    return classification("RateLimit", "SYNC-RATE-001", "rate_limit_exceeded");
   }
   if (
     ["unavailable", "deadline-exceeded", "network-request-failed"].includes(code) ||
@@ -187,55 +189,77 @@ export const classifySyncError = (
     message.includes("failed to fetch") ||
     message.includes("offline")
   ) {
-    return classification("Network", "SYNC-NET-001", "Network unavailable");
+    return classification("Network", "SYNC-NET-001", "network_unavailable");
   }
   if (message.includes("refusing to write legacy")) {
     return classification(
       "Validation",
       "SYNC-VAL-001",
-      "Remote schema version unsupported",
+      "schema_version_mismatch",
     );
   }
   if (message.includes("refusing to write invalid")) {
     return classification(
       "Validation",
       "SYNC-VAL-002",
-      "Remote record format invalid",
+      "remote_record_format_invalid",
     );
   }
   if (phase === "validate_remote_records") {
     return classification(
       "Validation",
       "SYNC-VAL-003",
-      "Remote record validation failed",
+      "remote_record_validation_failed",
     );
   }
-  if (
-    phase === "write_local_db" ||
-    phase === "load_local_changes" ||
-    phase === "mark_synced"
-  ) {
+  if (phase === "write_local_db") {
     return classification(
       "LocalDB",
       "SYNC-LDB-001",
-      "Local database operation failed",
+      "sqlite_write_failed",
+    );
+  }
+  if (phase === "load_local_changes") {
+    return classification(
+      "LocalDB",
+      "SYNC-LDB-001",
+      "sqlite_read_failed",
+    );
+  }
+  if (phase === "mark_synced") {
+    return classification(
+      "LocalDB",
+      "SYNC-LDB-001",
+      "sqlite_mark_synced_failed",
     );
   }
   if (phase === "resolve_conflicts") {
     return classification(
       "Conflict",
       "SYNC-CON-001",
-      "Conflict resolution failed",
+      "conflict_resolution_failed",
     );
   }
   if (phase === "fetch_remote_changes") {
-    return classification("RemoteDB", "SYNC-RDB-001", "Firestore read failed");
+    return classification("RemoteDB", "SYNC-RDB-001", "firestore_read_failed");
   }
   if (phase === "upload_local_changes") {
-    return classification("RemoteDB", "SYNC-RDB-002", "Firestore write failed");
+    return classification("RemoteDB", "SYNC-RDB-002", "firestore_write_failed");
   }
-  return classification("Unknown", "SYNC-UNK-001", "Unexpected sync failure");
+  return classification("Unknown", "SYNC-UNK-001", "unknown_sync_failure");
 };
+
+export const createSanitizedSyncError = (
+  value: SyncErrorClassification,
+): Error => {
+  const safeError = new Error(`${value.errorCode}: ${value.sanitizedReason}`);
+  safeError.name = "SanitizedSyncError";
+  return safeError;
+};
+
+export const shouldSendSyncDiagnosticsToCrashlytics = (
+  isDebugBuild: boolean,
+): boolean => !isDebugBuild;
 
 const safeNonNegativeInteger = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0

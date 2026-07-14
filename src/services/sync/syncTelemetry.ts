@@ -6,7 +6,9 @@ import appJson from "../../../app.json";
 import { MIGRATIONS } from "../../db/migrations";
 import {
   createAnonymousUserId,
+  createSanitizedSyncError,
   createSyncDiagnosticReporter,
+  shouldSendSyncDiagnosticsToCrashlytics,
   toCrashlyticsAttributes,
 } from "./syncDiagnostics";
 import type { SyncRunDiagnosticContext } from "./syncDiagnosticObserver";
@@ -23,6 +25,10 @@ type CrashlyticsModule = typeof import("@react-native-firebase/crashlytics");
 export const syncDiagnosticReporter = createSyncDiagnosticReporter({
   writeConsole: (message) => console.info(message),
   sink: async (event, options) => {
+    const isDebugBuild = typeof __DEV__ !== "undefined" && __DEV__;
+    if (!shouldSendSyncDiagnosticsToCrashlytics(isDebugBuild)) {
+      return;
+    }
     const {
       getCrashlytics,
       log,
@@ -37,11 +43,14 @@ export const syncDiagnosticReporter = createSyncDiagnosticReporter({
     ]);
     log(crashlytics, `[sync] ${event.entity} ${event.phase}`);
     if (options.recordAsError && event.errorCode && event.sanitizedReason) {
-      const safeError = new Error(
-        `${event.errorCode}: ${event.sanitizedReason}`,
+      recordError(
+        crashlytics,
+        createSanitizedSyncError({
+          errorType: event.errorType ?? "Unknown",
+          errorCode: event.errorCode,
+          sanitizedReason: event.sanitizedReason,
+        }),
       );
-      safeError.name = "SanitizedSyncError";
-      recordError(crashlytics, safeError);
     }
   },
 });
