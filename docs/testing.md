@@ -2,42 +2,60 @@
 
 最終更新: 2026-07-15
 
+## 前提条件と初回セットアップ
+
+- Node.js 22（CIと同じmajor version）
+- Firestore Rulesを実行する場合はJava 17以上
+- Firestore Emulatorの8080番とEmulator Hubの4400番が利用可能なこと
+
+クリーンなcloneでは、lockfileどおりに依存関係を入れる。
+
+```bash
+npm ci
+```
+
 ## ローカルで使うコマンド
 
 | コマンド | 内容 |
 |---|---|
-| `npm run lint` | Expo/React Native/TypeScript向けESLint |
-| `npm run typecheck` | TypeScript型チェック |
-| `npm test` | ローカル向け全Nodeテスト。Emulator未起動時のFirestore Rules placeholder skipを許容する |
-| `npm run test:all` | lint、typecheck、unit、migration、Firestore Rules Emulatorテストを順番に実行するローカル総合確認 |
-| `npm run test:unit` | Firestore Rulesとmigrationを除いたunit tests |
-| `npm run test:migrations` | SQLite migration tests |
-| `npm run test:firestore-rules` | Firestore Emulatorを起動してRules実テスト8件を実行する |
+| `npm test` | 通常のunit test（Rules・migrationは専用コマンドで実行） |
+| `npm run test:migrations` | SQLite migration test |
+| `npm run test:rules` | Firestore Emulatorを起動してFirestore Rules testを実行 |
+| `npm run test:firestore-rules` | `test:rules` の互換コマンド |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScriptの型チェック |
+| `npm run test:all` | 主要チェックの一括実行 |
 
-ローカルで主要チェックをまとめて確認する場合は、`npm run test:all`を使う。実行順はlint、typecheck、unit test、migration test、Firestore Rules Emulator testで、途中のcheckが失敗した時点で停止する。Firestore Rules Emulator testにはJava 17以上とFirebase Emulatorを実行できる環境が必要である。
+通常は次で全チェックを再現する。失敗すると後続の処理は実行せず終了する。
 
-`npm test`で表示される`firestore rules tests require emulator`のskipは、ローカルで本番Firestoreへ接続しないための安全策である。ルールが正常という意味ではない。通常の`npm test`だけではFirestore Rulesの正常性を保証できないため、ルール変更時とPR確認では`npm run test:firestore-rules`、またはそれを含む`npm run test:all`を実行する。
+```bash
+npm run test:all
+```
+
+実行順は `lint`、`typecheck`、`npm test`、`test:migrations`、`test:rules`。つまり、通常テスト、SQLite migration、Firestore Rules Emulatorを含む。
+
+Rulesテストの詳細は[Firestore Rules Emulatorテスト](./firestore-rules-testing.md)、migrationの詳細は[SQLite migrationテスト](./migrations.md)を参照する。
 
 ## CI
 
-`.github/workflows/ci.yml`はすべてのPull Requestで次の2 jobを実行する。
+`.github/workflows/ci.yml`はPull Requestごとに、`npm ci`の後で次を実行する。
 
-- `Lint, typecheck, unit, and migrations`
-- `Firestore Rules Emulator`
+- lint
+- typecheck
+- unit test
+- SQLite migration test
+- Firestore Rules Emulator test（Java 17をセットアップして実行）
 
-Repository RulesまたはBranch Protectionで両jobをrequired status checksに設定する。特に`CI / Firestore Rules Emulator`を必須化しない限り、workflow追加だけではmergeを技術的に禁止できない。
+CIは失敗場所を分かりやすくするため、品質チェックとRules Emulatorを別jobにしている。両方をGitHubのrequired status checkに設定する。
 
-CIのunit testsは`firestore-rules.test.ts`を除外する。Rules専用jobはEmulatorを起動し、`FIRESTORE_EMULATOR_HOST`が設定された状態で実テストだけを実行する。CIでRulesファイルをEmulatorなしで直接実行すると、skipではなくfailになる。
+## テスト後のGit hygiene
 
-ローカルでは`npm run test:all`で一括確認し、CIではjobを分割して実行する。CIを`test:all`へ置き換えないことで、lint・型・unit/migration・Rulesのどこで失敗したかをPull Request上で即座に切り分けられる。
+テスト後は必ず次を確認する。
 
-## CI環境
+```bash
+git status
+```
 
-- Node.js 22
-- Java 17以上（CIはTemurin 17を使用）
-- `npm ci`でdevDependenciesを含めて導入
-- `firebase-tools`はpackage.json/package-lock.jsonの固定versionを使用
-- Firestore Emulator用8080番とEmulator Hub用4400番が利用可能
-- 初回のEmulatorバイナリ取得にネットワークが必要
+`firestore-debug.log`、`firebase-debug.log`、`ui-debug.log`を含む`*.log`、一時DB（`*.sqlite`、`*.sqlite3`、`*.db`）、backup/tmp/coverageディレクトリ、`.env`、`.env.local`は差分に出ない。`.env.example`、`docs/`、`tests/**/fixtures/`配下のDB fixture、Firebase/CI設定はGit管理を維持する。
 
-失敗時の分類は[Firestore Rulesテスト運用](./firestore-rules-testing.md)を参照する。
+生成物が表示された場合は、まず`.gitignore`の対象か確認する。すでに追跡済みならローカルファイルを消さず、内容が不要な生成物であることを確認してから `git rm --cached <path>` で追跡だけ外す。秘密情報を含む`.env`を誤ってコミットした場合は、ignore追加だけで済ませず、値を失効・再発行する。

@@ -67,4 +67,4 @@ jobs:
         run: npm ci
 
       - name: Run Firestore Rules Emulator tests
-        run: npm run test:firestore-rules
+        run: npm run test:rules

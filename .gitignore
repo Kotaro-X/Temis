@@ -3,6 +3,23 @@
 # dependencies
 node_modules/
 
+# Test and emulator output. Keep fixtures under tests/**/fixtures tracked.
+*.log
+backups/
+backup/
+.backup/
+tmp/
+.tmp/
+temp/
+.temp/
+coverage/
+*.sqlite
+*.sqlite3
+*.db
+!tests/**/fixtures/**/*.sqlite
+!tests/**/fixtures/**/*.sqlite3
+!tests/**/fixtures/**/*.db
+
 # Expo
 .expo/
 dist/
@@ -30,8 +47,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local env files (commit the documented template only)
+.env
+.env.local
+!.env.example
 
 # typescript
 *.tsbuildinfo
