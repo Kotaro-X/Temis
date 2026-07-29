@@ -36,7 +36,7 @@ npm run test:migrations
 
 ## fixtureの扱い
 
-現在のmigration testはNode上のSQLite adapterを使ったin-memory testで、実DB fixtureを必要としない。将来fixtureを追加する場合は、テスト専用・最小・匿名化済みのファイルを`tests/**/fixtures/`配下に置く。この場所の`*.sqlite`、`*.sqlite3`、`*.db`は`.gitignore`の例外として追跡できる。一時的に生成したDB、端末から取り出したDB、backupはコミットしない。
+現在のmigration testは、SQLite APIを模したin-memory test doubleでmigrationの順序・transaction・rollbackを検証しており、実DB fixtureを必要としない。将来fixtureを追加する場合は、テスト専用・最小・匿名化済みのファイルを`tests/**/fixtures/`配下に置く。この場所の`*.sqlite`、`*.sqlite3`、`*.db`は`.gitignore`の例外として追跡できる。一時的に生成したDB、端末から取り出したDB、backupはコミットしない。
 
 ## よくある失敗
 

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 
 import type { SlotKey, Tag, TaskState, TaskStatus } from "../../types";
@@ -43,6 +43,21 @@ const TaskDetailView = ({
   onDone,
   children,
 }: Props) => {
+  const [estimateText, setEstimateText] = useState(() =>
+    String(task.estimateMinutes),
+  );
+
+  const handleEstimateFocus = () => {
+    if (task.estimateMinutes === 25 && estimateText === "25") {
+      setEstimateText("");
+    }
+  };
+
+  const handleEstimateChange = (text: string) => {
+    setEstimateText(text);
+    onUpdateTaskEstimate(text);
+  };
+
   return (
     <View style={styles.taskDetailPanel}>
       <View style={styles.taskDetailHeader}>
@@ -133,8 +148,9 @@ const TaskDetailView = ({
         <TextInput
           style={styles.inputInline}
           keyboardType="number-pad"
-          value={String(task.estimateMinutes)}
-          onChangeText={onUpdateTaskEstimate}
+          value={estimateText}
+          onFocus={handleEstimateFocus}
+          onChangeText={handleEstimateChange}
         />
       </View>
       {children ?? null}
