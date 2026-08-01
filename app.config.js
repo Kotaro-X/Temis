@@ -10,6 +10,8 @@ module.exports = () => {
     process.env.GOOGLE_SERVICES_PLIST?.trim() || ios.googleServicesFile;
   const androidGoogleServicesFile =
     process.env.GOOGLE_SERVICES_JSON?.trim() || android.googleServicesFile;
+  // Cloud builds for subscription testing can omit the 786 MB local model.
+  const shouldBundleLocalModel = process.env.BUNDLE_LOCAL_LLM !== "false";
   const infoPlist = ios.infoPlist || {};
   const ats = infoPlist.NSAppTransportSecurity || {};
   const exceptionDomains = ats.NSExceptionDomains || {};
@@ -58,7 +60,7 @@ module.exports = () => {
     },
     plugins: [
       ...(expoConfig.plugins || []),
-      "./plugins/withBundledModel",
+      ...(shouldBundleLocalModel ? ["./plugins/withBundledModel"] : []),
       "./plugins/withReactNativeFirebaseIos",
     ],
   };

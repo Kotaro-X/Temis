@@ -5,7 +5,7 @@ import type {
   TimeBoxSchedule,
   TodayState,
 } from "../../types";
-import { SLOT_KEYS } from "../../types";
+import { SLOT_KEYS } from "../../types/timer.ts";
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
 

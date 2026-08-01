@@ -5,8 +5,8 @@ import type {
   TimeBoxSchedule,
   TodayState,
 } from "../../types";
-import { SLOT_KEYS } from "../../types";
-import { formatTime, getCapacityMinutes } from "./taskUtils";
+import { SLOT_KEYS } from "../../types/timer.ts";
+import { formatTime, getCapacityMinutes } from "./taskUtils.ts";
 import type { ArchivedTaskItem, FlatTaskItem, TaskSectionItem } from "./types";
 
 export type TimeBoxTaskPreviewItem = {
@@ -69,8 +69,10 @@ export const buildTodaySections = (
     const incompleteEstimate = sumEstimateMinutesIncomplete(visibleTasks);
     const totalEstimate = sumEstimateMinutesAll(visibleTasks);
     const capacityMinutes = getCapacityMinutes(timeBoxSchedule, slotKey);
-    const overflow = Math.max(0, incompleteEstimate - capacityMinutes);
-    const remainingMinutes = Math.max(0, capacityMinutes - incompleteEstimate);
+    // A time box reserves its full task list, even after a task is marked done.
+    // Completing a task must not make capacity appear available again.
+    const overflow = Math.max(0, totalEstimate - capacityMinutes);
+    const remainingMinutes = Math.max(0, capacityMinutes - totalEstimate);
     return {
       slotKey,
       visibleTasks,
