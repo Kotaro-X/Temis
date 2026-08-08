@@ -72,6 +72,21 @@ const normalizeOptionalEnvValue = (value: string | undefined): string | null => 
   return normalized.length > 0 ? normalized : null;
 };
 
+// Expo only replaces EXPO_PUBLIC_* values when accessed with dot notation.
+// Passing process.env through a helper leaves the production bundle empty.
+export const getRevenueCatRuntimeEnv = (): RevenueCatEnvSource => ({
+  EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY:
+    process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY,
+  EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY:
+    process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY,
+  EXPO_PUBLIC_REVENUECAT_CLOUD_SYNC_ENTITLEMENT_ID:
+    process.env.EXPO_PUBLIC_REVENUECAT_CLOUD_SYNC_ENTITLEMENT_ID,
+  EXPO_PUBLIC_REVENUECAT_CLOUD_SYNC_OFFERING_ID:
+    process.env.EXPO_PUBLIC_REVENUECAT_CLOUD_SYNC_OFFERING_ID,
+  EXPO_PUBLIC_REVENUECAT_CLOUD_SYNC_PACKAGE_ID:
+    process.env.EXPO_PUBLIC_REVENUECAT_CLOUD_SYNC_PACKAGE_ID,
+});
+
 export const isRevenueCatSupportedPlatform = (): boolean =>
   Platform.OS === "ios" || Platform.OS === "android";
 
@@ -92,7 +107,7 @@ export const readRevenueCatConfigFromEnv = (
 });
 
 export const getRevenueCatRuntimeConfig = (): RevenueCatRuntimeConfig =>
-  readRevenueCatConfigFromEnv(process.env);
+  readRevenueCatConfigFromEnv(getRevenueCatRuntimeEnv());
 
 export const getMissingRevenueCatEnvKeys = (
   env: RevenueCatEnvSource,
@@ -184,7 +199,9 @@ export const configurePurchases = async (): Promise<boolean> => {
     const config = getRevenueCatRuntimeConfig();
     const apiKey = getRevenueCatApiKeyForCurrentPlatform(config);
     if (!apiKey) {
-      throw new Error(createRevenueCatConfigErrorMessage(process.env));
+      throw new Error(
+        createRevenueCatConfigErrorMessage(getRevenueCatRuntimeEnv()),
+      );
     }
 
     Purchases.setLogHandler(revenueCatLogHandler);

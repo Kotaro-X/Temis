@@ -20,6 +20,7 @@ type Props = {
   onTabPress: (tab: AppChromeTab) => void;
   onOpenTodo: () => void;
   onOpenSettings: () => void;
+  onOpenAccountSettings: () => void;
   children: React.ReactNode;
 };
 
@@ -107,9 +108,16 @@ const AppChromeShell = ({
   onTabPress,
   onOpenTodo,
   onOpenSettings,
+  onOpenAccountSettings,
   children,
 }: Props) => {
-  const { languagePickerOpen, selectInitialLanguage, tr } = useAppSettings();
+  const {
+    cloudSyncEnabled,
+    languagePickerOpen,
+    selectInitialLanguage,
+    storageReady,
+    tr,
+  } = useAppSettings();
   const {
     menuOpen,
     closeMenu,
@@ -172,6 +180,8 @@ const AppChromeShell = ({
         onCloseMenu={closeMenu}
         onOpenTodo={onOpenTodo}
         onOpenSettings={onOpenSettings}
+        onOpenAccountSettings={onOpenAccountSettings}
+        showSyncUpgradePrompt={storageReady && !cloudSyncEnabled}
         tr={tr}
         helpUrl={HELP_URL}
       />

@@ -55,10 +55,14 @@ const TaskRestoreModal = ({
   onClose,
   onConfirm,
 }: Props) => {
+  if (!visible) {
+    return null;
+  }
+
   return (
     <Modal
       transparent
-      visible={visible}
+      visible
       animationType="fade"
       onRequestClose={onClose}
     >

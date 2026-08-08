@@ -115,6 +115,53 @@ const styles = StyleSheet.create<any>({
     fontSize: 12,
     color: "#dc2626",
   },
+  bulkMoveButton: {
+    borderWidth: 1,
+    borderColor: "#4b5563",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginLeft: "auto",
+    marginRight: 8,
+  },
+  bulkMoveButtonText: {
+    fontSize: 12,
+    color: "#374151",
+  },
+  detailCancelButton: {
+    backgroundColor: "#e5e7eb",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  detailDeleteButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+  },
+  detailDeleteButtonText: {
+    fontSize: 13,
+    color: "#dc2626",
+    fontWeight: "600",
+  },
+  detailCancelButtonText: {
+    fontSize: 12,
+    color: "#374151",
+    fontWeight: "600",
+  },
+  detailCompleteButton: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  detailCompleteButtonText: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "600",
+  },
   routineSuggestionCard: {
     borderWidth: 1,
     borderColor: "#e5e7eb",
@@ -585,7 +632,6 @@ const styles = StyleSheet.create<any>({
   },
   swipeActions: {
     position: "absolute",
-    left: 0,
     top: 0,
     bottom: 0,
     flexDirection: "row",
@@ -612,6 +658,69 @@ const styles = StyleSheet.create<any>({
   },
   swipeContent: {
     backgroundColor: "#ffffff",
+  },
+  taskScreenRoot: {
+    flex: 1,
+  },
+  taskScrollViewport: {
+    flex: 1,
+  },
+  taskDragSource: {
+    opacity: 0.2,
+  },
+  taskDragPreview: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    zIndex: 20,
+    elevation: 20,
+  },
+  taskDragPreviewCard: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    padding: 10,
+    shadowColor: "#111827",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+  },
+  taskDragPreviewStatusBar: {
+    width: 4,
+    alignSelf: "stretch",
+    borderRadius: 2,
+    marginRight: 8,
+  },
+  taskDragPreviewContent: {
+    flex: 1,
+  },
+  taskDragPreviewTitle: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "600",
+  },
+  taskDragPreviewTitleDone: {
+    color: "#9ca3af",
+    textDecorationLine: "line-through",
+  },
+  taskDragPreviewMeta: {
+    fontSize: 11,
+    color: "#6b7280",
+    marginTop: 2,
+  },
+  taskDragPreviewBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  taskDragPreviewBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
   },
   taskBox: {
     borderWidth: 1,
@@ -813,24 +922,56 @@ const styles = StyleSheet.create<any>({
     fontSize: 12,
     color: "#111827",
   },
-  tagDropdownList: {
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    borderRadius: 6,
-    marginTop: 6,
-    backgroundColor: "#ffffff",
+  tagPickerOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(15, 23, 42, 0.4)",
   },
-  tagDropdownItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 10,
+  tagPickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  tagPickerPanel: {
+    maxHeight: "70%",
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+  },
+  tagPickerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  tagPickerTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  tagPickerCloseButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  tagPickerCloseText: {
+    fontSize: 14,
+    color: "#2563eb",
+  },
+  tagPickerList: {
+    flexGrow: 0,
+  },
+  tagPickerItem: {
+    paddingVertical: 14,
+    paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderColor: "#f3f4f6",
   },
-  tagDropdownItemText: {
-    fontSize: 12,
+  tagPickerItemText: {
+    fontSize: 14,
     color: "#111827",
   },
-  tagDropdownItemTextSelected: {
+  tagPickerItemTextSelected: {
     color: "#2563eb",
     fontWeight: "600",
   },

@@ -41,7 +41,14 @@ export const useCloudSync = ({
   >("restoring");
   const [user, setUser] = useState<GoogleSyncUser | null>(null);
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialSyncStatusRef = useRef<SyncEntityStatus>("idle");
+  const initialSyncUserIdRef = useRef<string | null>(null);
   const canSync = enabled && entitled;
+
+  const updateInitialSyncStatus = useCallback((next: SyncEntityStatus) => {
+    initialSyncStatusRef.current = next;
+    setInitialSyncStatus(next);
+  }, []);
 
   const clearAutoSyncTimer = useCallback(() => {
     if (autoSyncTimerRef.current) {
@@ -96,8 +103,15 @@ export const useCloudSync = ({
     }
     setUser(restoredUser);
     setAuthStatus("signedIn");
+    if (initialSyncUserIdRef.current !== restoredUser.id) {
+      initialSyncUserIdRef.current = restoredUser.id;
+      updateInitialSyncStatus("idle");
+    }
+    const isInitialSync = initialSyncStatusRef.current !== "succeeded";
     setStatus("syncing");
-    setInitialSyncStatus("syncing");
+    if (isInitialSync) {
+      updateInitialSyncStatus("syncing");
+    }
     setError(null);
     setLastResultMessage("Sync started.");
     const result = await runCloudSync();
@@ -105,11 +119,19 @@ export const useCloudSync = ({
     setLastSyncedAt(result.syncedAt);
     setError(result.status === "error" ? result.message ?? null : null);
     setLastResultMessage(result.message ?? result.status);
-    setInitialSyncStatus(
-      result.initialSyncCompleted ? "succeeded" : "failed",
-    );
+    if (isInitialSync) {
+      updateInitialSyncStatus(
+        result.initialSyncCompleted ? "succeeded" : "failed",
+      );
+    }
     return result;
-  }, [clearAutoSyncTimer, enabled, entitled, restoreSession]);
+  }, [
+    clearAutoSyncTimer,
+    enabled,
+    entitled,
+    restoreSession,
+    updateInitialSyncStatus,
+  ]);
 
   const scheduleAutoSync = useCallback(() => {
     if (!canSync || authStatus !== "signedIn") {
@@ -161,7 +183,8 @@ export const useCloudSync = ({
       setUser(null);
       setAuthStatus("signedOut");
       setStatus("idle");
-      setInitialSyncStatus("idle");
+      initialSyncUserIdRef.current = null;
+      updateInitialSyncStatus("idle");
       setError(null);
       setLastResultMessage("Signed out.");
     } catch (signOutError) {
@@ -170,7 +193,7 @@ export const useCloudSync = ({
       setError(message);
       setLastResultMessage(message);
     }
-  }, []);
+  }, [updateInitialSyncStatus]);
 
   useEffect(() => {
     const unsubscribe = subscribeSyncQueueChanges(() => {
@@ -208,10 +231,7 @@ export const useCloudSync = ({
     signOut,
     capabilities: SYNC_CAPABILITIES,
     initialSyncStatus,
-    isInitialSyncBlocking:
-      canSync &&
-      (authStatus === "restoring" ||
-        authStatus === "signingIn" ||
-        (authStatus === "signedIn" && initialSyncStatus !== "succeeded")),
+    // Local data remains usable while both the first and later syncs run.
+    isInitialSyncBlocking: false,
   };
 };

@@ -118,12 +118,12 @@ export const useTaskCrudActions = ({
   );
 
   const deleteTask = useCallback(
-    (taskId: string) => {
+    (taskId: string, includeCompleted = false) => {
       if (!todayState) {
         return;
       }
       const taskInfo = taskRepository.findTaskById(todayState, taskId);
-      if (taskInfo?.task.status === "DONE") {
+      if (taskInfo?.task.status === "DONE" && !includeCompleted) {
         return;
       }
       const beforeFlat = flatTasks;
@@ -239,6 +239,35 @@ export const useTaskCrudActions = ({
     [defaultTag, todayState, updateToday],
   );
 
+  const moveSelectedTasks = useCallback(
+    async (targetDate: string, targetSlotKey: SlotKey) => {
+      if (!todayState || selectedTaskIds.length === 0) {
+        return;
+      }
+      const moved = await taskRepository.moveTasks({
+        currentState: todayState,
+        taskIds: selectedTaskIds,
+        targetDate,
+        targetSlotKey,
+        defaultTag,
+      });
+      updateToday(moved.sourceState);
+      if (moved.targetState) {
+        await taskRepository.saveTasks(moved.targetState);
+      }
+      setSelectionMode(false);
+      setSelectedTaskIds([]);
+    },
+    [
+      defaultTag,
+      selectedTaskIds,
+      setSelectedTaskIds,
+      setSelectionMode,
+      todayState,
+      updateToday,
+    ],
+  );
+
   return {
     toggleTaskTag,
     addTask,
@@ -249,5 +278,6 @@ export const useTaskCrudActions = ({
     archiveTask,
     restoreTask,
     moveTask,
+    moveSelectedTasks,
   };
 };

@@ -12,7 +12,12 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "BUNDLE_LOCAL_LLM": "false",
+        "EXPO_PUBLIC_LLM_PROVIDER": "disabled",
+        "IOS_NEW_ARCH_ENABLED": "false"
+      }
     }
   },
   "submit": {

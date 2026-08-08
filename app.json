@@ -3,7 +3,7 @@
     "name": "Temis",
     "slug": "temis",
     "scheme": "exp+temis",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.WeMemo",
-      "googleServicesFile": "./ios/Temis/GoogleService-Info.plist",
+      "googleServicesFile": "./config/GoogleService-Info.plist",
       "icon": "./assets/icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false

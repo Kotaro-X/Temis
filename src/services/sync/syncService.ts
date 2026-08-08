@@ -2,7 +2,10 @@ import { maybeRefreshWeeklyPrompts } from "../weeklyPromptsSync";
 import type { SyncResult } from "../../types";
 import { mapSyncError, mapSyncSuccess } from "./syncMapper";
 import { isFirebaseConfigured } from "./firebaseApp";
-import { createFirebaseConfigErrorMessage } from "./firebaseConfig";
+import {
+  createFirebaseConfigErrorMessage,
+  getFirebaseRuntimeEnv,
+} from "./firebaseConfig";
 import { getSyncIdentity } from "./syncIdentity";
 import { syncMemoRecords } from "./memoSync";
 import { syncTagRecords } from "./tagSync";
@@ -24,7 +27,9 @@ export const runCloudSync = async (): Promise<SyncResult> => {
         identity.userId,
       );
       if (!isFirebaseConfigured()) {
-        throw new Error(createFirebaseConfigErrorMessage(process.env));
+        throw new Error(
+          createFirebaseConfigErrorMessage(getFirebaseRuntimeEnv()),
+        );
       }
       const syncJobs = [
         ["tag", syncTagRecords],

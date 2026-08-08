@@ -9,8 +9,13 @@ type Props = {
   onSelectLanguage: (language: AppLanguage) => void;
 };
 
-const AppLanguageBridge = ({ visible, onSelectLanguage }: Props) => (
-  <Modal transparent visible={visible} animationType="fade">
+const AppLanguageBridge = ({ visible, onSelectLanguage }: Props) => {
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <Modal transparent visible animationType="fade">
     <View style={appChromeStyles.downloadNoticeOverlay}>
       <View style={appChromeStyles.downloadNoticePanel}>
         <Text style={appChromeStyles.downloadNoticeTitle}>Language / 言語</Text>
@@ -41,7 +46,8 @@ const AppLanguageBridge = ({ visible, onSelectLanguage }: Props) => (
         </View>
       </View>
     </View>
-  </Modal>
-);
+    </Modal>
+  );
+};
 
 export default AppLanguageBridge;

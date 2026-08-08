@@ -45,8 +45,13 @@ const AppPickerBridge = ({
   onNextMonth,
   onSelectDate,
   onConfirm,
-}: Props) => (
-  <Modal
+}: Props) => {
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <Modal
     transparent
     visible={visible}
     animationType="fade"
@@ -148,7 +153,8 @@ const AppPickerBridge = ({
         </View>
       </View>
     </View>
-  </Modal>
-);
+    </Modal>
+  );
+};
 
 export default AppPickerBridge;

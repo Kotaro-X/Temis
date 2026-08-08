@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 
-import type { SlotKey, Tag, TaskState, TaskStatus } from "../../types";
+import type { SlotKey, TaskState, TaskStatus } from "../../types";
 
 type Props = {
   styles: Record<string, any>;
@@ -11,13 +11,9 @@ type Props = {
   untitledLabel: string;
   statusLabel: Record<TaskStatus, string>;
   statusPalette: Record<TaskStatus, { bar: string; badgeBg: string; badgeText: string }>;
-  tagOptions: Tag[];
-  tagDropdownOpen: boolean;
-  onToggleTagDropdown: () => void;
-  onCloseTagDropdown: () => void;
+  onOpenTagPicker: () => void;
   onUpdateTaskName: (text: string) => void;
   onUpdateTaskEstimate: (text: string) => void;
-  onToggleTaskTag: (tag: Tag) => void;
   onStart: () => void;
   onPause: () => void;
   onDone: () => void;
@@ -31,13 +27,9 @@ const TaskDetailView = ({
   untitledLabel,
   statusLabel,
   statusPalette,
-  tagOptions,
-  tagDropdownOpen,
-  onToggleTagDropdown,
-  onCloseTagDropdown,
+  onOpenTagPicker,
   onUpdateTaskName,
   onUpdateTaskEstimate,
-  onToggleTaskTag,
   onStart,
   onPause,
   onDone,
@@ -110,37 +102,11 @@ const TaskDetailView = ({
       <View style={styles.row}>
         <Text style={styles.label}>{tr("task.tags")}</Text>
         <View style={styles.tagDropdown}>
-          <Pressable style={styles.tagDropdownButton} onPress={onToggleTagDropdown}>
+          <Pressable style={styles.tagDropdownButton} onPress={onOpenTagPicker}>
             <Text style={styles.tagDropdownText}>
               {task.tags.length > 0 ? task.tags.join(", ") : tr("task.selectTags")}
             </Text>
           </Pressable>
-          {tagDropdownOpen ? (
-            <View style={styles.tagDropdownList}>
-              {tagOptions.map((tag) => {
-                const selected = task.tags.includes(tag);
-                return (
-                  <Pressable
-                    key={tag}
-                    style={styles.tagDropdownItem}
-                    onPress={() => {
-                      onToggleTaskTag(tag);
-                      onCloseTagDropdown();
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.tagDropdownItemText,
-                        selected && styles.tagDropdownItemTextSelected,
-                      ]}
-                    >
-                      {tag}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
         </View>
       </View>
       <View style={styles.row}>

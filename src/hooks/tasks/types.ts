@@ -80,7 +80,7 @@ export type UseTasksResult = {
   addTask: (slotKey: SlotKey) => TaskState | null;
   addSuggestion: (suggestion: Suggestion) => void;
   dismissSuggestion: (suggestion: Suggestion) => Promise<void>;
-  deleteTask: (taskId: string) => void;
+  deleteTask: (taskId: string, includeCompleted?: boolean) => void;
   deleteSelectedTasks: () => void;
   archiveTask: (slotKey: SlotKey, taskId: string) => void;
   restoreTask: (
@@ -91,6 +91,10 @@ export type UseTasksResult = {
   moveTask: (
     taskId: string,
     fromSlotKey: SlotKey,
+    targetDate: string,
+    targetSlotKey: SlotKey,
+  ) => Promise<void>;
+  moveSelectedTasks: (
     targetDate: string,
     targetSlotKey: SlotKey,
   ) => Promise<void>;
@@ -114,6 +118,7 @@ export type UseTasksResult = {
   setMoveDateDraft: (value: string) => void;
   setMoveTargetSlotKey: Dispatch<SetStateAction<SlotKey>>;
   openMoveModal: (slotKey: SlotKey, taskId: string) => void;
+  openMoveSelectedModal: (taskIds: string[]) => void;
   closeMoveModal: () => void;
   shiftMoveDateDraft: (delta: number) => void;
   applyMoveTask: () => Promise<"idle" | "invalid_date" | "closed" | "moved">;

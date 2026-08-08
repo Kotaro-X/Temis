@@ -16,10 +16,17 @@ if [[ -z "${DEVICE_ID:-}" ]]; then
   exit 1
 fi
 
+BUNDLE_ID="${BUNDLE_ID:-com.anonymous.WeMemo}"
+
 if [[ "${1:-}" == "--detect-device" ]]; then
   echo "$DEVICE_ID"
   exit 0
 fi
 
-echo "Streaming logs from device: $DEVICE_ID"
-xcrun devicectl device log stream --device "$DEVICE_ID"
+echo "Launching $BUNDLE_ID on device: $DEVICE_ID"
+echo "The current app instance will be restarted and its console will stream below."
+xcrun devicectl device process launch \
+  --device "$DEVICE_ID" \
+  --terminate-existing \
+  --console \
+  "$BUNDLE_ID"

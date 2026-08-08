@@ -10,8 +10,13 @@ type Props = {
   helpUrl: string;
 };
 
-const AppNoticeBridge = ({ visible, onDismiss, tr, helpUrl }: Props) => (
-  <Modal
+const AppNoticeBridge = ({ visible, onDismiss, tr, helpUrl }: Props) => {
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <Modal
     transparent
     visible={visible}
     animationType="fade"
@@ -48,7 +53,8 @@ const AppNoticeBridge = ({ visible, onDismiss, tr, helpUrl }: Props) => (
         </Pressable>
       </View>
     </View>
-  </Modal>
-);
+    </Modal>
+  );
+};
 
 export default AppNoticeBridge;

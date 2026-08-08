@@ -74,26 +74,28 @@ const MemoWorkspaceShell = ({
   return (
     <>
       {children(memoWorkspace)}
-      <MemoSearchModal
-        visible={memoSearchOpen}
-        onClose={closeMemoSearch}
-        navigation={memoNavigation}
-        initialQuery={memoSearchQuery}
-        language={appLanguage}
-      />
-      <Modal
-        visible={!!memoDetailId}
-        animationType="slide"
-        onRequestClose={handleCloseMemoDetail}
-      >
-        {memoDetailId ? (
+      {memoSearchOpen ? (
+        <MemoSearchModal
+          visible
+          onClose={closeMemoSearch}
+          navigation={memoNavigation}
+          initialQuery={memoSearchQuery}
+          language={appLanguage}
+        />
+      ) : null}
+      {memoDetailId ? (
+        <Modal
+          visible
+          animationType="slide"
+          onRequestClose={handleCloseMemoDetail}
+        >
           <MemoDetailScreen
             memoId={memoDetailId}
             onBack={handleCloseMemoDetail}
             language={appLanguage}
           />
-        ) : null}
-      </Modal>
+        </Modal>
+      ) : null}
     </>
   );
 };

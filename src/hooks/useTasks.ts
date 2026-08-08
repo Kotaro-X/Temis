@@ -122,6 +122,7 @@ export const useTasks = (args: UseTasksArgs = {}): UseTasksResult => {
   const modalState = useTaskModalState({
     selectedDate,
     moveTask: actions.moveTask,
+    moveSelectedTasks: actions.moveSelectedTasks,
     restoreTask: actions.restoreTask,
   });
 

@@ -2,7 +2,6 @@ import React, {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -135,18 +134,12 @@ export const AppSettingsProvider = ({
   }, [applyLanguage]);
 
   const setCloudSyncEnabled = useCallback(async (value: boolean) => {
-    const nextValue = isCloudSyncEntitled ? value : false;
-    setCloudSyncEnabledState(nextValue);
-    await saveCloudSyncEnabled(nextValue);
-  }, [isCloudSyncEntitled]);
-
-  useEffect(() => {
-    if (isCloudSyncEntitled || !cloudSyncEnabled) {
-      return;
-    }
-    setCloudSyncEnabledState(false);
-    void saveCloudSyncEnabled(false);
-  }, [cloudSyncEnabled, isCloudSyncEntitled]);
+    // Keep the user's preference independent from the asynchronously restored
+    // subscription state. Otherwise an app restart can overwrite an enabled
+    // preference before RevenueCat has finished resolving the entitlement.
+    setCloudSyncEnabledState(value);
+    await saveCloudSyncEnabled(value);
+  }, []);
 
   const refreshSettings = useCallback(async () => {
     const [loadedTagState, loadedSchedule, loadedCloudSyncEnabled] = await Promise.all([

@@ -283,6 +283,69 @@ export const moveTask = async (params: {
   };
 };
 
+export const moveTasks = async (params: {
+  currentState: TodayState;
+  taskIds: string[];
+  targetDate: string;
+  targetSlotKey: SlotKey;
+  defaultTag?: Tag;
+}): Promise<{
+  sourceState: TodayState;
+  targetState?: TodayState;
+}> => {
+  const { currentState, taskIds, targetDate, targetSlotKey, defaultTag } = params;
+  const taskIdSet = new Set(taskIds);
+  const movingTasks = flattenStateTasks(currentState)
+    .filter(({ task }) => taskIdSet.has(task.id))
+    .map(({ task }) => task);
+
+  if (movingTasks.length === 0) {
+    return { sourceState: currentState };
+  }
+
+  const sourceSlots = SLOT_KEYS.reduce(
+    (acc, slotKey) => {
+      const slot = currentState.slots[slotKey];
+      acc[slotKey] = {
+        ...slot,
+        tasks: slot.tasks.filter((task) => !taskIdSet.has(task.id)),
+      };
+      return acc;
+    },
+    {} as Record<SlotKey, SlotState>,
+  );
+
+  if (targetDate === currentState.date) {
+    return {
+      sourceState: {
+        ...currentState,
+        slots: {
+          ...sourceSlots,
+          [targetSlotKey]: {
+            ...sourceSlots[targetSlotKey],
+            tasks: [...sourceSlots[targetSlotKey].tasks, ...movingTasks],
+          },
+        },
+      },
+    };
+  }
+
+  const targetState = await loadTodayState(targetDate, defaultTag);
+  return {
+    sourceState: { ...currentState, slots: sourceSlots },
+    targetState: {
+      ...targetState,
+      slots: {
+        ...targetState.slots,
+        [targetSlotKey]: {
+          ...targetState.slots[targetSlotKey],
+          tasks: [...targetState.slots[targetSlotKey].tasks, ...movingTasks],
+        },
+      },
+    },
+  };
+};
+
 export const restoreTask = async (
   taskId: string,
   targetDate: string,

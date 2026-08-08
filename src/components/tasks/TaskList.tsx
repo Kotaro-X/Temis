@@ -1,7 +1,9 @@
 import React from "react";
+import type { View } from "react-native";
 
 import type { SlotKey, TaskState, TaskStatus } from "../../types";
 import type { TaskSectionItem } from "../../hooks/useTasks";
+import type { TaskDragPreview } from "./TaskItem";
 import TaskSection from "./TaskSection";
 
 type Props = {
@@ -33,6 +35,12 @@ type Props = {
   onStart: (slotKey: SlotKey, taskId: string) => void;
   onPause: (slotKey: SlotKey, taskId: string) => void;
   onDone: (slotKey: SlotKey, taskId: string) => void;
+  onRegisterDropZone: (slotKey: SlotKey, node: View | null) => void;
+  onDropTask: (fromSlotKey: SlotKey, taskId: string, pageY: number) => void;
+  onTaskDragStart: (preview: TaskDragPreview) => void;
+  onTaskDragMove: (pageX: number, pageY: number) => void;
+  onTaskDragEnd: () => void;
+  onTaskDragStateChange: (isDragging: boolean) => void;
 };
 
 export type TaskListProps = Props;

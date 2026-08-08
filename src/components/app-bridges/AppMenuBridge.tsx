@@ -19,6 +19,8 @@ type Props = {
   onCloseMenu: () => void;
   onOpenTodo: () => void;
   onOpenSettings: () => void;
+  onOpenAccountSettings: () => void;
+  showSyncUpgradePrompt: boolean;
   tr: (key: string) => string;
   helpUrl: string;
 };
@@ -28,6 +30,8 @@ const AppMenuBridge = ({
   onCloseMenu,
   onOpenTodo,
   onOpenSettings,
+  onOpenAccountSettings,
+  showSyncUpgradePrompt,
   tr,
   helpUrl,
 }: Props) => {
@@ -45,10 +49,14 @@ const AppMenuBridge = ({
     [onCloseMenu],
   );
 
+  if (!visible) {
+    return null;
+  }
+
   return (
     <Modal
       transparent
-      visible={visible}
+      visible
       animationType="slide"
       onRequestClose={onCloseMenu}
     >
@@ -60,6 +68,33 @@ const AppMenuBridge = ({
         >
           <View style={appChromeStyles.sheetHandle} />
           <Text style={appChromeStyles.sheetTitle}>{tr("menu.title")}</Text>
+          {showSyncUpgradePrompt ? (
+            <View style={appChromeStyles.sheetSyncPromotion}>
+              <Text style={appChromeStyles.sheetSyncPromotionTitle}>
+                {tr("menu.syncPromotion.title")}
+              </Text>
+              <Text style={appChromeStyles.sheetSyncPromotionBody}>
+                {tr("menu.syncPromotion.google")}
+              </Text>
+              <Text style={appChromeStyles.sheetSyncPromotionBody}>
+                {tr("menu.syncPromotion.subscription")}
+              </Text>
+              <Text style={appChromeStyles.sheetSyncPromotionBody}>
+                {tr("menu.syncPromotion.reassurance")}
+              </Text>
+              <Pressable
+                style={appChromeStyles.sheetSyncPromotionButton}
+                onPress={() => {
+                  onOpenAccountSettings();
+                  onCloseMenu();
+                }}
+              >
+                <Text style={appChromeStyles.sheetSyncPromotionButtonText}>
+                  {tr("menu.syncPromotion.action")}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
           <MemoWorkspaceMenuBridge
             styles={appChromeStyles}
             tr={tr}

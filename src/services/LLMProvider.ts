@@ -8,12 +8,18 @@ export interface LLMProvider {
   generate: (prompt: string, options?: LLMGenerateOptions) => Promise<string>;
 }
 
-class DummyLLMProvider implements LLMProvider {
-  generate = async (): Promise<string> =>
-    "ローカルLLMに接続できません。Ollamaの起動状態を確認してください。";
+export class UnavailableLLMProvider implements LLMProvider {
+  constructor(
+    private readonly message =
+      "このビルドではローカルLLMを利用できません。",
+  ) {}
+
+  generate = async (): Promise<string> => {
+    throw new Error(this.message);
+  };
 }
 
-let provider: LLMProvider = new DummyLLMProvider();
+let provider: LLMProvider = new UnavailableLLMProvider();
 
 export const getLLMProvider = (): LLMProvider => provider;
 

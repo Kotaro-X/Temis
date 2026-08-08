@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Pressable, Text } from "react-native";
+import { Alert, Pressable, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import TaskArchiveScreen from "./TaskArchiveScreen";
@@ -117,6 +117,8 @@ const TaskWorkspaceScreen = ({
     setMoveDateDraft,
     setMoveTargetSlotKey,
     openMoveModal,
+    openMoveSelectedModal,
+    moveTask,
     closeMoveModal,
     shiftMoveDateDraft,
     applyMoveTask,
@@ -135,6 +137,7 @@ const TaskWorkspaceScreen = ({
     closeTaskDetail,
     logState,
   } = useTaskWorkspace();
+  const [newTaskId, setNewTaskId] = useState<string | null>(null);
   const [activeExpandedBySlot, setActiveExpandedBySlot] = useState<
     Record<SlotKey, boolean>
   >(buildExpandedState);
@@ -171,6 +174,7 @@ const TaskWorkspaceScreen = ({
       onAddTask: (slotKey: SlotKey) => {
         const created = addTask(slotKey);
         if (created) {
+          setNewTaskId(created.id);
           focusTask(created.id);
           openTaskDetail(slotKey, created.id);
           onChangeScreen("taskDetail");
@@ -305,14 +309,43 @@ const TaskWorkspaceScreen = ({
   );
 
   const handleOpenTaskDetail = (slotKey: SlotKey, task: TaskState) => {
+    setNewTaskId(null);
     focusTask(task.id);
     openTaskDetail(slotKey, task.id);
     onChangeScreen("taskDetail");
   };
 
-  const handleCloseTaskDetail = () => {
+  const handleCloseTaskDetail = (discardNewTask = false) => {
+    if (discardNewTask && newTaskId) {
+      deleteTask(newTaskId);
+    }
+    setNewTaskId(null);
     closeTaskDetail();
     onChangeScreen("today");
+  };
+
+  const handleDeleteTaskDetail = () => {
+    if (!detailTaskInfo) {
+      return;
+    }
+    const { task } = detailTaskInfo;
+    Alert.alert(
+      tr("task.deleteConfirmTitle"),
+      tr("task.deleteConfirmBody"),
+      [
+        { text: tr("common.cancel"), style: "cancel" },
+        {
+          text: tr("task.deletePermanently"),
+          style: "destructive",
+          onPress: () => {
+            deleteTask(task.id, true);
+            setNewTaskId(null);
+            closeTaskDetail();
+            onChangeScreen("today");
+          },
+        },
+      ],
+    );
   };
 
   const menuButton = (
@@ -386,9 +419,32 @@ const TaskWorkspaceScreen = ({
         contentPaddingTop={defaultContentPaddingTop}
         title={tr("task.editTitle")}
         headerLeft={
-          <Pressable style={styles.backButton} onPress={handleCloseTaskDetail}>
-            <Text style={styles.linkText}>{tr("common.back")}</Text>
-          </Pressable>
+          detailTaskInfo ? (
+            <Pressable
+              style={styles.detailDeleteButton}
+              onPress={handleDeleteTaskDetail}
+            >
+              <Text style={styles.detailDeleteButtonText}>
+                {tr("task.deletePermanently")}
+              </Text>
+            </Pressable>
+          ) : null
+        }
+        headerRight={
+          <>
+            <Pressable
+              style={styles.detailCancelButton}
+              onPress={() => handleCloseTaskDetail(true)}
+            >
+              <Text style={styles.detailCancelButtonText}>{tr("common.cancel")}</Text>
+            </Pressable>
+            <Pressable
+              style={styles.detailCompleteButton}
+              onPress={() => handleCloseTaskDetail()}
+            >
+              <Text style={styles.detailCompleteButtonText}>{tr("task.done")}</Text>
+            </Pressable>
+          </>
         }
         detailTaskInfo={detailTaskInfo}
         tr={tr}
@@ -484,6 +540,14 @@ const TaskWorkspaceScreen = ({
         onDeleteSelectedTasks={deleteSelectedTasks}
         onArchiveTask={archiveTask}
         onOpenMoveModal={openMoveModal}
+        onOpenMoveSelectedModal={openMoveSelectedModal}
+        onMoveTaskToSlot={(
+          fromSlotKey: SlotKey,
+          taskId: string,
+          targetSlotKey: SlotKey,
+        ) => {
+          void moveTask(taskId, fromSlotKey, selectedDate, targetSlotKey);
+        }}
         taskListBaseProps={taskListBaseProps}
         moveModalProps={moveModalProps}
       />

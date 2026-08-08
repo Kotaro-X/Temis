@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Animated,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,10 +11,16 @@ import {
 
 import type { Suggestion } from "../features/routineSuggestions";
 import TaskList, { type TaskListProps } from "../components/tasks/TaskList";
+import type { TaskDragPreview } from "../components/tasks/TaskItem";
 import TaskMoveModal, {
   type TaskMoveModalProps,
 } from "../components/tasks/TaskMoveModal";
 import type { SlotKey, TaskState } from "../types";
+
+const AUTO_SCROLL_INTERVAL_MS = 16;
+const AUTO_SCROLL_STEP = 6;
+const TOP_AUTO_SCROLL_RATIO = 0.2;
+const BOTTOM_AUTO_SCROLL_RATIO = 0.1;
 
 type TaskListBaseProps = Omit<
   TaskListProps,
@@ -24,6 +31,12 @@ type TaskListBaseProps = Omit<
   | "onMove"
   | "onArchive"
   | "onDelete"
+  | "onRegisterDropZone"
+  | "onDropTask"
+  | "onTaskDragStart"
+  | "onTaskDragMove"
+  | "onTaskDragEnd"
+  | "onTaskDragStateChange"
 >;
 
 type Props = {
@@ -46,6 +59,12 @@ type Props = {
   onDeleteSelectedTasks: () => void;
   onArchiveTask: (slotKey: SlotKey, taskId: string) => void;
   onOpenMoveModal: (slotKey: SlotKey, taskId: string) => void;
+  onOpenMoveSelectedModal: (taskIds: string[]) => void;
+  onMoveTaskToSlot: (
+    fromSlotKey: SlotKey,
+    taskId: string,
+    targetSlotKey: SlotKey,
+  ) => void;
   taskListBaseProps: TaskListBaseProps;
   moveModalProps: TaskMoveModalProps;
 };
@@ -70,10 +89,29 @@ const TaskScreen = ({
   onDeleteSelectedTasks,
   onArchiveTask,
   onOpenMoveModal,
+  onOpenMoveSelectedModal,
+  onMoveTaskToSlot,
   taskListBaseProps,
   moveModalProps,
 }: Props) => {
   const [openSwipeTaskId, setOpenSwipeTaskId] = useState<string | null>(null);
+  const [dragPreview, setDragPreview] = useState<TaskDragPreview | null>(null);
+  const [isTaskDragging, setIsTaskDragging] = useState(false);
+  const dragSurfaceRef = React.useRef<View>(null);
+  const dragSurfaceOriginRef = React.useRef({ x: 0, y: 0 });
+  const dragTouchOffsetRef = React.useRef({ x: 0, y: 0 });
+  const dragPointerRef = React.useRef({ x: 0, y: 0 });
+  const dragPosition = React.useRef(new Animated.ValueXY()).current;
+  const scrollViewRef = React.useRef<ScrollView>(null);
+  const scrollViewportMeasureRef = React.useRef<View>(null);
+  const scrollViewportRef = React.useRef({ top: 0, height: 0 });
+  const scrollOffsetRef = React.useRef(0);
+  const scrollContentHeightRef = React.useRef(0);
+  const autoScrollDirectionRef = React.useRef<-1 | 0 | 1>(0);
+  const autoScrollTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const dropZoneRefs = React.useRef<Partial<Record<SlotKey, View | null>>>({});
   const selectionMode = taskListBaseProps.selectionMode;
   const selectedCount = taskListBaseProps.selectedSet.size;
   const canDeleteSelected = selectedCount > 0;
@@ -83,6 +121,15 @@ const TaskScreen = ({
       setOpenSwipeTaskId(null);
     }
   }, [moveModalProps.visible, selectionMode]);
+
+  useEffect(
+    () => () => {
+      if (autoScrollTimerRef.current) {
+        clearInterval(autoScrollTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const confirmDeleteTask = (taskId: string) => {
     Alert.alert(
@@ -132,6 +179,129 @@ const TaskScreen = ({
     );
   };
 
+  const registerDropZone = (slotKey: SlotKey, node: View | null) => {
+    dropZoneRefs.current[slotKey] = node;
+  };
+
+  const updateDragPosition = (pageX: number, pageY: number) => {
+    const origin = dragSurfaceOriginRef.current;
+    const offset = dragTouchOffsetRef.current;
+    dragPosition.setValue({
+      x: pageX - origin.x - offset.x,
+      y: pageY - origin.y - offset.y,
+    });
+  };
+
+  const measureScrollViewport = () => {
+    scrollViewportMeasureRef.current?.measureInWindow((_x, top, _width, height) => {
+      scrollViewportRef.current = { top, height };
+    });
+  };
+
+  const stopAutoScroll = () => {
+    autoScrollDirectionRef.current = 0;
+    if (autoScrollTimerRef.current) {
+      clearInterval(autoScrollTimerRef.current);
+      autoScrollTimerRef.current = null;
+    }
+  };
+
+  const startAutoScroll = (direction: -1 | 1) => {
+    if (autoScrollDirectionRef.current === direction) {
+      return;
+    }
+    stopAutoScroll();
+    autoScrollDirectionRef.current = direction;
+    autoScrollTimerRef.current = setInterval(() => {
+      const viewportHeight = scrollViewportRef.current.height;
+      const maxOffset = Math.max(0, scrollContentHeightRef.current - viewportHeight);
+      const nextOffset = Math.max(
+        0,
+        Math.min(maxOffset, scrollOffsetRef.current + direction * AUTO_SCROLL_STEP),
+      );
+      if (nextOffset === scrollOffsetRef.current) {
+        stopAutoScroll();
+        return;
+      }
+      scrollOffsetRef.current = nextOffset;
+      scrollViewRef.current?.scrollTo({ y: nextOffset, animated: false });
+    }, AUTO_SCROLL_INTERVAL_MS);
+  };
+
+  const updateAutoScroll = (pageY: number) => {
+    const { top, height } = scrollViewportRef.current;
+    if (!height) {
+      return;
+    }
+    if (pageY <= top + height * TOP_AUTO_SCROLL_RATIO) {
+      startAutoScroll(-1);
+      return;
+    }
+    if (pageY >= top + height * (1 - BOTTOM_AUTO_SCROLL_RATIO)) {
+      startAutoScroll(1);
+      return;
+    }
+    stopAutoScroll();
+  };
+
+  const handleTaskDragStart = (preview: TaskDragPreview) => {
+    dragTouchOffsetRef.current = {
+      x: preview.touchOffsetX,
+      y: preview.touchOffsetY,
+    };
+    dragPointerRef.current = { x: preview.pageX, y: preview.pageY };
+    measureScrollViewport();
+    dragSurfaceRef.current?.measureInWindow((x, y) => {
+      dragSurfaceOriginRef.current = { x, y };
+      updateDragPosition(dragPointerRef.current.x, dragPointerRef.current.y);
+      setDragPreview(preview);
+    });
+    updateAutoScroll(preview.pageY);
+  };
+
+  const handleTaskDragMove = (pageX: number, pageY: number) => {
+    dragPointerRef.current = { x: pageX, y: pageY };
+    updateDragPosition(pageX, pageY);
+    updateAutoScroll(pageY);
+  };
+
+  const handleTaskDragEnd = () => {
+    stopAutoScroll();
+    dragPosition.stopAnimation();
+    setDragPreview(null);
+    setIsTaskDragging(false);
+  };
+
+  const handleDropTask = (
+    fromSlotKey: SlotKey,
+    taskId: string,
+    pageY: number,
+  ) => {
+    const measurements = Object.entries(dropZoneRefs.current).flatMap(
+      ([slotKey, node]) => {
+        if (!node) {
+          return [];
+        }
+        return [
+          new Promise<{ slotKey: SlotKey; top: number; bottom: number }>((resolve) => {
+            node.measureInWindow((_x, top, _width, height) =>
+              resolve({ slotKey: slotKey as SlotKey, top, bottom: top + height }),
+            );
+          }),
+        ];
+      },
+    );
+
+    void Promise.all(measurements).then((zones) => {
+      const targetSlotKey = zones.find(
+        (zone) => pageY >= zone.top && pageY <= zone.bottom,
+      )?.slotKey;
+      if (targetSlotKey && targetSlotKey !== fromSlotKey) {
+        onMoveTaskToSlot(fromSlotKey, taskId, targetSlotKey);
+      }
+    });
+  };
+
   const taskListProps = useMemo<TaskListProps>(
     () => ({
       ...taskListBaseProps,
@@ -162,6 +332,12 @@ const TaskScreen = ({
         setOpenSwipeTaskId(null);
         confirmDeleteTask(taskId);
       },
+      onRegisterDropZone: registerDropZone,
+      onDropTask: handleDropTask,
+      onTaskDragStart: handleTaskDragStart,
+      onTaskDragMove: handleTaskDragMove,
+      onTaskDragEnd: handleTaskDragEnd,
+      onTaskDragStateChange: setIsTaskDragging,
     }),
     [
       onArchiveTask,
@@ -171,11 +347,16 @@ const TaskScreen = ({
       openSwipeTaskId,
       selectionMode,
       taskListBaseProps,
+      handleDropTask,
+      handleTaskDragEnd,
+      handleTaskDragMove,
+      handleTaskDragStart,
+      registerDropZone,
     ],
   );
 
   return (
-    <>
+    <View ref={dragSurfaceRef} style={styles.taskScreenRoot}>
       <View style={[styles.todayStickyHeader, { top: insetsTop }]}>
         <View style={[styles.header, styles.todayStickyHeaderRow]}>
           <View style={styles.headerLeft}>{headerLeft ?? null}</View>
@@ -183,7 +364,9 @@ const TaskScreen = ({
           <View style={styles.headerRight}>{headerRight ?? null}</View>
         </View>
       </View>
-      <ScrollView
+      <View ref={scrollViewportMeasureRef} style={styles.taskScrollViewport}>
+        <ScrollView
+          ref={scrollViewRef}
         contentContainerStyle={[
           styles.content,
           {
@@ -192,15 +375,38 @@ const TaskScreen = ({
           },
         ]}
         keyboardShouldPersistTaps="handled"
+        scrollEnabled={!isTaskDragging}
+        scrollEventThrottle={16}
+        onLayout={measureScrollViewport}
+        onContentSizeChange={(_width, height) => {
+          scrollContentHeightRef.current = height;
+        }}
+        onScroll={(event) => {
+          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+        }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-      >
+        >
         {selectionMode ? (
           <View style={styles.selectionBar}>
             <Text style={styles.selectionText}>
               {`${taskListProps.tr("task.selectedCount")}: ${selectedCount}`}
             </Text>
+            <Pressable
+              style={[
+                styles.bulkMoveButton,
+                !canDeleteSelected && styles.bulkDeleteButtonDisabled,
+              ]}
+              onPress={() =>
+                onOpenMoveSelectedModal(Array.from(taskListBaseProps.selectedSet))
+              }
+              disabled={!canDeleteSelected}
+            >
+              <Text style={styles.bulkMoveButtonText}>
+                {taskListBaseProps.tr("task.bulkMove")}
+              </Text>
+            </Pressable>
             <Pressable
               style={[
                 styles.bulkDeleteButton,
@@ -260,10 +466,65 @@ const TaskScreen = ({
             ))}
           </View>
         ) : null}
-        <TaskList {...taskListProps} />
-      </ScrollView>
+          <TaskList {...taskListProps} />
+        </ScrollView>
+      </View>
       <TaskMoveModal {...moveModalProps} />
-    </>
+      {dragPreview ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.taskDragPreview,
+            {
+              width: dragPreview.width,
+              transform: [...dragPosition.getTranslateTransform(), { scale: 1.03 }],
+            },
+          ]}
+        >
+          <View style={styles.taskDragPreviewCard}>
+            <View
+              style={[
+                styles.taskDragPreviewStatusBar,
+                { backgroundColor: dragPreview.palette.bar },
+              ]}
+            />
+            <View style={styles.taskDragPreviewContent}>
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.taskDragPreviewTitle,
+                  dragPreview.completed && styles.taskDragPreviewTitleDone,
+                ]}
+              >
+                {dragPreview.taskName}
+              </Text>
+              <Text numberOfLines={1} style={styles.taskDragPreviewMeta}>
+                {dragPreview.completed
+                  ? dragPreview.completedTime ?? ""
+                  : dragPreview.tags.length > 0
+                    ? dragPreview.tags.join(", ")
+                    : taskListBaseProps.noTagLabel}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.taskDragPreviewBadge,
+                { backgroundColor: dragPreview.palette.badgeBg },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.taskDragPreviewBadgeText,
+                  { color: dragPreview.palette.badgeText },
+                ]}
+              >
+                {dragPreview.statusLabel}
+              </Text>
+            </View>
+          </View>
+        </Animated.View>
+      ) : null}
+    </View>
   );
 };
 

@@ -22,6 +22,19 @@ type FirebaseEnvSource = Record<string, string | undefined>;
 
 const normalizeValue = (value: string | undefined) => value?.trim() ?? "";
 
+// Expo only replaces EXPO_PUBLIC_* values when accessed with dot notation.
+// Do not pass process.env itself to the runtime config readers in native builds.
+export const getFirebaseRuntimeEnv = (): FirebaseEnvSource => ({
+  EXPO_PUBLIC_FIREBASE_API_KEY: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  EXPO_PUBLIC_FIREBASE_PROJECT_ID: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET:
+    process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:
+    process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  EXPO_PUBLIC_FIREBASE_APP_ID: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+});
+
 export const readFirebaseConfigFromEnv = (
   env: FirebaseEnvSource,
 ): FirebaseConfig => ({

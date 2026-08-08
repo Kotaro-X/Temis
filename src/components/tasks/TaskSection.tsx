@@ -1,9 +1,10 @@
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, type View as NativeView } from "react-native";
 
 import type { SlotKey, TaskState, TaskStatus } from "../../types";
 import type { TaskSectionItem } from "../../hooks/useTasks";
 import TaskItem from "./TaskItem";
+import type { TaskDragPreview } from "./TaskItem";
 
 type Props = {
   styles: Record<string, any>;
@@ -34,6 +35,12 @@ type Props = {
   onStart: (slotKey: SlotKey, taskId: string) => void;
   onPause: (slotKey: SlotKey, taskId: string) => void;
   onDone: (slotKey: SlotKey, taskId: string) => void;
+  onRegisterDropZone: (slotKey: SlotKey, node: NativeView | null) => void;
+  onDropTask: (fromSlotKey: SlotKey, taskId: string, pageY: number) => void;
+  onTaskDragStart: (preview: TaskDragPreview) => void;
+  onTaskDragMove: (pageX: number, pageY: number) => void;
+  onTaskDragEnd: () => void;
+  onTaskDragStateChange: (isDragging: boolean) => void;
 };
 
 const TaskSection = ({
@@ -65,10 +72,19 @@ const TaskSection = ({
   onStart,
   onPause,
   onDone,
+  onRegisterDropZone,
+  onDropTask,
+  onTaskDragStart,
+  onTaskDragMove,
+  onTaskDragEnd,
+  onTaskDragStateChange,
 }: Props) => {
   const taskCountLabel = `(${section.visibleTasks.length})`;
   return (
-    <View style={styles.slotBox}>
+    <View
+      ref={(node) => onRegisterDropZone(section.slotKey, node)}
+      style={styles.slotBox}
+    >
       <View style={styles.slotHeader}>
         <Pressable
           style={styles.slotHeaderLeftToggle}
@@ -122,6 +138,11 @@ const TaskSection = ({
             onOpen={() => onOpenSwipe(task.id)}
             onClose={() => onCloseSwipe(task.id)}
             onPress={() => onTaskPress(section.slotKey, task)}
+            onDragStart={onTaskDragStart}
+            onDragMove={onTaskDragMove}
+            onDragEnd={onTaskDragEnd}
+            onDragStateChange={onTaskDragStateChange}
+            onDrop={(pageY) => onDropTask(section.slotKey, task.id, pageY)}
             onToggleSelection={() => onToggleSelection(task.id)}
             onStart={() => onStart(section.slotKey, task.id)}
             onPause={() => onPause(section.slotKey, task.id)}
@@ -174,6 +195,11 @@ const TaskSection = ({
                 onOpen={() => onOpenSwipe(task.id)}
                 onClose={() => onCloseSwipe(task.id)}
                 onPress={() => onTaskPress(section.slotKey, task)}
+                onDragStart={onTaskDragStart}
+                onDragMove={onTaskDragMove}
+                onDragEnd={onTaskDragEnd}
+                onDragStateChange={onTaskDragStateChange}
+                onDrop={(pageY) => onDropTask(section.slotKey, task.id, pageY)}
                 completedTime={completedTimeByTaskId.get(task.id) ?? null}
                 completed
                 actions={[

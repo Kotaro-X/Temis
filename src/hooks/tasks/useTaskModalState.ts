@@ -35,6 +35,7 @@ type UseTaskModalStateArgs = {
     targetDate: string,
     targetSlotKey: SlotKey,
   ) => Promise<void>;
+  moveSelectedTasks: (targetDate: string, targetSlotKey: SlotKey) => Promise<void>;
   restoreTask: (
     taskId: string,
     targetDate: string,
@@ -50,10 +51,12 @@ export type TaskMoveApplyResult = "idle" | "invalid_date" | "closed" | "moved";
 export const useTaskModalState = ({
   selectedDate,
   moveTask,
+  moveSelectedTasks,
   restoreTask,
 }: UseTaskModalStateArgs) => {
   const [moveModalOpen, setMoveModalOpen] = useState(false);
   const [moveTaskId, setMoveTaskId] = useState<string | null>(null);
+  const [moveTaskIds, setMoveTaskIds] = useState<string[]>([]);
   const [moveFromSlotKey, setMoveFromSlotKey] = useState<SlotKey | null>(null);
   const [moveDateDraft, setMoveDateDraftState] = useState(selectedDate);
   const [moveDateError, setMoveDateError] =
@@ -86,6 +89,7 @@ export const useTaskModalState = ({
   const closeMoveModal = useCallback(() => {
     setMoveModalOpen(false);
     setMoveTaskId(null);
+    setMoveTaskIds([]);
     setMoveFromSlotKey(null);
     setMoveDateError(null);
   }, []);
@@ -99,9 +103,25 @@ export const useTaskModalState = ({
   const openMoveModal = useCallback(
     (slotKey: SlotKey, taskId: string) => {
       setMoveTaskId(taskId);
+      setMoveTaskIds([]);
       setMoveFromSlotKey(slotKey);
       setMoveDateDraftState(selectedDate);
       setMoveTargetSlotKey(slotKey);
+      setMoveDateError(null);
+      setMoveModalOpen(true);
+    },
+    [selectedDate],
+  );
+
+  const openMoveSelectedModal = useCallback(
+    (taskIds: string[]) => {
+      if (taskIds.length === 0) {
+        return;
+      }
+      setMoveTaskId(null);
+      setMoveTaskIds(taskIds);
+      setMoveFromSlotKey(null);
+      setMoveDateDraftState(selectedDate);
       setMoveDateError(null);
       setMoveModalOpen(true);
     },
@@ -147,7 +167,7 @@ export const useTaskModalState = ({
   );
 
   const applyMoveTask = useCallback(async (): Promise<TaskMoveApplyResult> => {
-    if (!moveTaskId || !moveFromSlotKey) {
+    if (!moveTaskId && moveTaskIds.length === 0) {
       return "idle";
     }
     const parsed = parseDateString(moveDateDraft);
@@ -157,11 +177,19 @@ export const useTaskModalState = ({
     }
     const targetDate = toDateString(parsed);
     setMoveDateError(null);
-    if (targetDate === selectedDate && moveTargetSlotKey === moveFromSlotKey) {
+    if (
+      moveTaskId &&
+      targetDate === selectedDate &&
+      moveTargetSlotKey === moveFromSlotKey
+    ) {
       closeMoveModal();
       return "closed";
     }
-    await moveTask(moveTaskId, moveFromSlotKey, targetDate, moveTargetSlotKey);
+    if (moveTaskId && moveFromSlotKey) {
+      await moveTask(moveTaskId, moveFromSlotKey, targetDate, moveTargetSlotKey);
+    } else {
+      await moveSelectedTasks(targetDate, moveTargetSlotKey);
+    }
     closeMoveModal();
     return "moved";
   }, [
@@ -171,6 +199,8 @@ export const useTaskModalState = ({
     moveTargetSlotKey,
     moveTask,
     moveTaskId,
+    moveTaskIds,
+    moveSelectedTasks,
     selectedDate,
   ]);
 
@@ -206,6 +236,7 @@ export const useTaskModalState = ({
   return {
     moveModalOpen,
     moveTaskId,
+    moveTaskIds,
     moveFromSlotKey,
     moveDateDraft,
     moveDateError,
@@ -213,6 +244,7 @@ export const useTaskModalState = ({
     setMoveDateDraft,
     setMoveTargetSlotKey,
     openMoveModal,
+    openMoveSelectedModal,
     closeMoveModal,
     shiftMoveDateDraft,
     applyMoveTask,

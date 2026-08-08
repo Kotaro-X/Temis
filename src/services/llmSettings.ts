@@ -1,9 +1,13 @@
-import { getLLMProvider, setLLMProvider } from "./LLMProvider";
+import {
+  getLLMProvider,
+  setLLMProvider,
+  UnavailableLLMProvider,
+} from "./LLMProvider";
 import { OllamaLLMProvider, OllamaLLMProviderOptions } from "./OllamaLLMProvider";
 import { resolveOllamaBaseUrl } from "./resolveOllamaBaseUrl";
 import { LlamaRnLLMProvider } from "./LlamaRnLLMProvider";
 
-export type LLMProviderKind = "local" | "ollama";
+export type LLMProviderKind = "disabled" | "local" | "ollama";
 
 export type LLMRuntimeConfig = {
   provider: LLMProviderKind;
@@ -102,6 +106,9 @@ const parseProviderKind = (
   if (normalized === "local") {
     return "local";
   }
+  if (normalized === "disabled") {
+    return "disabled";
+  }
   return fallback;
 };
 
@@ -162,8 +169,10 @@ export const configureLLMProviderFromEnv = (): LLMRuntimeConfig => {
   const config = getLLMRuntimeConfig();
   if (config.provider === "ollama") {
     setLLMProvider(new OllamaLLMProvider(createOllamaLLMOptionsFromConfig(config)));
-  } else {
+  } else if (config.provider === "local") {
     setLLMProvider(new LlamaRnLLMProvider());
+  } else {
+    setLLMProvider(new UnavailableLLMProvider());
   }
   if (typeof __DEV__ === "boolean" && __DEV__) {
     console.log(

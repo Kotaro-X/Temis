@@ -18,6 +18,7 @@ const AppContent = () => {
     openTasks,
     openTodo,
     openMemos,
+    openSettingsAccount,
     openSettingsHome,
     openMemoSearch,
   } = useAppUI();
@@ -72,6 +73,7 @@ const AppContent = () => {
                   onTabPress={handleTabPress}
                   onOpenTodo={openTodo}
                   onOpenSettings={openSettingsHome}
+                  onOpenAccountSettings={openSettingsAccount}
                 >
                   <>
                     {taskWorkspace}

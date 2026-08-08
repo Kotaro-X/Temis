@@ -104,8 +104,12 @@ const MemoSearchModal = ({
     onClose();
   };
 
+  if (!visible) {
+    return null;
+  }
+
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <Pressable style={styles.backButton} onPress={onClose}>

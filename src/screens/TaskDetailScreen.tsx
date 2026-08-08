@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
-import { ScrollView, Text } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { Keyboard, ScrollView, Text } from "react-native";
 
 import Header from "../components/common/Header";
 import TaskDetailView from "../components/tasks/TaskDetailView";
 import TaskMemoPanel from "../components/tasks/TaskMemoPanel";
+import TaskTagPickerModal from "../components/tasks/TaskTagPickerModal";
 import type { TaskDetailInfo } from "../hooks/useTasks";
 import type { AppLanguage } from "../i18n";
 import type { Tag, TaskStatus } from "../types";
@@ -60,6 +61,13 @@ const TaskDetailScreen = ({
     setTagDropdownOpen(false);
   }, [detailTaskInfo?.task.id]);
 
+  const openTagPicker = useCallback(() => {
+    // Do not expand a list in the same ScrollView while its TextInput owns the
+    // iOS keyboard. That combination can repeatedly relayout the detail view.
+    Keyboard.dismiss();
+    setTagDropdownOpen(true);
+  }, []);
+
   return (
     <ScrollView
       contentContainerStyle={[
@@ -85,13 +93,9 @@ const TaskDetailScreen = ({
           untitledLabel={untitledLabel}
           statusLabel={statusLabel}
           statusPalette={statusPalette}
-          tagOptions={tagOptions}
-          tagDropdownOpen={tagDropdownOpen}
-          onToggleTagDropdown={() => setTagDropdownOpen((prev) => !prev)}
-          onCloseTagDropdown={() => setTagDropdownOpen(false)}
+          onOpenTagPicker={openTagPicker}
           onUpdateTaskName={onUpdateTaskName}
           onUpdateTaskEstimate={onUpdateTaskEstimate}
-          onToggleTaskTag={onToggleTaskTag}
           onStart={onStart}
           onPause={onPause}
           onDone={onDone}
@@ -103,6 +107,18 @@ const TaskDetailScreen = ({
           />
         </TaskDetailView>
       )}
+      {detailTaskInfo ? (
+        <TaskTagPickerModal
+          styles={styles}
+          visible={tagDropdownOpen}
+          title={tr("task.tags")}
+          closeLabel={tr("common.cancel")}
+          tagOptions={tagOptions}
+          selectedTags={detailTaskInfo.task.tags}
+          onToggleTag={onToggleTaskTag}
+          onClose={() => setTagDropdownOpen(false)}
+        />
+      ) : null}
     </ScrollView>
   );
 };

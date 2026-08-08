@@ -5,6 +5,7 @@ import { Firestore, getFirestore } from "firebase/firestore";
 
 import {
   createFirebaseConfigErrorMessage,
+  getFirebaseRuntimeEnv,
   isFirebaseConfigComplete,
   readFirebaseConfigFromEnv,
   type FirebaseConfig,
@@ -20,16 +21,16 @@ let authInstance: Auth | null = null;
 let firestoreInstance: Firestore | null = null;
 
 const readFirebaseConfig = (): FirebaseConfig => ({
-  ...readFirebaseConfigFromEnv(process.env),
+  ...readFirebaseConfigFromEnv(getFirebaseRuntimeEnv()),
 });
 
 export const isFirebaseConfigured = (): boolean => {
-  return isFirebaseConfigComplete(process.env);
+  return isFirebaseConfigComplete(getFirebaseRuntimeEnv());
 };
 
 export const getFirebaseApp = () => {
   if (!isFirebaseConfigured()) {
-    throw new Error(createFirebaseConfigErrorMessage(process.env));
+    throw new Error(createFirebaseConfigErrorMessage(getFirebaseRuntimeEnv()));
   }
   return getApps().length > 0 ? getApp() : initializeApp(readFirebaseConfig());
 };
