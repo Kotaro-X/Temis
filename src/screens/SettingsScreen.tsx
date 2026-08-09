@@ -21,6 +21,7 @@ import TimeBoxSettingsSection, {
   TimeBoxSettingsSectionProps,
 } from "../components/settings/TimeBoxSettingsSection";
 import { AppLanguage, t } from "../i18n";
+import { normalizeUsername, validateUsername } from "../types/collaboration";
 
 type SectionKey = "Account" | "TimeBoxes" | "Tags" | "DeletedItems";
 
@@ -45,6 +46,10 @@ export type SettingsScreenProps = {
   googleAuthStatus?: "restoring" | "signedOut" | "signingIn" | "signedIn";
   googleAccountEmail?: string | null;
   googleAccountName?: string | null;
+  username?: string | null;
+  onSaveUsername?: (username: string) => Promise<void>;
+  displayName?: string | null;
+  onSaveDisplayName?: (displayName: string) => Promise<void>;
   cloudSyncEntitled?: boolean;
   cloudSyncEnabled?: boolean;
   subscriptionStatus?: "idle" | "loading" | "ready" | "purchasing" | "error";
@@ -97,6 +102,10 @@ const SettingsScreen = ({
   googleAuthStatus = "restoring",
   googleAccountEmail = null,
   googleAccountName = null,
+  username = null,
+  onSaveUsername,
+  displayName = null,
+  onSaveDisplayName,
   cloudSyncEntitled = false,
   cloudSyncEnabled = false,
   subscriptionStatus = "idle",
@@ -133,6 +142,22 @@ const SettingsScreen = ({
   });
   const [layoutReady, setLayoutReady] = useState(false);
   const didInitialScroll = useRef(false);
+  const [usernameDraft, setUsernameDraft] = useState("");
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [savingUsername, setSavingUsername] = useState(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState("");
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
+  const [savingDisplayName, setSavingDisplayName] = useState(false);
+
+  useEffect(() => {
+    setUsernameDraft(username ?? "");
+    setUsernameError(null);
+  }, [username]);
+
+  useEffect(() => {
+    setDisplayNameDraft(displayName ?? "");
+    setDisplayNameError(null);
+  }, [displayName]);
 
   const handleSectionLayout = (key: SectionKey) => (event: any) => {
     sectionOffsets.current[key] = event.nativeEvent.layout.y;
@@ -226,6 +251,132 @@ const SettingsScreen = ({
           </Text>
         </Pressable>
       </View>
+    </View>
+  );
+
+  const handleSaveUsername = async () => {
+    const nextUsername = normalizeUsername(usernameDraft);
+    const validationError = validateUsername(nextUsername);
+    if (validationError) {
+      setUsernameError(validationError);
+      return;
+    }
+    if (!onSaveUsername) return;
+
+    try {
+      setSavingUsername(true);
+      setUsernameError(null);
+      await onSaveUsername(nextUsername);
+    } catch (cause) {
+      setUsernameError(
+        cause instanceof Error
+          ? cause.message
+          : t(language, "settings.account.usernameSaveError"),
+      );
+    } finally {
+      setSavingUsername(false);
+    }
+  };
+
+  const renderUsernameCard = () => (
+    <View style={styles.syncCard}>
+      <Text style={styles.usernameTitle}>
+        {t(language, "settings.account.username")}
+      </Text>
+      <Text style={styles.usernameDescription}>
+        {t(language, "settings.account.usernameDescription")}
+      </Text>
+      <View style={styles.usernameRow}>
+        <Text style={styles.usernamePrefix}>@</Text>
+        <TextInput
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!savingUsername}
+          maxLength={30}
+          onChangeText={(value) => {
+            setUsernameDraft(value);
+            setUsernameError(null);
+          }}
+          placeholder={t(language, "settings.account.usernamePlaceholder")}
+          style={styles.usernameInput}
+          value={usernameDraft}
+        />
+      </View>
+      {usernameError ? <Text style={styles.syncErrorText}>{usernameError}</Text> : null}
+      <Pressable
+        disabled={savingUsername || !onSaveUsername || !usernameDraft.trim()}
+        onPress={() => void handleSaveUsername()}
+        style={[
+          styles.googleAuthButton,
+          (savingUsername || !onSaveUsername || !usernameDraft.trim()) &&
+            styles.syncButtonDisabled,
+        ]}
+      >
+        <Text style={styles.googleAuthButtonText}>
+          {savingUsername
+            ? t(language, "settings.account.usernameSaving")
+            : t(language, "settings.account.usernameSave")}
+        </Text>
+      </Pressable>
+    </View>
+  );
+
+  const handleSaveDisplayName = async () => {
+    const nextDisplayName = displayNameDraft.trim();
+    if (!nextDisplayName) {
+      setDisplayNameError(t(language, "settings.account.displayNameRequired"));
+      return;
+    }
+    if (!onSaveDisplayName) return;
+
+    try {
+      setSavingDisplayName(true);
+      setDisplayNameError(null);
+      await onSaveDisplayName(nextDisplayName);
+    } catch (cause) {
+      setDisplayNameError(
+        cause instanceof Error
+          ? cause.message
+          : t(language, "settings.account.displayNameSaveError"),
+      );
+    } finally {
+      setSavingDisplayName(false);
+    }
+  };
+
+  const renderDisplayNameCard = () => (
+    <View style={styles.syncCard}>
+      <Text style={styles.usernameTitle}>{t(language, "settings.account.displayName")}</Text>
+      <Text style={styles.usernameDescription}>
+        {t(language, "settings.account.displayNameDescription")}
+      </Text>
+      <TextInput
+        editable={!savingDisplayName}
+        maxLength={50}
+        onChangeText={(value) => {
+          setDisplayNameDraft(value);
+          setDisplayNameError(null);
+        }}
+        placeholder={t(language, "settings.account.displayNamePlaceholder")}
+        style={styles.displayNameInput}
+        value={displayNameDraft}
+      />
+      {displayNameError ? <Text style={styles.syncErrorText}>{displayNameError}</Text> : null}
+      <Pressable
+        disabled={savingDisplayName || !onSaveDisplayName || !displayNameDraft.trim()}
+        onPress={() => void handleSaveDisplayName()}
+        style={[
+          styles.googleAuthButton,
+          (savingDisplayName || !onSaveDisplayName || !displayNameDraft.trim()) &&
+            styles.syncButtonDisabled,
+        ]}
+      >
+        <Text style={styles.googleAuthButtonText}>
+          {savingDisplayName
+            ? t(language, "settings.account.displayNameSaving")
+            : t(language, "settings.account.displayNameSave")}
+        </Text>
+      </Pressable>
     </View>
   );
 
@@ -444,6 +595,12 @@ const SettingsScreen = ({
                 {t(language, "settings.section.account")}
               </Text>
               {renderGoogleAccountCard()}
+              {googleAuthStatus === "signedIn" && username !== null ? (
+                <>
+                  <View style={styles.nestedSection}>{renderUsernameCard()}</View>
+                  <View style={styles.nestedSection}>{renderDisplayNameCard()}</View>
+                </>
+              ) : null}
             </>
           )}
           {!showSubscriptionScreen ? (
@@ -771,6 +928,45 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#111827",
     fontWeight: "500",
+  },
+  usernameTitle: {
+    fontSize: 14,
+    color: "#111827",
+    fontWeight: "600",
+  },
+  usernameDescription: {
+    fontSize: 12,
+    color: "#6b7280",
+    lineHeight: 18,
+  },
+  usernameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+  },
+  usernamePrefix: {
+    color: "#6b7280",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  usernameInput: {
+    flex: 1,
+    color: "#111827",
+    fontSize: 15,
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+  },
+  displayNameInput: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    color: "#111827",
+    fontSize: 15,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
   },
   subscriptionCard: {
     gap: 10,

@@ -1,10 +1,12 @@
 import React from "react";
 import { Pressable, Text, View, type View as NativeView } from "react-native";
 
-import type { SlotKey, TaskState, TaskStatus } from "../../types";
+import type { SlotKey, TaskState, TaskStatus, TimeBoxSchedule } from "../../types";
 import type { TaskSectionItem } from "../../hooks/useTasks";
 import TaskItem from "./TaskItem";
 import type { TaskDragPreview } from "./TaskItem";
+import PrivateProjectTaskItem from "../private-project/PrivateProjectTaskItem";
+import type { MyProjectTask } from "../../services/collaboration/collaborationService";
 
 type Props = {
   styles: Record<string, any>;
@@ -41,6 +43,9 @@ type Props = {
   onTaskDragMove: (pageX: number, pageY: number) => void;
   onTaskDragEnd: () => void;
   onTaskDragStateChange: (isDragging: boolean) => void;
+  projectTasks: MyProjectTask[];
+  onProjectTaskChanged: () => void;
+  timeBoxSchedule: TimeBoxSchedule;
 };
 
 const TaskSection = ({
@@ -78,8 +83,24 @@ const TaskSection = ({
   onTaskDragMove,
   onTaskDragEnd,
   onTaskDragStateChange,
+  projectTasks,
+  onProjectTaskChanged,
+  timeBoxSchedule,
 }: Props) => {
-  const taskCountLabel = `(${section.visibleTasks.length})`;
+  const visibleProjectTasks = projectTasks.filter((task) => !task.task.isArchived);
+  const activeProjectTasks = visibleProjectTasks.filter((task) => task.task.status !== "completed");
+  const completedProjectTasks = visibleProjectTasks.filter((task) => task.task.status === "completed");
+  const projectEstimate = visibleProjectTasks.reduce(
+    (total, item) => {
+      const estimate = Number(item.task.estimateMinutes);
+      return total + (Number.isFinite(estimate) ? estimate : 0);
+    },
+    0,
+  );
+  const totalEstimate = section.totalEstimate + projectEstimate;
+  const overflow = Math.max(0, totalEstimate - section.capacityMinutes);
+  const remainingMinutes = Math.max(0, section.capacityMinutes - totalEstimate);
+  const taskCountLabel = `(${section.visibleTasks.length + visibleProjectTasks.length})`;
   return (
     <View
       ref={(node) => onRegisterDropZone(section.slotKey, node)}
@@ -100,19 +121,19 @@ const TaskSection = ({
             <Text
               style={[
                 styles.slotSummary,
-                section.overflow > 0 && styles.slotSummaryWarning,
+                overflow > 0 && styles.slotSummaryWarning,
               ]}
             >
               {`${tr("task.remaining")}: ${
-                section.overflow > 0 ? 0 : section.remainingMinutes
+                overflow > 0 ? 0 : remainingMinutes
               }${tr("task.minutes")}${
-                section.overflow > 0
-                  ? ` (${tr("task.overrun")} +${section.overflow}${tr("task.minutes")})`
+                overflow > 0
+                  ? ` (${tr("task.overrun")} +${overflow}${tr("task.minutes")})`
                   : ""
               }`}
             </Text>
             <Text style={styles.slotSummary}>
-              {`${tr("task.total")}: ${section.totalEstimate}${tr("task.minutes")}`}
+              {`${tr("task.total")}: ${totalEstimate}${tr("task.minutes")}`}
             </Text>
           </View>
           <Pressable style={styles.addButton} onPress={() => onAddTask(section.slotKey)}>
@@ -166,61 +187,79 @@ const TaskSection = ({
             ]}
           />
         ))}
+      {activeExpanded && activeProjectTasks.map((item) => (
+        <PrivateProjectTaskItem
+          key={`project:${item.task.id}`}
+          item={item}
+          styles={styles}
+          tr={tr}
+          noTagLabel={noTagLabel}
+          untitledLabel={untitledLabel}
+          statusLabel={statusLabel}
+          statusPalette={statusPalette}
+          timeBoxSchedule={timeBoxSchedule}
+          onChanged={onProjectTaskChanged}
+        />
+      ))}
       <View style={styles.completedSection}>
         <Pressable
           style={styles.completedToggleRow}
           onPress={() => onToggleCompleted(section.slotKey)}
         >
           <Text style={styles.completedToggleText}>
-            {`${tr("task.status.done")}（${section.completedTasks.length}）${
+            {`${tr("task.status.done")}（${section.completedTasks.length + completedProjectTasks.length}）${
               completedExpanded ? "▼" : "▶︎"
             }`}
           </Text>
         </Pressable>
         {completedExpanded &&
-          (section.completedTasks.length === 0 ? (
+          (section.completedTasks.length + completedProjectTasks.length === 0 ? (
             <Text style={styles.completedEmptyText}>{tr("task.completedNone")}</Text>
           ) : (
-            section.completedTasks.map((task) => (
-              <TaskItem
-                key={task.id}
-                styles={styles}
-                tr={tr}
-                task={task}
-                noTagLabel={noTagLabel}
-                untitledLabel={untitledLabel}
-                statusLabel={statusLabel[task.status]}
-                palette={statusPalette[task.status]}
-                isOpen={openSwipeTaskId === task.id}
-                onOpen={() => onOpenSwipe(task.id)}
-                onClose={() => onCloseSwipe(task.id)}
-                onPress={() => onTaskPress(section.slotKey, task)}
-                onDragStart={onTaskDragStart}
-                onDragMove={onTaskDragMove}
-                onDragEnd={onTaskDragEnd}
-                onDragStateChange={onTaskDragStateChange}
-                onDrop={(pageY) => onDropTask(section.slotKey, task.id, pageY)}
-                completedTime={completedTimeByTaskId.get(task.id) ?? null}
-                completed
-                actions={[
-                  {
-                    label: tr("task.move"),
-                    onPress: () => onMove(section.slotKey, task.id),
-                    style: styles.swipeMoveButton,
-                  },
-                  {
-                    label: tr("task.archive"),
-                    onPress: () => onArchive(section.slotKey, task.id),
-                    style: styles.swipeArchiveButton,
-                  },
-                  {
-                    label: tr("task.delete"),
-                    onPress: () => onDelete(task.id),
-                    style: styles.swipeDeleteButton,
-                  },
-                ]}
-              />
-            ))
+            <>
+              {section.completedTasks.map((task) => (
+                <TaskItem
+                  key={task.id}
+                  styles={styles}
+                  tr={tr}
+                  task={task}
+                  noTagLabel={noTagLabel}
+                  untitledLabel={untitledLabel}
+                  statusLabel={statusLabel[task.status]}
+                  palette={statusPalette[task.status]}
+                  isOpen={openSwipeTaskId === task.id}
+                  onOpen={() => onOpenSwipe(task.id)}
+                  onClose={() => onCloseSwipe(task.id)}
+                  onPress={() => onTaskPress(section.slotKey, task)}
+                  onDragStart={onTaskDragStart}
+                  onDragMove={onTaskDragMove}
+                  onDragEnd={onTaskDragEnd}
+                  onDragStateChange={onTaskDragStateChange}
+                  onDrop={(pageY) => onDropTask(section.slotKey, task.id, pageY)}
+                  completedTime={completedTimeByTaskId.get(task.id) ?? null}
+                  completed
+                  actions={[
+                    { label: tr("task.move"), onPress: () => onMove(section.slotKey, task.id), style: styles.swipeMoveButton },
+                    { label: tr("task.archive"), onPress: () => onArchive(section.slotKey, task.id), style: styles.swipeArchiveButton },
+                    { label: tr("task.delete"), onPress: () => onDelete(task.id), style: styles.swipeDeleteButton },
+                  ]}
+                />
+              ))}
+              {completedProjectTasks.map((item) => (
+                <PrivateProjectTaskItem
+                  key={`project:${item.task.id}`}
+                  item={item}
+                  styles={styles}
+                  tr={tr}
+                  noTagLabel={noTagLabel}
+                  untitledLabel={untitledLabel}
+                  statusLabel={statusLabel}
+                  statusPalette={statusPalette}
+                  timeBoxSchedule={timeBoxSchedule}
+                  onChanged={onProjectTaskChanged}
+                />
+              ))}
+            </>
           ))}
       </View>
     </View>

@@ -311,13 +311,21 @@ service cloud.firestore {
 
     function validNote(data, entityId) {
       return data.keys().hasAll(["id", "type", "date", "title", "body", "updatedAt"])
-        && data.keys().hasOnly(["id", "type", "date", "title", "body", "updatedAt"])
+        && data.keys().hasOnly(["id", "type", "date", "title", "body", "scope", "projectId", "updatedAt"])
         && data.id == entityId
         && validString(data.id, 512)
         && data.type in ["daily", "free"]
         && validNullableString(data.date, 32)
         && validNullableString(data.title, 1000)
         && validString(data.body, 200000)
+        // The scope pair is optional only while older released apps still
+        // write the previous note envelope. Missing fields mean personal.
+        && (!data.keys().hasAny(["scope", "projectId"]) || (
+          data.keys().hasAll(["scope", "projectId"])
+          && data.scope in ["personal", "project"]
+          && validNullableString(data.projectId, 128)
+          && ((data.scope == "personal" && data.projectId == null) || (data.scope == "project" && data.projectId != null))
+        ))
         && data.updatedAt is int;
     }
 
@@ -454,6 +462,197 @@ service cloud.firestore {
         allow create: if isAdmin() || validSelfInviteRedemptionCreate(code, userId);
         allow update, delete: if isAdmin();
       }
+    }
+
+    // Collaboration is deliberately separate from /users/{uid}: personal
+    // sync documents stay private unless an owner copies a note to projectNotes.
+    function projectPath(projectId) {
+      return /databases/$(database)/documents/projects/$(projectId);
+    }
+
+    function projectMemberPath(projectId, userId) {
+      return /databases/$(database)/documents/projects/$(projectId)/members/$(userId);
+    }
+
+    function isProjectMember(projectId) {
+      return signedIn() && exists(projectMemberPath(projectId, request.auth.uid));
+    }
+
+    function projectRole(projectId) {
+      return get(projectMemberPath(projectId, request.auth.uid)).data.role;
+    }
+
+    function isProjectEditor(projectId) {
+      return isProjectMember(projectId) && projectRole(projectId) in ["owner", "member"];
+    }
+
+    function isProjectOwner(projectId) {
+      return isProjectMember(projectId) && projectRole(projectId) == "owner";
+    }
+
+    function validProfile(data, userId) {
+      return data.keys().hasAll([
+          "userId", "username", "displayName", "photoUrl", "bio", "interestTags",
+          "skillTags", "affiliation", "profileVisibility", "connectionRequestPolicy",
+          "createdAt", "updatedAt", "usernameChangedAt",
+        ])
+        && data.keys().hasOnly([
+          "userId", "username", "displayName", "photoUrl", "bio", "interestTags",
+          "skillTags", "affiliation", "profileVisibility", "connectionRequestPolicy",
+          "createdAt", "updatedAt", "usernameChangedAt",
+        ])
+        && data.userId == userId
+        && validString(data.username, 30)
+        && validString(data.displayName, 100)
+        && validNullableString(data.photoUrl, 2000)
+        && validNullableString(data.bio, 500)
+        && validStringList(data.interestTags, 30)
+        && validStringList(data.skillTags, 30)
+        && validNullableString(data.affiliation, 200)
+        && data.profileVisibility in ["public", "connections_only", "private"]
+        && data.connectionRequestPolicy in ["everyone", "connections_only", "disabled"]
+        && data.createdAt is int && data.updatedAt is int
+        && validNullableInt(data.usernameChangedAt);
+    }
+
+    function validProject(data, projectId) {
+      return data.keys().hasAll([
+          "id", "name", "description", "ownerUserId", "icon", "tags", "visibility",
+          "joinPolicy", "invitationPolicy", "taskEnabled", "createdAt", "updatedAt", "deletedAt",
+        ])
+        && data.keys().hasOnly([
+          "id", "name", "description", "ownerUserId", "icon", "tags", "visibility",
+          "joinPolicy", "invitationPolicy", "taskEnabled", "createdAt", "updatedAt", "deletedAt",
+        ])
+        && data.id == projectId && validString(data.name, 120)
+        && validNullableString(data.description, 4000) && validNullableString(data.icon, 64)
+        && validStringList(data.tags, 30)
+        && data.visibility in ["private", "invite_only", "public"]
+        && data.joinPolicy in ["invitation_only", "approval_required", "open"]
+        && data.invitationPolicy in ["owner_only", "members"]
+        && data.taskEnabled is bool && data.createdAt is int && data.updatedAt is int
+        && validNullableInt(data.deletedAt);
+    }
+
+    function validProjectMember(data, userId) {
+      return data.keys().hasOnly(["userId", "role", "invitationId", "joinedAt", "updatedAt"])
+        && data.userId == userId && data.role in ["owner", "member", "viewer"]
+        && validNullableString(data.invitationId, 128)
+        && data.joinedAt is int && data.updatedAt is int;
+    }
+
+    match /profiles/{userId} {
+      allow get: if isSelf(userId) || resource.data.profileVisibility == "public";
+      allow list: if signedIn() && resource.data.profileVisibility == "public";
+      allow create: if isSelf(userId) && isGoogleUser() && validProfile(request.resource.data, userId)
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.userId == userId;
+      allow update: if isSelf(userId) && validProfile(request.resource.data, userId)
+        && request.resource.data.updatedAt >= resource.data.updatedAt
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.userId == userId;
+      allow delete: if false;
+    }
+
+    match /usernames/{username} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && request.resource.data.keys().hasOnly(["userId", "username", "reservedUntil", "updatedAt"])
+        && request.resource.data.userId == request.auth.uid && request.resource.data.username == username
+        && validNullableInt(request.resource.data.reservedUntil) && request.resource.data.updatedAt is int;
+      allow update: if signedIn() && request.resource.data.keys().hasOnly(["userId", "username", "reservedUntil", "updatedAt"])
+        && request.resource.data.username == username && request.resource.data.updatedAt is int
+        && (resource.data.userId == request.auth.uid || (resource.data.reservedUntil != null && resource.data.reservedUntil <= request.time.toMillis()))
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /connections/{connectionId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.userIds;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(["id", "userIds", "requesterUserId", "recipientUserId", "status", "blockedByUserId", "createdAt", "updatedAt"])
+        && request.resource.data.id == connectionId && request.resource.data.requesterUserId == request.auth.uid
+        && (request.resource.data.status == "pending" || (request.resource.data.status == "blocked" && request.resource.data.blockedByUserId == request.auth.uid)) && request.auth.uid in request.resource.data.userIds
+        && request.resource.data.recipientUserId in request.resource.data.userIds;
+      allow update: if signedIn() && request.auth.uid in resource.data.userIds
+        && request.resource.data.userIds == resource.data.userIds
+        && ((resource.data.status == "pending" && resource.data.recipientUserId == request.auth.uid && request.resource.data.status == "connected")
+          || request.resource.data.status == "blocked");
+      allow delete: if signedIn() && request.auth.uid in resource.data.userIds;
+    }
+
+    match /projects/{projectId} {
+      allow get: if isProjectMember(projectId) || resource.data.visibility == "public";
+      allow list: if resource.data.visibility == "public";
+      allow create: if signedIn() && validProject(request.resource.data, projectId)
+        && request.resource.data.ownerUserId == request.auth.uid
+        && getAfter(projectMemberPath(projectId, request.auth.uid)).data.role == "owner";
+      allow update: if isProjectOwner(projectId) && validProject(request.resource.data, projectId)
+        && request.resource.data.ownerUserId == resource.data.ownerUserId;
+      allow delete: if false;
+
+      match /members/{userId} {
+        // A collection-group query for a user's project list can only prove
+        // access to that user's own membership document. Project member lists
+        // remain available to existing members through the second condition.
+        allow get: if isProjectMember(projectId);
+        allow list: if (signedIn() && resource.data.userId == request.auth.uid)
+          || isProjectMember(projectId);
+        allow create: if ((request.resource.data.role == "owner" && request.resource.data.invitationId == null
+            && getAfter(projectPath(projectId)).data.ownerUserId == userId) || isProjectOwner(projectId) || (
+            signedIn() && userId == request.auth.uid
+            && getAfter(/databases/$(database)/documents/projectInvitations/$(request.resource.data.invitationId)).data.inviteeUserId == request.auth.uid
+          )) && validProjectMember(request.resource.data, userId);
+        allow update: if isProjectOwner(projectId) && validProjectMember(request.resource.data, userId);
+        allow delete: if isProjectOwner(projectId) && resource.data.role != "owner";
+      }
+    }
+
+    // A top-level, self-readable membership index avoids a collection-group
+    // query and its extra index requirement when opening the project tab.
+    match /projectMemberships/{membershipId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(["id", "projectId", "userId", "role", "updatedAt"])
+        && request.resource.data.id == membershipId
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.role in ["owner", "member", "viewer"]
+        && request.resource.data.updatedAt is int
+        && getAfter(projectMemberPath(request.resource.data.projectId, request.auth.uid)).data.role == request.resource.data.role;
+      allow update, delete: if false;
+    }
+
+    match /projectInvitations/{invitationId} {
+      allow read: if signedIn() && (resource.data.inviterUserId == request.auth.uid || resource.data.inviteeUserId == request.auth.uid);
+      allow create: if isProjectMember(request.resource.data.projectId)
+        && (projectRole(request.resource.data.projectId) == "owner" || get(projectPath(request.resource.data.projectId)).data.invitationPolicy == "members")
+        && request.resource.data.inviterUserId == request.auth.uid && request.resource.data.status == "pending";
+      allow update: if signedIn() && resource.data.inviteeUserId == request.auth.uid
+        && resource.data.status == "pending" && request.resource.data.status in ["accepted", "declined"];
+      allow delete: if signedIn() && resource.data.inviterUserId == request.auth.uid;
+    }
+
+    match /projectNotes/{noteId} {
+      allow read: if isProjectMember(resource.data.projectId);
+      allow create: if signedIn() && request.resource.data.id == noteId
+        && request.resource.data.ownerUserId == request.auth.uid
+        && isProjectEditor(request.resource.data.projectId);
+      allow update: if signedIn() && resource.data.ownerUserId == request.auth.uid
+        && request.resource.data.ownerUserId == resource.data.ownerUserId
+        && request.resource.data.projectId == resource.data.projectId;
+      allow delete: if signedIn() && resource.data.ownerUserId == request.auth.uid;
+    }
+
+    match /projectTasks/{taskId} {
+      allow read: if isProjectMember(resource.data.projectId);
+      allow create: if signedIn() && request.resource.data.id == taskId
+        && request.resource.data.ownerUserId == request.auth.uid
+        && request.resource.data.creatorUserId == request.auth.uid
+        && isProjectEditor(request.resource.data.projectId)
+        && get(projectPath(request.resource.data.projectId)).data.taskEnabled == true
+        && (request.resource.data.assigneeUserId == null || exists(projectMemberPath(request.resource.data.projectId, request.resource.data.assigneeUserId)));
+      allow update: if signedIn() && isProjectMember(resource.data.projectId)
+        && (projectRole(resource.data.projectId) in ["owner", "member"] || resource.data.ownerUserId == request.auth.uid || resource.data.creatorUserId == request.auth.uid || resource.data.assigneeUserId == request.auth.uid)
+        && (request.resource.data.assigneeUserId == null || exists(projectMemberPath(resource.data.projectId, request.resource.data.assigneeUserId)));
+      allow delete: if signedIn() && (isProjectOwner(resource.data.projectId) || resource.data.ownerUserId == request.auth.uid);
     }
   }
 }

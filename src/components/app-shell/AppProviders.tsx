@@ -7,6 +7,7 @@ import { AppSettingsProvider } from "../../context/AppSettingsContext";
 import { AppUIProvider } from "../../context/AppUIContext";
 import { useAppRefresh } from "../../context/AppRefreshContext";
 import { SubscriptionProvider } from "../../context/SubscriptionContext";
+import { CollaborationProvider } from "../../context/CollaborationContext";
 
 const AppBootstrapBoundary = ({
   children,
@@ -26,13 +27,15 @@ const AppProviders = ({
 }) => (
   <SubscriptionProvider>
     <AppSettingsProvider>
-      <AppUIProvider>
-        <AppRefreshProvider>
-          <CloudSyncProvider>
-            <AppBootstrapBoundary>{children}</AppBootstrapBoundary>
-          </CloudSyncProvider>
-        </AppRefreshProvider>
-      </AppUIProvider>
+      <CollaborationProvider>
+        <AppUIProvider>
+          <AppRefreshProvider>
+            <CloudSyncProvider>
+              <AppBootstrapBoundary>{children}</AppBootstrapBoundary>
+            </CloudSyncProvider>
+          </AppRefreshProvider>
+        </AppUIProvider>
+      </CollaborationProvider>
     </AppSettingsProvider>
   </SubscriptionProvider>
 );

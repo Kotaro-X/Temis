@@ -21,8 +21,12 @@ type CalendarDayCell = {
   inCurrentMonth: boolean;
 };
 
+export type WorkspaceScope = "private" | "projects";
+
 type AppUIContextValue = {
   rootScreen: AppRootScreen;
+  workspaceScope: WorkspaceScope;
+  activeProjectId: string | null;
   selectedDate: string;
   menuOpen: boolean;
   datePickerOpen: boolean;
@@ -47,6 +51,10 @@ type AppUIContextValue = {
   setTaskScreen: React.Dispatch<React.SetStateAction<TaskWorkspaceScreenKey>>;
   openTodo: () => void;
   openMemos: (screen?: MemoWorkspaceScreenKey) => void;
+  openProjects: () => void;
+  openPrivateWorkspace: () => void;
+  openProjectWorkspace: (projectId?: string | null) => void;
+  selectProject: (projectId: string | null) => void;
   openMemoHome: () => void;
   openMemoNotes: () => void;
   openMemoResearch: () => void;
@@ -151,6 +159,9 @@ export const AppUIProvider = ({
 }) => {
   const { appLanguage, languagePickerOpen, tr } = useAppSettings();
   const [rootScreen, setRootScreen] = useState<AppRootScreen>("tasks");
+  const [workspaceScope, setWorkspaceScope] =
+    useState<WorkspaceScope>("private");
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [taskScreen, setTaskScreen] = useState<TaskWorkspaceScreenKey>("today");
   const [memoScreen, setMemoScreen] = useState<MemoWorkspaceScreenKey>("memo");
   const [memoTab, setMemoTab] = useState<MemoWorkspaceTabKey>("all");
@@ -336,6 +347,33 @@ export const AppUIProvider = ({
     switchRootScreen("memos");
   }, [switchRootScreen]);
 
+  const openProjects = useCallback(() => {
+    switchRootScreen("projects");
+  }, [switchRootScreen]);
+
+  const openPrivateWorkspace = useCallback(() => {
+    setWorkspaceScope("private");
+    if (rootScreen === "projects") {
+      switchRootScreen("tasks");
+    }
+  }, [rootScreen, switchRootScreen]);
+
+  const openProjectWorkspace = useCallback((projectId?: string | null) => {
+    setWorkspaceScope("projects");
+    setActiveProjectId(projectId ?? null);
+    if (projectId) {
+      if (rootScreen === "projects") {
+        switchRootScreen("tasks");
+      }
+      return;
+    }
+    switchRootScreen("projects");
+  }, [rootScreen, switchRootScreen]);
+
+  const selectProject = useCallback((projectId: string | null) => {
+    setActiveProjectId(projectId);
+  }, []);
+
   const openMemoHome = useCallback(() => {
     setMemoScreen("memo");
     setMemoTab("all");
@@ -411,6 +449,8 @@ export const AppUIProvider = ({
   const value = useMemo<AppUIContextValue>(
     () => ({
       rootScreen,
+      workspaceScope,
+      activeProjectId,
       selectedDate,
       menuOpen,
       datePickerOpen,
@@ -435,6 +475,10 @@ export const AppUIProvider = ({
       setTaskScreen,
       openTodo,
       openMemos,
+      openProjects,
+      openPrivateWorkspace,
+      openProjectWorkspace,
+      selectProject,
       openMemoHome,
       openMemoNotes,
       openMemoResearch,
@@ -489,6 +533,9 @@ export const AppUIProvider = ({
       openDatePicker,
       openMemoDetail,
       openMemos,
+      openProjects,
+      openPrivateWorkspace,
+      openProjectWorkspace,
       openMemoHome,
       openMemoNotes,
       openMemoResearch,
@@ -507,6 +554,9 @@ export const AppUIProvider = ({
       openTaskToday,
       openTodo,
       rootScreen,
+      workspaceScope,
+      activeProjectId,
+      selectProject,
       selectedDate,
       selectDateFromCalendar,
       settingsScreen,

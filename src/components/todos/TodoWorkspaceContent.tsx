@@ -33,6 +33,7 @@ type Props = {
   todoCountsByDate: Map<string, number>;
   selectedDateTodos: TodoListEntry[];
   unscheduledTodos: TodoListEntry[];
+  projectItemsFooter?: React.ReactNode;
 };
 
 const TODO_LIST_RANGES: TodoListRange[] = ["today", "week", "month"];
@@ -59,6 +60,7 @@ const TodoWorkspaceContent = ({
   todoCountsByDate,
   selectedDateTodos,
   unscheduledTodos,
+  projectItemsFooter,
 }: Props) => {
   return (
     <ScrollView
@@ -129,6 +131,7 @@ const TodoWorkspaceContent = ({
               ))}
             </ScrollView>
             {renderTodoListItems(todoListEntries, tr("todo.empty"))}
+            {projectItemsFooter}
           </>
         ) : (
           <>

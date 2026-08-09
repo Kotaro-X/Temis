@@ -217,6 +217,8 @@ test("new database starts on the latest schema", async () => {
   assert.equal(db.hasColumn("chunk_index", "embedding_model_version"), true);
   assert.equal(db.hasColumn("embedding_jobs", "next_run_at"), true);
   assert.equal(db.hasColumn("notes", "updated_at"), true);
+  assert.equal(db.hasColumn("notes", "scope"), true);
+  assert.equal(db.hasColumn("notes", "project_id"), true);
   assert.equal(db.migrationCount(), MIGRATIONS.length);
 });
 

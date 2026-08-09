@@ -9,6 +9,7 @@ import {
   type RulesTestEnvironment,
   type TokenOptions,
 } from "@firebase/rules-unit-testing";
+import { doc, writeBatch } from "firebase/firestore";
 
 const FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST;
 const REQUIRE_FIRESTORE_EMULATOR =
@@ -90,6 +91,8 @@ const createMemoEnvelope = (id = "memo-1") => ({
       date: null,
       title: "A note",
       body: "The note body",
+      scope: "personal",
+      projectId: null,
       updatedAt: 1_783_292_400_000,
     },
   },
@@ -97,6 +100,21 @@ const createMemoEnvelope = (id = "memo-1") => ({
   isDeleted: false,
   deletedAt: null,
   deviceId: null,
+});
+
+const createLegacyMemoEnvelope = (id = "memo-legacy") => ({
+  ...createMemoEnvelope(id),
+  record: {
+    kind: "note",
+    data: {
+      id,
+      type: "free",
+      date: null,
+      title: "Old note",
+      body: "Old note body",
+      updatedAt: 1_783_292_400_000,
+    },
+  },
 });
 
 const createTag = (id = "tag-1") => ({
@@ -174,6 +192,11 @@ if (!FIRESTORE_EMULATOR_HOST) {
       ),
     );
     await assertSucceeds(
+      aliceDb.collection("users").doc("alice").collection("memos").doc("memo-legacy").set(
+        createLegacyMemoEnvelope(),
+      ),
+    );
+    await assertSucceeds(
       aliceDb.collection("users").doc("alice").collection("tags").doc("tag-1").get(),
     );
     await assertSucceeds(
@@ -190,6 +213,48 @@ if (!FIRESTORE_EMULATOR_HOST) {
       bobDb.collection("users").doc("alice").collection("todos").doc("todo-2").set(
         createTodoEnvelope("todo-2"),
       ),
+    );
+  });
+
+  test("profiles claim usernames atomically and project notes stay member-only", async () => {
+    const aliceDb = env.authenticatedContext("alice", createGoogleToken()).firestore();
+    const bobDb = env.authenticatedContext("bob", createGoogleToken()).firestore();
+    const profile = {
+      userId: "alice", username: "alice", displayName: "Alice", photoUrl: null,
+      bio: null, interestTags: [], skillTags: [], affiliation: null,
+      profileVisibility: "public", connectionRequestPolicy: "everyone",
+      createdAt: 1, updatedAt: 1, usernameChangedAt: null,
+    };
+    const profileBatch = writeBatch(aliceDb);
+    profileBatch.set(doc(aliceDb, "usernames", "alice"), {
+      userId: "alice", username: "alice", reservedUntil: null, updatedAt: 1,
+    });
+    profileBatch.set(doc(aliceDb, "profiles", "alice"), profile);
+    await assertSucceeds(profileBatch.commit());
+
+    const project = {
+      id: "project-1", name: "Private", description: null, ownerUserId: "alice",
+      icon: null, tags: [], visibility: "invite_only", joinPolicy: "invitation_only",
+      invitationPolicy: "owner_only", taskEnabled: false, createdAt: 1, updatedAt: 1,
+      deletedAt: null,
+    };
+    const projectBatch = writeBatch(aliceDb);
+    projectBatch.set(doc(aliceDb, "projects", "project-1"), project);
+    projectBatch.set(doc(aliceDb, "projects", "project-1", "members", "alice"), {
+      userId: "alice", role: "owner", invitationId: null, joinedAt: 1, updatedAt: 1,
+    });
+    projectBatch.set(doc(aliceDb, "projectMemberships", "project-1__alice"), {
+      id: "project-1__alice", projectId: "project-1", userId: "alice", role: "owner", updatedAt: 1,
+    });
+    await assertSucceeds(projectBatch.commit());
+    await assertSucceeds(aliceDb.collection("projectNotes").doc("note-1").set({
+      id: "note-1", ownerUserId: "alice", projectId: "project-1", sourceNoteId: "local-1",
+      title: "Shared", body: "only members", updatedAt: 1,
+    }));
+    await assertFails(bobDb.collection("projectNotes").doc("note-1").get());
+    await assertSucceeds(aliceDb.collection("projectNotes").doc("note-1").get());
+    await assertSucceeds(
+      aliceDb.collection("projectMemberships").where("userId", "==", "alice").get(),
     );
   });
 

@@ -26,9 +26,15 @@ import {
 import {
   deleteNoteById,
   getNoteById,
+  setNoteScope,
   upsertDailyNote,
   upsertFreeNote,
 } from "../db/noteRepo";
+import { useCollaboration } from "../context/CollaborationContext";
+import {
+  removeProjectSharedNote,
+  upsertProjectSharedNote,
+} from "../services/collaboration/collaborationService";
 import {
   deleteResearchNoteById,
   getResearchNoteById,
@@ -87,6 +93,8 @@ type MemoDetailData =
       title: string;
       date: string;
       body: string;
+      scope: "personal" | "project";
+      projectId: string | null;
     }
   | {
       kind: "tankyu";
@@ -127,6 +135,7 @@ const MemoDetailScreen = ({
   language,
 }: Props) => {
   const tr = (key: string) => t(language, key);
+  const { profile, projects } = useCollaboration();
   const [activeMemoId, setActiveMemoId] = useState(memoId);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<MemoDetailData | null>(null);
@@ -153,6 +162,13 @@ const MemoDetailScreen = ({
     (detail?.kind === "note" && detail.noteType === "free")
       ? titleDraft.trim() || tr("common.untitled")
       : detail?.title ?? "";
+
+  const syncProjectNote = async (noteId: string, title: string | null, body: string, projectId: string) => {
+    if (!profile) return;
+    await upsertProjectSharedNote({
+      id: noteId, sourceNoteId: noteId, ownerUserId: profile.userId, projectId, title, body, updatedAt: Date.now(),
+    });
+  };
   const tokens = useMemo(() => extractTokens(bodyDraft), [bodyDraft]);
 
   useEffect(() => {
@@ -234,11 +250,14 @@ const MemoDetailScreen = ({
           await upsertDailyNote(snapshot.date, snapshot.body);
         }
       } else if (snapshot.noteId) {
-        await upsertFreeNote({
+        const saved = await upsertFreeNote({
           id: snapshot.noteId,
           title: snapshot.title.trim() || null,
           body: snapshot.body,
         });
+        if (detail?.kind === "note" && detail.scope === "project" && detail.projectId) {
+          await syncProjectNote(saved.id, saved.title, saved.body, detail.projectId);
+        }
       } else if (snapshot.kind === "tankyu" && snapshot.tankyuId) {
         await upsertResearchNote({
           id: snapshot.tankyuId,
@@ -366,6 +385,8 @@ const MemoDetailScreen = ({
             title,
             date,
             body: note.body,
+            scope: note.scope,
+            projectId: note.projectId,
           };
           const snapshot = buildSnapshot(
             loaded,
@@ -540,6 +561,9 @@ const MemoDetailScreen = ({
       if (detail.kind === "task") {
         await deleteMemo(detail.memoId);
       } else if (detail.kind === "note") {
+        if (detail.scope === "project") {
+          await removeProjectSharedNote(detail.noteId);
+        }
         await deleteNoteById(detail.noteId);
       } else {
         await deleteResearchNoteById(detail.tankyuId);
@@ -570,6 +594,41 @@ const MemoDetailScreen = ({
       { text: tr("common.cancel"), style: "cancel" },
       { text: tr("common.delete"), style: "destructive", onPress: () => void handleDeleteConfirmed() },
     ]);
+  };
+
+  const changeNoteScope = async (projectId: string | null) => {
+    if (!detail || detail.kind !== "note") return;
+    try {
+      if (detail.scope === "project" && detail.projectId && detail.projectId !== projectId) {
+        await removeProjectSharedNote(detail.noteId);
+      }
+      const updated = await setNoteScope(
+        detail.noteId,
+        projectId ? { scope: "project", projectId } : { scope: "personal", projectId: null },
+      );
+      if (projectId) await syncProjectNote(updated.id, updated.title, updated.body, projectId);
+      setDetail({ ...detail, scope: updated.scope, projectId: updated.projectId });
+    } catch (cause) {
+      Alert.alert("保存先を変更できません", cause instanceof Error ? cause.message : "もう一度お試しください。");
+    }
+  };
+
+  const openScopePicker = () => {
+    if (!detail || detail.kind !== "note") return;
+    const actions = [
+      { text: "個人", onPress: () => void changeNoteScope(null) },
+      ...projects.map((project) => ({
+        text: project.name,
+        onPress: () => {
+          Alert.alert("メモを共有しますか？", "このメモはプロジェクトメンバーに共有されます。", [
+            { text: "キャンセル", style: "cancel" },
+            { text: "共有する", onPress: () => void changeNoteScope(project.id) },
+          ]);
+        },
+      })),
+      { text: "キャンセル", style: "cancel" as const },
+    ];
+    Alert.alert("保存先", "プロジェクトを選択すると、メンバーに共有されます。", actions);
   };
 
   return (
@@ -612,6 +671,11 @@ const MemoDetailScreen = ({
             <>
               <Text style={styles.memoTitle}>{displayTitle}</Text>
               <Text style={styles.memoMeta}>{detail.date}</Text>
+              {detail.kind === "note" ? (
+                <Pressable style={styles.scopeButton} onPress={openScopePicker}>
+                  <Text style={styles.scopeButtonText}>{detail.scope === "project" ? "保存先：プロジェクト" : "保存先：個人"}</Text>
+                </Pressable>
+              ) : null}
               {(detail.kind === "tankyu" ||
                 (detail.kind === "note" && detail.noteType === "free")) ? (
                 <View style={styles.titleInputRow}>
@@ -734,6 +798,8 @@ const styles = StyleSheet.create({
     color: "#6b7280",
     marginBottom: 12,
   },
+  scopeButton: { alignSelf: "flex-start", borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 12 },
+  scopeButtonText: { color: "#374151", fontSize: 12, fontWeight: "600" },
   titleInputRow: {
     marginBottom: 12,
   },

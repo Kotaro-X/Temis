@@ -1,4 +1,4 @@
-export type AppRootScreen = "tasks" | "todo" | "settings" | "memos";
+export type AppRootScreen = "tasks" | "todo" | "settings" | "memos" | "projects";
 
 export type TaskWorkspaceScreenKey =
   | "today"
@@ -47,6 +47,9 @@ export const APP_WORKSPACE_TRANSITION_POLICY = {
     // Search stays global because tasks can open it.
     resetDetailOnDeactivate: true,
     keepSearchOverlayAcrossTabs: true,
+  },
+  projects: {
+    resetOnDeactivate: true,
   },
   settings: {
     // Settings always opens from its root menu and rebuilds drafts from

@@ -86,6 +86,8 @@ const noteSchema = z.object({
   date: nullableString,
   title: nullableString,
   body: z.string(),
+  scope: z.enum(["personal", "project"]),
+  projectId: nullableString,
   updatedAt: finiteNumber,
 });
 
@@ -207,9 +209,23 @@ export const validateSyncEnvelope = <TType extends SyncableEntityType>(
 
   const rawInput = input as Record<string, unknown>;
   const isDeletedMissing = typeof rawInput.isDeleted !== "boolean";
+  const rawRecord = rawInput.record as Record<string, unknown> | undefined;
+  const rawNote = rawRecord?.data as Record<string, unknown> | undefined;
+  const isLegacyNoteWithoutScope =
+    expectedEntityType === "memo" &&
+    rawRecord?.kind === "note" &&
+    rawNote != null &&
+    (rawNote.scope === undefined || rawNote.projectId === undefined);
+  const normalizedRecord = isLegacyNoteWithoutScope
+    ? {
+        ...rawRecord,
+        data: { ...rawNote, scope: "personal", projectId: null },
+      }
+    : rawInput.record;
   const normalized = {
     ...rawInput,
     schemaVersion: CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION,
+    record: normalizedRecord,
     isDeleted:
       typeof rawInput.isDeleted === "boolean"
         ? rawInput.isDeleted
@@ -228,7 +244,7 @@ export const validateSyncEnvelope = <TType extends SyncableEntityType>(
     ok: true,
     envelope: parsed.data as SyncEntityEnvelope<TType>,
     migrated:
-      version !== CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION || isDeletedMissing,
+      version !== CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION || isDeletedMissing || isLegacyNoteWithoutScope,
   };
 };
 

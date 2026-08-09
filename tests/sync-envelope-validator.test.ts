@@ -51,6 +51,32 @@ test("sync envelope validator accepts the current schema", () => {
   }
 });
 
+test("existing v3 notes without collaboration scope migrate to personal", () => {
+  const result = validateSyncEnvelope("memo", {
+    schemaVersion: 3,
+    entityType: "memo",
+    entityId: "note-1",
+    record: {
+      kind: "note",
+      data: { id: "note-1", type: "free", date: null, title: "Old", body: "body", updatedAt: 100 },
+    },
+    updatedAt: 100,
+    isDeleted: false,
+    deletedAt: null,
+    deviceId: null,
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.migrated, true);
+    const record = result.envelope.record;
+    assert.equal(record.kind, "note");
+    if (record.kind === "note") {
+      assert.equal(record.data.scope, "personal");
+      assert.equal(record.data.projectId, null);
+    }
+  }
+});
+
 test("write validation refuses legacy and corrupt envelopes before persistence", () => {
   const legacyEnvelope = {
     ...createTodoEnvelope(),

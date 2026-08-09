@@ -174,7 +174,7 @@ const createBackfillProgress = async (executeSql: SqlExecutor): Promise<void> =>
 
 const createNotesTables = async (executeSql: SqlExecutor): Promise<void> => {
   await executeSql(
-    "CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, type TEXT NOT NULL, date TEXT, title TEXT, body TEXT NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, type TEXT NOT NULL, date TEXT, title TEXT, body TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'personal', project_id TEXT, updated_at INTEGER NOT NULL)",
   );
   await executeSql(
     "CREATE INDEX IF NOT EXISTS idx_notes_type_date ON notes(type, date)",
@@ -188,6 +188,13 @@ const createNotesTables = async (executeSql: SqlExecutor): Promise<void> => {
   await executeSql(
     "CREATE INDEX IF NOT EXISTS idx_note_links_token ON note_links(token)",
   );
+};
+
+const addNoteProjectScope = async (executeSql: SqlExecutor): Promise<void> => {
+  await addColumnIfMissing(executeSql, "notes", "scope", "TEXT NOT NULL DEFAULT 'personal'");
+  await addColumnIfMissing(executeSql, "notes", "project_id", "TEXT");
+  await executeSql("UPDATE notes SET scope = 'personal', project_id = NULL WHERE scope IS NULL OR scope NOT IN ('personal', 'project')");
+  await executeSql("CREATE INDEX IF NOT EXISTS idx_notes_project_scope ON notes(project_id, scope)");
 };
 
 export const MIGRATIONS: Migration[] = [
@@ -219,6 +226,10 @@ export const MIGRATIONS: Migration[] = [
     version: "007_create_notes_tables",
     up: createNotesTables,
   },
+  {
+    version: "008_add_note_project_scope",
+    up: addNoteProjectScope,
+  },
 ];
 
 const createLatestSchema = async (executeSql: SqlExecutor): Promise<void> => {
@@ -245,6 +256,7 @@ const createLatestSchema = async (executeSql: SqlExecutor): Promise<void> => {
   await createEmbeddingJobs(executeSql);
   await createBackfillProgress(executeSql);
   await createNotesTables(executeSql);
+  await addNoteProjectScope(executeSql);
 };
 
 const listUserTables = async (executeSql: SqlExecutor): Promise<string[]> => {

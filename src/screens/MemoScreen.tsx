@@ -63,6 +63,8 @@ type MemoItem = {
   noteTitle?: string | null;
   tankyuId?: string;
   tags?: string[];
+  scope?: "personal" | "project";
+  projectId?: string | null;
 };
 
 type Section = {
@@ -200,6 +202,8 @@ const buildMemoItems = async (): Promise<MemoItem[]> => {
       noteId: note.id,
       noteType: note.type,
       noteTitle: note.title ?? null,
+      scope: note.scope,
+      projectId: note.projectId,
     });
   }
   for (const note of tankyuNotes) {
@@ -975,7 +979,7 @@ const MemoScreen = ({
                     <Text style={styles.itemMeta}>
                       {`${normalizeUiText(sourceLabel(item.source))} · ${normalizeUiText(
                         item.taskTitle || "メモ",
-                      )}`}
+                      )}${item.scope === "project" ? " · プロジェクト" : ""}`}
                     </Text>
                   </Pressable>
                   <Pressable

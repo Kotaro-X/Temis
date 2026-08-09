@@ -1,10 +1,11 @@
 import React from "react";
 import type { View } from "react-native";
 
-import type { SlotKey, TaskState, TaskStatus } from "../../types";
+import type { SlotKey, TaskState, TaskStatus, TimeBoxSchedule } from "../../types";
 import type { TaskSectionItem } from "../../hooks/useTasks";
 import type { TaskDragPreview } from "./TaskItem";
 import TaskSection from "./TaskSection";
+import type { MyProjectTask } from "../../services/collaboration/collaborationService";
 
 type Props = {
   styles: Record<string, any>;
@@ -41,6 +42,9 @@ type Props = {
   onTaskDragMove: (pageX: number, pageY: number) => void;
   onTaskDragEnd: () => void;
   onTaskDragStateChange: (isDragging: boolean) => void;
+  projectTasksBySlot?: Record<SlotKey, MyProjectTask[]>;
+  onProjectTaskChanged?: () => void;
+  timeBoxSchedule: TimeBoxSchedule;
 };
 
 export type TaskListProps = Props;
@@ -53,6 +57,9 @@ const TaskList = (props: Props) => {
           key={section.slotKey}
           {...props}
           section={section}
+          projectTasks={props.projectTasksBySlot?.[section.slotKey] ?? []}
+          onProjectTaskChanged={props.onProjectTaskChanged ?? (() => undefined)}
+          timeBoxSchedule={props.timeBoxSchedule}
           activeExpanded={props.activeExpandedBySlot[section.slotKey]}
           completedExpanded={props.completedExpandedBySlot[section.slotKey]}
         />

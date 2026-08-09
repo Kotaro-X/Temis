@@ -4,6 +4,7 @@ import { useAppRefresh } from "../../context/AppRefreshContext";
 import { useAppSettings } from "../../context/AppSettingsContext";
 import { useAppUI } from "../../context/AppUIContext";
 import { useCloudSyncContext } from "../../context/CloudSyncContext";
+import { useCollaboration } from "../../context/CollaborationContext";
 import { useSubscription } from "../../context/SubscriptionContext";
 import type { DeletedItemView } from "../settings/DeletedItemsSection";
 import GeneralSettingsBridge from "../settings-bridges/GeneralSettingsBridge";
@@ -167,6 +168,7 @@ const SettingsShell = ({
     restoreTag,
   } = useAppSettings();
   const { openMenu, settingsScreen, setSettingsScreen } = useAppUI();
+  const { profile, saveDisplayName, saveUsername } = useCollaboration();
   const { isRefreshing, refreshApp } = useAppRefresh();
   const {
     status: subscriptionStatus,
@@ -398,6 +400,10 @@ const SettingsShell = ({
           googleAuthStatus={syncAuthStatus}
           googleAccountEmail={syncUser?.email ?? null}
           googleAccountName={syncUser?.name ?? null}
+          username={profile?.username ?? null}
+          onSaveUsername={saveUsername}
+          displayName={profile?.displayName ?? null}
+          onSaveDisplayName={saveDisplayName}
           cloudSyncEntitled={cloudSyncEntitled}
           cloudSyncEnabled={cloudSyncEnabled}
           subscriptionStatus={subscriptionStatus}

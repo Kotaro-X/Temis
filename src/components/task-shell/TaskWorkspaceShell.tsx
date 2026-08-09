@@ -71,6 +71,7 @@ const TaskWorkspaceShell = ({
   };
   const todayStickyHeaderHeight = 40;
   const defaultContentPaddingTop = viewConfig.insetsTop + 16;
+  const taskDetailContentPaddingTop = viewConfig.insetsTop + 2;
   const todayContentPaddingTop = viewConfig.insetsTop + todayStickyHeaderHeight + 12;
   const footerPaddingBottom = 56 + viewConfig.insetsBottom + 16;
 
@@ -98,6 +99,7 @@ const TaskWorkspaceShell = ({
       timeBoxSchedule={timeBoxSchedule}
       onSearchToken={viewConfig.onSearchToken}
       defaultContentPaddingTop={defaultContentPaddingTop}
+      taskDetailContentPaddingTop={taskDetailContentPaddingTop}
       todayContentPaddingTop={todayContentPaddingTop}
       footerPaddingBottom={footerPaddingBottom}
     />

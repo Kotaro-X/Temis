@@ -15,7 +15,8 @@ import type { TaskDragPreview } from "../components/tasks/TaskItem";
 import TaskMoveModal, {
   type TaskMoveModalProps,
 } from "../components/tasks/TaskMoveModal";
-import type { SlotKey, TaskState } from "../types";
+import type { SlotKey, TaskState, TimeBoxSchedule } from "../types";
+import type { MyProjectTask } from "../services/collaboration/collaborationService";
 
 const AUTO_SCROLL_INTERVAL_MS = 16;
 const AUTO_SCROLL_STEP = 6;
@@ -37,6 +38,9 @@ type TaskListBaseProps = Omit<
   | "onTaskDragMove"
   | "onTaskDragEnd"
   | "onTaskDragStateChange"
+  | "timeBoxSchedule"
+  | "projectTasksBySlot"
+  | "onProjectTaskChanged"
 >;
 
 type Props = {
@@ -67,6 +71,9 @@ type Props = {
   ) => void;
   taskListBaseProps: TaskListBaseProps;
   moveModalProps: TaskMoveModalProps;
+  projectTasksBySlot?: Record<SlotKey, MyProjectTask[]>;
+  onProjectTaskChanged?: () => void;
+  timeBoxSchedule: TimeBoxSchedule;
 };
 
 const TaskScreen = ({
@@ -93,6 +100,9 @@ const TaskScreen = ({
   onMoveTaskToSlot,
   taskListBaseProps,
   moveModalProps,
+  projectTasksBySlot,
+  onProjectTaskChanged,
+  timeBoxSchedule,
 }: Props) => {
   const [openSwipeTaskId, setOpenSwipeTaskId] = useState<string | null>(null);
   const [dragPreview, setDragPreview] = useState<TaskDragPreview | null>(null);
@@ -338,6 +348,9 @@ const TaskScreen = ({
       onTaskDragMove: handleTaskDragMove,
       onTaskDragEnd: handleTaskDragEnd,
       onTaskDragStateChange: setIsTaskDragging,
+      projectTasksBySlot,
+      onProjectTaskChanged,
+      timeBoxSchedule,
     }),
     [
       onArchiveTask,
@@ -352,6 +365,9 @@ const TaskScreen = ({
       handleTaskDragMove,
       handleTaskDragStart,
       registerDropZone,
+      projectTasksBySlot,
+      onProjectTaskChanged,
+      timeBoxSchedule,
     ],
   );
 

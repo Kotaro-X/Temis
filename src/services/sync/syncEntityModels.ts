@@ -119,6 +119,8 @@ export const buildNoteSyncEnvelope = (params: {
     date: string | null;
     title: string | null;
     body: string;
+    scope: "personal" | "project";
+    projectId: string | null;
     updatedAt: number;
   };
   deletedAt?: number | null;

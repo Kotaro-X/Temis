@@ -16,6 +16,7 @@ import {
   getTokenIndexCountByDocumentId,
   rebuildTokenIndexForDocument,
 } from "./tokenIndexRepo";
+import type { ContentScope } from "../types/collaboration";
 
 export type NoteType = "daily" | "free";
 
@@ -25,6 +26,8 @@ type NoteRow = {
   date: string | null;
   title: string | null;
   body: string;
+  scope: "personal" | "project";
+  project_id: string | null;
   updated_at: number;
 };
 
@@ -38,6 +41,8 @@ export type NoteRecord = {
   date: string | null;
   title: string | null;
   body: string;
+  scope: "personal" | "project";
+  projectId: string | null;
   updatedAt: number;
 };
 
@@ -71,6 +76,8 @@ const toNoteRecord = (row: NoteRow): NoteRecord => ({
   date: row.date,
   title: row.title,
   body: row.body,
+  scope: row.scope ?? "personal",
+  projectId: row.scope === "project" ? row.project_id : null,
   updatedAt: row.updated_at,
 });
 
@@ -124,7 +131,7 @@ export const getDailyNoteByDate = async (
 ): Promise<NoteRecord | null> => {
   await ensureDbReady();
   const result = await executeSql(
-    "SELECT id, type, date, title, body, updated_at FROM notes WHERE type = 'daily' AND date = ? LIMIT 1",
+    "SELECT id, type, date, title, body, scope, project_id, updated_at FROM notes WHERE type = 'daily' AND date = ? LIMIT 1",
     [date],
   );
   if (result.rows.length === 0) {
@@ -142,17 +149,19 @@ export const upsertDailyNote = async (
   const now = Date.now();
   const shouldEnqueueSync = options?.enqueueSync !== false;
   const existing = await executeSql(
-    "SELECT id FROM notes WHERE type = 'daily' AND date = ? LIMIT 1",
+    "SELECT id, scope, project_id FROM notes WHERE type = 'daily' AND date = ? LIMIT 1",
     [date],
   );
   if (existing.rows.length > 0) {
-    const row = existing.rows.item(0) as Pick<NoteRow, "id">;
+    const row = existing.rows.item(0) as Pick<NoteRow, "id" | "scope" | "project_id">;
     const updated: NoteRecord = {
       id: row.id,
       type: "daily",
       date,
       title: null,
       body,
+      scope: row.scope ?? "personal",
+      projectId: row.scope === "project" ? row.project_id : null,
       updatedAt: now,
     };
     await executeSql("BEGIN IMMEDIATE TRANSACTION");
@@ -185,12 +194,14 @@ export const upsertDailyNote = async (
     date,
     title: null,
     body,
+    scope: "personal",
+    projectId: null,
     updatedAt: now,
   };
   await executeSql("BEGIN IMMEDIATE TRANSACTION");
   try {
     await executeSql(
-      "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, 'daily', ?, NULL, ?, ?)",
+      "INSERT INTO notes (id, type, date, title, body, scope, project_id, updated_at) VALUES (?, 'daily', ?, NULL, ?, 'personal', NULL, ?)",
       [id, date, body, now],
     );
     await rebuildSearchIndexesForNote(created);
@@ -232,7 +243,7 @@ export const getFreeNoteById = async (
 ): Promise<NoteRecord | null> => {
   await ensureDbReady();
   const result = await executeSql(
-    "SELECT id, type, date, title, body, updated_at FROM notes WHERE type = 'free' AND id = ? LIMIT 1",
+    "SELECT id, type, date, title, body, scope, project_id, updated_at FROM notes WHERE type = 'free' AND id = ? LIMIT 1",
     [noteId],
   );
   if (result.rows.length === 0) {
@@ -246,7 +257,7 @@ export const getNoteById = async (
 ): Promise<NoteRecord | null> => {
   await ensureDbReady();
   const result = await executeSql(
-    "SELECT id, type, date, title, body, updated_at FROM notes WHERE id = ? LIMIT 1",
+    "SELECT id, type, date, title, body, scope, project_id, updated_at FROM notes WHERE id = ? LIMIT 1",
     [noteId],
   );
   if (result.rows.length === 0) {
@@ -258,7 +269,7 @@ export const getNoteById = async (
 export const listAllNotes = async (): Promise<NoteRecord[]> => {
   await ensureDbReady();
   const result = await executeSql(
-    "SELECT id, type, date, title, body, updated_at FROM notes ORDER BY updated_at DESC",
+    "SELECT id, type, date, title, body, scope, project_id, updated_at FROM notes ORDER BY updated_at DESC",
   );
   return (result.rows._array as NoteRow[]).map((row) => toNoteRecord(row));
 };
@@ -274,12 +285,16 @@ export const upsertFreeNote = async (input: {
   const title = input.title ?? null;
   const shouldEnqueueSync = input.enqueueSync !== false;
   if (input.id) {
+    const existing = await getFreeNoteById(input.id);
+    if (!existing) throw new Error("ノートが見つかりません。");
     const updated: NoteRecord = {
       id: input.id,
       type: "free",
       date: null,
       title,
       body: input.body,
+      scope: existing.scope,
+      projectId: existing.projectId,
       updatedAt: now,
     };
     await executeSql("BEGIN IMMEDIATE TRANSACTION");
@@ -312,12 +327,14 @@ export const upsertFreeNote = async (input: {
     date: null,
     title,
     body: input.body,
+    scope: "personal",
+    projectId: null,
     updatedAt: now,
   };
   await executeSql("BEGIN IMMEDIATE TRANSACTION");
   try {
     await executeSql(
-      "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, 'free', NULL, ?, ?, ?)",
+      "INSERT INTO notes (id, type, date, title, body, scope, project_id, updated_at) VALUES (?, 'free', NULL, ?, ?, 'personal', NULL, ?)",
       [id, title, input.body, now],
     );
     await rebuildSearchIndexesForNote(created);
@@ -345,13 +362,15 @@ export const upsertNoteRecord = async (
   await executeSql("BEGIN IMMEDIATE TRANSACTION");
   try {
     await executeSql(
-      "INSERT INTO notes (id, type, date, title, body, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET type = excluded.type, date = excluded.date, title = excluded.title, body = excluded.body, updated_at = excluded.updated_at",
+      "INSERT INTO notes (id, type, date, title, body, scope, project_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET type = excluded.type, date = excluded.date, title = excluded.title, body = excluded.body, scope = excluded.scope, project_id = excluded.project_id, updated_at = excluded.updated_at",
       [
         record.id,
         record.type,
         record.date,
         record.title,
         record.body,
+        record.scope,
+        record.projectId,
         record.updatedAt,
       ],
     );
@@ -362,6 +381,27 @@ export const upsertNoteRecord = async (
     throw error;
   }
   return record;
+};
+
+export const setNoteScope = async (
+  noteId: string,
+  scope: ContentScope,
+): Promise<NoteRecord> => {
+  const existing = await getNoteById(noteId);
+  if (!existing) throw new Error("ノートが見つかりません。");
+  const updated: NoteRecord = {
+    ...existing,
+    scope: scope.scope,
+    projectId: scope.projectId,
+    updatedAt: Date.now(),
+  };
+  await executeSql(
+    "UPDATE notes SET scope = ?, project_id = ?, updated_at = ? WHERE id = ?",
+    [updated.scope, updated.projectId, updated.updatedAt, noteId],
+  );
+  const deviceId = await loadSyncDeviceId();
+  await persistAndEnqueueSyncEnvelope(buildNoteSyncEnvelope({ note: updated, deviceId }));
+  return updated;
 };
 
 export const deleteNoteById = async (

@@ -56,6 +56,8 @@ type Props = {
   }>;
   completedTime?: string | null;
   completed?: boolean;
+  swipeEnabled?: boolean;
+  draggable?: boolean;
 };
 
 const TaskItem = ({
@@ -85,6 +87,8 @@ const TaskItem = ({
   actions,
   completedTime,
   completed = false,
+  swipeEnabled = true,
+  draggable = true,
 }: Props) => {
   const rowRef = useRef<View>(null);
   const isDraggingRef = useRef(false);
@@ -168,7 +172,7 @@ const TaskItem = ({
     <SwipeableRow
       styles={styles}
       actions={actions}
-      enabled={!selectionMode && !isDragging}
+      enabled={swipeEnabled && !selectionMode && !isDragging}
       isOpen={isOpen}
       onOpen={onOpen}
       onClose={onClose}
@@ -181,7 +185,7 @@ const TaskItem = ({
     >
       <View
         ref={rowRef}
-        {...dragPanResponder.panHandlers}
+        {...(draggable ? dragPanResponder.panHandlers : {})}
         style={isDragging ? styles.taskDragSource : undefined}
       >
         {completed ? (
@@ -190,8 +194,8 @@ const TaskItem = ({
             <Pressable
               style={styles.completedTaskBody}
               onPress={handlePress}
-              onLongPress={selectionMode ? undefined : handleLongPress}
-              onPressOut={(event) => handlePressOut(event.nativeEvent.pageY)}
+              onLongPress={selectionMode || !draggable ? undefined : handleLongPress}
+              onPressOut={draggable ? (event) => handlePressOut(event.nativeEvent.pageY) : undefined}
               delayLongPress={400}
             >
               <View style={styles.completedTaskContent}>
@@ -222,8 +226,8 @@ const TaskItem = ({
                     isActive && !selectionMode && styles.taskHeaderActive,
                   ]}
                   onPress={handlePress}
-                  onLongPress={selectionMode ? undefined : handleLongPress}
-                  onPressOut={(event) => handlePressOut(event.nativeEvent.pageY)}
+                  onLongPress={selectionMode || !draggable ? undefined : handleLongPress}
+                  onPressOut={draggable ? (event) => handlePressOut(event.nativeEvent.pageY) : undefined}
                   delayLongPress={400}
                 >
                   <View style={styles.taskHeaderContent}>

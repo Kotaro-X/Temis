@@ -8,6 +8,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 
 import MenuButton from "../components/common/MenuButton";
+import ProjectOwnedTaskList from "../components/private-project/ProjectOwnedTaskList";
 import {
   TodoComposerModal,
   TodoItemsList,
@@ -202,6 +203,7 @@ const TodoWorkspaceScreen = ({
         todoCountsByDate={todoCountsByDate}
         selectedDateTodos={selectedDateTodos}
         unscheduledTodos={unscheduledTodos}
+        projectItemsFooter={<ProjectOwnedTaskList kind="todo" />}
       />
       <TodoComposerModal
         visible={todoCreateOpen}

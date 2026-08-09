@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -14,6 +14,10 @@ import type { TaskWorkspaceScreenKey } from "../types/appNavigation";
 import styles from "../styles/workspaceSharedStyles";
 import type { SlotKey, Tag, TaskState, TaskStatus, TimeBoxSchedule } from "../types";
 import { SLOT_KEYS } from "../types";
+import { listMyProjectTasks, updateProjectTask, type MyProjectTask } from "../services/collaboration/collaborationService";
+import { syncProjectTaskMemo } from "../services/collaboration/projectTaskMemoService";
+import { useCollaboration } from "../context/CollaborationContext";
+import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot } from "../utils/projectTaskPlacement";
 
 type Props = {
   visible: boolean;
@@ -39,6 +43,7 @@ type Props = {
   timeBoxSchedule: TimeBoxSchedule;
   onSearchToken: (keyword: string) => void;
   defaultContentPaddingTop: number;
+  taskDetailContentPaddingTop: number;
   todayContentPaddingTop: number;
   footerPaddingBottom: number;
 };
@@ -50,6 +55,15 @@ const buildExpandedState = () =>
       return acc;
     },
     {} as Record<SlotKey, boolean>,
+  );
+
+const emptyProjectTasksBySlot = () =>
+  SLOT_KEYS.reduce(
+    (items, slotKey) => {
+      items[slotKey] = [];
+      return items;
+    },
+    {} as Record<SlotKey, MyProjectTask[]>,
   );
 
 const parseMinutes = (text: string) => {
@@ -82,9 +96,12 @@ const TaskWorkspaceScreen = ({
   timeBoxSchedule,
   onSearchToken,
   defaultContentPaddingTop,
+  taskDetailContentPaddingTop,
   todayContentPaddingTop,
   footerPaddingBottom,
 }: Props) => {
+  const [projectTasksBySlot, setProjectTasksBySlot] = useState(emptyProjectTasksBySlot);
+  const { profile } = useCollaboration();
   const {
     todayState,
     activeTaskId,
@@ -137,6 +154,40 @@ const TaskWorkspaceScreen = ({
     closeTaskDetail,
     logState,
   } = useTaskWorkspace();
+
+  const refreshProjectTasks = useCallback(async () => {
+    if (!visible || currentScreen !== "today") {
+      setProjectTasksBySlot(emptyProjectTasksBySlot());
+      return;
+    }
+    try {
+      const nextItems = await listMyProjectTasks("task");
+      const itemsWithBackfilledMemos = profile
+        ? await Promise.all(nextItems.map(async (item) => {
+          if (item.task.relatedMemoId || !item.task.description?.trim()) return item;
+          const relatedMemoId = await syncProjectTaskMemo({ task: item.task, profile });
+          return {
+            ...item,
+            task: await updateProjectTask(item.task.id, { relatedMemoId }),
+          };
+        }))
+        : nextItems;
+      const nextBySlot = emptyProjectTasksBySlot();
+      for (const item of itemsWithBackfilledMemos) {
+        if (getProjectTaskPrivateDate(item.task) !== selectedDate) {
+          continue;
+        }
+        nextBySlot[getProjectTaskPrivateSlot(item.task, timeBoxSchedule)].push(item);
+      }
+      setProjectTasksBySlot(nextBySlot);
+    } catch {
+      setProjectTasksBySlot(emptyProjectTasksBySlot());
+    }
+  }, [currentScreen, profile, selectedDate, timeBoxSchedule, visible]);
+
+  useEffect(() => {
+    void refreshProjectTasks();
+  }, [refreshProjectTasks]);
   const [newTaskId, setNewTaskId] = useState<string | null>(null);
   const [activeExpandedBySlot, setActiveExpandedBySlot] = useState<
     Record<SlotKey, boolean>
@@ -416,7 +467,7 @@ const TaskWorkspaceScreen = ({
     return (
       <TaskDetailScreen
         styles={styles}
-        contentPaddingTop={defaultContentPaddingTop}
+        contentPaddingTop={taskDetailContentPaddingTop}
         title={tr("task.editTitle")}
         headerLeft={
           detailTaskInfo ? (
@@ -527,7 +578,10 @@ const TaskWorkspaceScreen = ({
         contentPaddingTop={todayContentPaddingTop}
         footerPaddingBottom={footerPaddingBottom}
         refreshing={refreshing}
-        onRefresh={onRefresh}
+        onRefresh={() => {
+          onRefresh();
+          void refreshProjectTasks();
+        }}
         trf={trf}
         routineSuggestions={routineSuggestions}
         currentSlotLabel={getSlotLabel(language, currentSlot)}
@@ -550,6 +604,9 @@ const TaskWorkspaceScreen = ({
         }}
         taskListBaseProps={taskListBaseProps}
         moveModalProps={moveModalProps}
+        projectTasksBySlot={projectTasksBySlot}
+        onProjectTaskChanged={() => void refreshProjectTasks()}
+        timeBoxSchedule={timeBoxSchedule}
       />
       {inProgressInfo ? (
         <TimerBar
