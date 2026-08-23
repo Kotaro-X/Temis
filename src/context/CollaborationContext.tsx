@@ -2,7 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { onAuthStateChanged } from "firebase/auth";
 
 import { getFirebaseAuth } from "../services/sync/firebaseApp";
-import { isGoogleSyncFirebaseUser, type GoogleSyncUser } from "../services/auth/googleSignIn";
+import { isSyncFirebaseUser, toSyncUser } from "../services/auth/syncUser";
+import { useSubscription } from "./SubscriptionContext";
 import {
   createProject,
   ensureUserProfile,
@@ -25,11 +26,8 @@ type CollaborationContextValue = {
 
 const CollaborationContext = createContext<CollaborationContextValue | null>(null);
 
-const toGoogleUser = (user: { uid: string; email: string | null; displayName: string | null }): GoogleSyncUser => ({
-  id: user.uid, email: user.email, name: user.displayName,
-});
-
 export const CollaborationProvider = ({ children }: { children: React.ReactNode }) => {
+  const { isCloudSyncEntitled } = useSubscription();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [status, setStatus] = useState<CollaborationContextValue["status"]>("loading");
@@ -37,7 +35,7 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
 
   const refresh = useCallback(async () => {
     const user = getFirebaseAuth().currentUser;
-    if (!isGoogleSyncFirebaseUser(user)) {
+    if (!isSyncFirebaseUser(user)) {
       setProfile(null);
       setProjects([]);
       setStatus("signed_out");
@@ -46,7 +44,13 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
     setStatus("loading");
     setError(null);
     try {
-      const nextProfile = await ensureUserProfile(toGoogleUser(user));
+      const nextProfile = await ensureUserProfile(toSyncUser(user));
+      if (!isCloudSyncEntitled) {
+        setProfile(nextProfile);
+        setProjects([]);
+        setStatus("ready");
+        return;
+      }
       const nextProjects = await listMyProjects();
       setProfile(nextProfile);
       setProjects(nextProjects);
@@ -55,7 +59,7 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
       setStatus("error");
       setError(cause instanceof Error ? cause.message : "連携情報を読み込めませんでした。");
     }
-  }, []);
+  }, [isCloudSyncEntitled]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(getFirebaseAuth(), () => { void refresh(); });
@@ -75,10 +79,13 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
   const addProject = useCallback(async (
     input: Pick<Project, "name" | "description" | "icon" | "tags">,
   ) => {
+    if (!isCloudSyncEntitled) {
+      throw new Error("プロジェクト機能を利用するにはTemis Plusへの加入が必要です。");
+    }
     const project = await createProject(input);
     setProjects((current) => [project, ...current]);
     return project;
-  }, []);
+  }, [isCloudSyncEntitled]);
 
   const value = useMemo<CollaborationContextValue>(() => ({
     profile, projects, status, error, refresh, saveUsername, saveDisplayName, addProject,

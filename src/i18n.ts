@@ -62,7 +62,7 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
       "サブスクリプションを購入すると、Temis のデータを複数端末で同期できます。",
     "settings.sync.subscriptionPurchase": "サブスクリプションを購入",
     "settings.sync.subscriptionLoginRequired":
-      "購入内容を Temis アカウントに紐付けるため、先に Google でログインしてください。",
+      "購入はアカウントなしで行えます。複数端末で同期するには、後からログインしてください。",
     "settings.sync.subscriptionRestoreCaption": "以前購入した場合は購入を復元してください",
     "settings.sync.inviteSectionTitle": "招待コードを使う",
     "settings.sync.inviteCodeLabel": "招待コード",
@@ -78,7 +78,7 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.revenueCatActive": "サブスクで同期が解放されています",
     "settings.account.connected": "接続済み",
     "settings.account.notConnected": "未接続",
-    "settings.account.noAccount": "Googleアカウントが接続されていません",
+    "settings.account.noAccount": "アカウントが接続されていません",
     "settings.account.username": "ユーザーネーム",
     "settings.account.usernameDescription": "ユーザーを識別・検索するためのIDです。",
     "settings.account.usernamePlaceholder": "ユーザーネームを入力",
@@ -341,7 +341,7 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
       "Purchase the subscription to sync your Temis data across devices.",
     "settings.sync.subscriptionPurchase": "Purchase subscription",
     "settings.sync.subscriptionLoginRequired":
-      "Sign in with Google first so your purchase is linked to your Temis account.",
+      "You can purchase without an account. Sign in later to sync across devices.",
     "settings.sync.subscriptionRestoreCaption":
       "If you already purchased before, restore your purchase.",
     "settings.sync.inviteSectionTitle": "Use an invite code",
@@ -358,7 +358,7 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.revenueCatActive": "Cloud Sync is unlocked by your subscription.",
     "settings.account.connected": "Connected",
     "settings.account.notConnected": "Not connected",
-    "settings.account.noAccount": "No Google account connected",
+    "settings.account.noAccount": "No account connected",
     "settings.account.username": "Username",
     "settings.account.usernameDescription": "An ID used to identify and find you.",
     "settings.account.usernamePlaceholder": "Enter a username",

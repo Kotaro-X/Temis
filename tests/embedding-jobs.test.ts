@@ -134,4 +134,19 @@ test("embedding runner recovers stale processing jobs for app restart", async ()
   assert.equal(source.includes("status = 'processing'"), true);
   assert.equal(source.includes("status = 'pending'"), true);
   assert.equal(source.includes("await recoverStaleEmbeddingJobs()"), true);
+  assert.equal(source.includes("hasIndexedDocument"), true);
+  assert.equal(source.includes("deferJobUntilAuthenticated"), true);
+});
+
+test("note and research writes enqueue embeddings instead of generating them synchronously", async () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const [chunkIndexSource, noteSource, researchSource] = await Promise.all([
+    readFile(resolve(testDir, "../src/db/chunkIndexRepo.ts"), "utf8"),
+    readFile(resolve(testDir, "../src/db/noteRepo.ts"), "utf8"),
+    readFile(resolve(testDir, "../src/services/researchNoteService.ts"), "utf8"),
+  ]);
+
+  assert.equal(noteSource.includes("await enqueueMemoEmbeddingJob(documentId)"), true);
+  assert.equal(researchSource.includes("await enqueueMemoEmbeddingJob(documentId)"), true);
+  assert.equal(chunkIndexSource.includes("await provider.embedBatch"), false);
 });

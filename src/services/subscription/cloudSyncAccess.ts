@@ -6,6 +6,11 @@ import {
 } from "firebase/firestore";
 
 import { getFirebaseFirestore } from "../sync/firebaseApp";
+import { hasStaffFreeAccess as hasActiveStaffFreeAccess } from "./staffAccess";
+import {
+  isCloudSyncGrantStateActive,
+  retainActiveCloudSyncGrantOnRefreshFailure as retainActiveGrantStateOnRefreshFailure,
+} from "./cloudSyncAccessState";
 
 export type CloudSyncGrantType =
   | "staff_free"
@@ -132,18 +137,29 @@ const parseInviteCodeRecord = (
 export const isCloudSyncGrantActive = (
   grant: CloudSyncAccessGrant | null | undefined,
   now = Date.now(),
-): boolean => {
-  if (!grant?.active) {
-    return false;
-  }
-  return grant.expiresAt === null || grant.expiresAt > now;
-};
+): boolean => isCloudSyncGrantStateActive(grant, now);
+
+/**
+ * A transient Firestore read error must not revoke access that was already
+ * established during this app session. Explicit sign-out, a successful
+ * no-grant response, and expiry still clear the grant through their normal
+ * paths.
+ */
+export const retainActiveCloudSyncGrantOnRefreshFailure = (
+  grant: CloudSyncAccessGrant | null | undefined,
+  now = Date.now(),
+): CloudSyncAccessGrant | null =>
+  retainActiveGrantStateOnRefreshFailure(grant, now);
 
 export const grantsFreeCloudSyncAccess = (
   grant: CloudSyncAccessGrant | null | undefined,
 ): boolean =>
   isCloudSyncGrantActive(grant) &&
   (grant?.grantType === "staff_free" || grant?.grantType === "invite_free");
+
+export const hasStaffFreeAccess = (
+  grant: CloudSyncAccessGrant | null | undefined,
+): boolean => hasActiveStaffFreeAccess(grant);
 
 export const hasInviteDiscountAccess = (
   grant: CloudSyncAccessGrant | null | undefined,

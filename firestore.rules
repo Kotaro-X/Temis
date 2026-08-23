@@ -541,6 +541,66 @@ service cloud.firestore {
         && data.joinedAt is int && data.updatedAt is int;
     }
 
+    function isGuildStaff() {
+      return signedIn()
+        && exists(subscriptionAccessPath(request.auth.uid))
+        && get(subscriptionAccessPath(request.auth.uid)).data.active == true
+        && get(subscriptionAccessPath(request.auth.uid)).data.grantType == "staff_free";
+    }
+
+    function connectionPath(leftUserId, rightUserId) {
+      return /databases/$(database)/documents/connections/$(leftUserId < rightUserId ? leftUserId + "__" + rightUserId : rightUserId + "__" + leftUserId);
+    }
+
+    function isBlockedWith(otherUserId) {
+      return signedIn() && otherUserId != request.auth.uid
+        && exists(connectionPath(request.auth.uid, otherUserId))
+        && get(connectionPath(request.auth.uid, otherUserId)).data.status == "blocked";
+    }
+
+    function validGuildPost(data, postId) {
+      return data.keys().hasOnly([
+          "id", "authorUserId", "authorDisplayName", "authorPhotoUrl", "body", "tags", "type", "projectId",
+          "source", "status", "moderation", "createdAt", "updatedAt", "publishedAt",
+        ])
+        && data.id == postId
+        && validString(data.authorUserId, 128) && validString(data.authorDisplayName, 100)
+        && validNullableString(data.authorPhotoUrl, 4096) && validString(data.body, 900000)
+        && validStringList(data.tags, 5)
+        && data.type in ["personal", "project_activity", "project_recruiting"]
+        && validNullableString(data.projectId, 128)
+        && (data.type == "personal" || data.projectId != null)
+        && data.source.keys().hasOnly(["scope", "memoId"])
+        && data.source.scope in ["personal", "project"] && validString(data.source.memoId, 512)
+        && data.status in ["published", "unpublished", "deleted"]
+        && data.moderation.keys().hasOnly(["visibility", "hiddenByUserId", "hiddenAt", "reason"])
+        && data.moderation.visibility in ["visible", "hidden"]
+        && validNullableString(data.moderation.hiddenByUserId, 128)
+        && validNullableInt(data.moderation.hiddenAt) && validNullableString(data.moderation.reason, 1000)
+        && data.createdAt is int && data.updatedAt is int && validNullableInt(data.publishedAt);
+    }
+
+    function guildPostIsVisible(data) {
+      return data.status == "published" && data.moderation.visibility == "visible";
+    }
+
+    function validProjectJoinRequest(data, requestId) {
+      return data.keys().hasOnly(["id", "projectId", "applicantUserId", "requestedRole", "message", "status", "createdAt", "updatedAt"])
+        && data.id == requestId && validString(data.projectId, 128) && validString(data.applicantUserId, 128)
+        && data.requestedRole in ["member", "viewer"] && validNullableString(data.message, 4000)
+        && data.status in ["pending", "accepted", "declined", "withdrawn", "cancelled"]
+        && data.createdAt is int && data.updatedAt is int;
+    }
+
+    function validGuildReport(data, reportId) {
+      return data.keys().hasOnly(["id", "postId", "reporterUserId", "reportedUserId", "reason", "status", "notificationStatus", "createdAt", "updatedAt"])
+        && data.id == reportId && validString(data.postId, 128)
+        && validString(data.reporterUserId, 128) && validString(data.reportedUserId, 128)
+        && validString(data.reason, 4000) && data.status in ["pending", "reviewed", "dismissed"]
+        && data.notificationStatus in ["pending", "sent", "failed"]
+        && data.createdAt is int && data.updatedAt is int;
+    }
+
     match /profiles/{userId} {
       allow get: if isSelf(userId) || resource.data.profileVisibility == "public";
       allow list: if signedIn() && resource.data.profileVisibility == "public";
@@ -613,10 +673,10 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(["id", "projectId", "userId", "role", "updatedAt"])
         && request.resource.data.id == membershipId
-        && request.resource.data.userId == request.auth.uid
         && request.resource.data.role in ["owner", "member", "viewer"]
         && request.resource.data.updatedAt is int
-        && getAfter(projectMemberPath(request.resource.data.projectId, request.auth.uid)).data.role == request.resource.data.role;
+        && (request.auth.uid == request.resource.data.userId || isProjectOwner(request.resource.data.projectId))
+        && getAfter(projectMemberPath(request.resource.data.projectId, request.resource.data.userId)).data.role == request.resource.data.role;
       allow update, delete: if false;
     }
 
@@ -653,6 +713,64 @@ service cloud.firestore {
         && (projectRole(resource.data.projectId) in ["owner", "member"] || resource.data.ownerUserId == request.auth.uid || resource.data.creatorUserId == request.auth.uid || resource.data.assigneeUserId == request.auth.uid)
         && (request.resource.data.assigneeUserId == null || exists(projectMemberPath(resource.data.projectId, request.resource.data.assigneeUserId)));
       allow delete: if signedIn() && (isProjectOwner(resource.data.projectId) || resource.data.ownerUserId == request.auth.uid);
+    }
+
+    match /guildPosts/{postId} {
+      // Feed queries need a rule that can be proven from their status and
+      // visibility constraints. Blocked authors are filtered by the client
+      // after the page loads; checking one connection per post here makes a
+      // paged query exceed Firestore's rule document-access limit.
+      allow get: if signedIn() && (
+        resource.data.authorUserId == request.auth.uid || isGuildStaff() ||
+        (guildPostIsVisible(resource.data) && !isBlockedWith(resource.data.authorUserId))
+      );
+      allow list: if signedIn() && guildPostIsVisible(resource.data);
+      allow create: if signedIn() && validGuildPost(request.resource.data, postId)
+        && request.resource.data.authorUserId == request.auth.uid
+        && request.resource.data.status == "published"
+        && request.resource.data.moderation.visibility == "visible"
+        && (request.resource.data.projectId == null || isProjectEditor(request.resource.data.projectId));
+      allow update: if validGuildPost(request.resource.data, postId) && (
+        (signedIn() && resource.data.authorUserId == request.auth.uid
+          && request.resource.data.authorUserId == resource.data.authorUserId
+          && request.resource.data.source == resource.data.source
+          && request.resource.data.moderation == resource.data.moderation
+          && request.resource.data.createdAt == resource.data.createdAt)
+        || (isGuildStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["moderation", "updatedAt"]))
+      );
+      allow delete: if false;
+    }
+
+    match /projectJoinRequests/{requestId} {
+      allow get, list: if signedIn() && (
+        resource.data.applicantUserId == request.auth.uid || isProjectOwner(resource.data.projectId)
+      );
+      allow create: if signedIn() && validProjectJoinRequest(request.resource.data, requestId)
+        && request.resource.data.applicantUserId == request.auth.uid
+        && request.resource.data.id == request.resource.data.projectId + "__" + request.auth.uid
+        && request.resource.data.status == "pending"
+        && get(projectPath(request.resource.data.projectId)).data.visibility == "public"
+        && get(projectPath(request.resource.data.projectId)).data.joinPolicy == "approval_required"
+        && !exists(projectMemberPath(request.resource.data.projectId, request.auth.uid));
+      allow update: if validProjectJoinRequest(request.resource.data, requestId) && (
+        (signedIn() && resource.data.applicantUserId == request.auth.uid
+          && resource.data.status == "pending" && request.resource.data.status == "withdrawn"
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]))
+        || (isProjectOwner(resource.data.projectId) && resource.data.status == "pending"
+          && request.resource.data.status in ["accepted", "declined"]
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]))
+      );
+      allow delete: if false;
+    }
+
+    match /guildReports/{reportId} {
+      allow get, list: if isGuildStaff() || (signedIn() && resource.data.reporterUserId == request.auth.uid);
+      allow create: if signedIn() && validGuildReport(request.resource.data, reportId)
+        && request.resource.data.reporterUserId == request.auth.uid
+        && request.resource.data.status == "pending" && request.resource.data.notificationStatus == "pending"
+        && get(/databases/$(database)/documents/guildPosts/$(request.resource.data.postId)).data.authorUserId == request.resource.data.reportedUserId;
+      allow update: if isGuildStaff() && validGuildReport(request.resource.data, reportId);
+      allow delete: if false;
     }
   }
 }

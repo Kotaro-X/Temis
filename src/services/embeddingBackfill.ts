@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid/non-secure";
 
 import { getEmbeddingProvider } from "./EmbeddingProvider";
+import { enqueueMemoEmbeddingJob } from "./embeddingJobs";
 import { buildIndexText, IndexableNote } from "./indexTextBuilder";
 import { rebuildChunkIndexForDocument } from "../db/chunkIndexRepo";
 import { ensureDbReady, executeSql } from "../db/sqlite";
@@ -275,6 +276,7 @@ export const backfillEmbeddings = async (options?: {
         continue;
       }
       await rebuildChunkIndexForDocument(documentId, indexText);
+      await enqueueMemoEmbeddingJob(documentId, { embeddingModelVersion });
       nextProgress.reindexed_docs += 1;
     } catch (error) {
       nextProgress.error_count += 1;

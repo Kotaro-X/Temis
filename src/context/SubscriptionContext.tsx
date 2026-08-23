@@ -28,9 +28,10 @@ import {
   hasInviteDiscountAccess,
   loadCloudSyncAccessGrant,
   redeemInviteCode,
+  retainActiveCloudSyncGrantOnRefreshFailure,
   type CloudSyncAccessGrant,
 } from "../services/subscription/cloudSyncAccess";
-import { isGoogleSyncFirebaseUser } from "../services/auth/googleSignIn";
+import { isSyncFirebaseUser } from "../services/auth/syncUser";
 
 type SubscriptionStatus = "idle" | "loading" | "ready" | "purchasing" | "error";
 type InviteStatus = "idle" | "redeeming" | "error";
@@ -114,7 +115,7 @@ export const SubscriptionProvider = ({
 
   const refreshAccessGrant = useCallback(
     async (user: User | null): Promise<CloudSyncAccessGrant | null> => {
-      if (!user || !isGoogleSyncFirebaseUser(user)) {
+      if (!user || !isSyncFirebaseUser(user)) {
         setAccessGrant(null);
         return null;
       }
@@ -123,7 +124,12 @@ export const SubscriptionProvider = ({
         setAccessGrant(nextGrant);
         return nextGrant;
       } catch (grantError) {
-        setAccessGrant(null);
+        // Losing connectivity or receiving a transient Firestore error must
+        // not turn Cloud Sync off after access has already been established.
+        // A successful empty response and explicit sign-out still clear it.
+        setAccessGrant((currentGrant) =>
+          retainActiveCloudSyncGrantOnRefreshFailure(currentGrant),
+        );
         setError(formatError(grantError));
         return null;
       }
@@ -148,21 +154,16 @@ export const SubscriptionProvider = ({
 
   const purchase = useCallback(async (): Promise<CustomerInfo | null> => {
     const purchaseUser =
-      firebaseUser && isGoogleSyncFirebaseUser(firebaseUser)
-        ? firebaseUser
-        : getFirebaseAuth().currentUser;
-    if (!isGoogleSyncFirebaseUser(purchaseUser)) {
-      setStatus("error");
-      setError("Sign in with Google before purchasing Temis Plus.");
-      return null;
-    }
+      firebaseUser && isSyncFirebaseUser(firebaseUser) ? firebaseUser : null;
 
     setStatus("purchasing");
     setError(null);
     try {
-      // Firebase's auth observer can arrive just after the Google sign-in UI closes.
-      // Identify the RevenueCat customer here as well so the first purchase is attributed.
-      await logInRevenueCatUser(purchaseUser.uid);
+      // Apple requires purchases to work without account registration. RevenueCat
+      // keeps such purchases anonymous, then transfers them when a user later signs in.
+      if (purchaseUser) {
+        await logInRevenueCatUser(purchaseUser.uid);
+      }
       const nextCustomerInfo = await purchaseCloudSyncPlan(
         hasInviteDiscountAccess(accessGrant)
           ? {
@@ -186,19 +187,14 @@ export const SubscriptionProvider = ({
 
   const restore = useCallback(async (): Promise<CustomerInfo | null> => {
     const restoreUser =
-      firebaseUser && isGoogleSyncFirebaseUser(firebaseUser)
-        ? firebaseUser
-        : getFirebaseAuth().currentUser;
-    if (!isGoogleSyncFirebaseUser(restoreUser)) {
-      setStatus("error");
-      setError("Sign in with Google before restoring purchases.");
-      return null;
-    }
+      firebaseUser && isSyncFirebaseUser(firebaseUser) ? firebaseUser : null;
 
     setStatus("loading");
     setError(null);
     try {
-      await logInRevenueCatUser(restoreUser.uid);
+      if (restoreUser) {
+        await logInRevenueCatUser(restoreUser.uid);
+      }
       const nextCustomerInfo = await restorePurchases();
       return applyCustomerInfo(nextCustomerInfo);
     } catch (restoreError) {
@@ -210,7 +206,7 @@ export const SubscriptionProvider = ({
 
   const redeemInviteCodeForAccess = useCallback(
     async (code: string): Promise<CloudSyncAccessGrant | null> => {
-      if (!firebaseUser || !isGoogleSyncFirebaseUser(firebaseUser)) {
+      if (!firebaseUser || !isSyncFirebaseUser(firebaseUser)) {
         setInviteStatus("error");
         setInviteError("Sign in with Google before redeeming an invite code.");
         return null;
@@ -297,7 +293,7 @@ export const SubscriptionProvider = ({
 
     let active = true;
     const user =
-      firebaseUser && isGoogleSyncFirebaseUser(firebaseUser) ? firebaseUser : null;
+      firebaseUser && isSyncFirebaseUser(firebaseUser) ? firebaseUser : null;
 
     const syncRevenueCatIdentity = async () => {
       setStatus("loading");

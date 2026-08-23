@@ -11,6 +11,7 @@ import {
 import { ensureDbReady, executeSql } from "../db/sqlite";
 import { invalidateHybridSearchCache } from "./hybridSearch";
 import { getEmbeddingProvider } from "./EmbeddingProvider";
+import { OpenAIEmbeddingAuthenticationError } from "./OpenAIEmbeddingProvider";
 import {
   canRunEmbeddingJob,
   EmbeddingJobStatus,
@@ -94,6 +95,8 @@ export type MemoEmbeddingRebuildProgress = {
 
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_JOB_LIMIT = 5;
+const AUTHENTICATION_RETRY_DELAY_MS = 60_000;
+const MAX_EMBEDDINGS_PER_REQUEST = 20;
 const DEFAULT_REBUILD_JOB_KEY = "memo-embedding-rebuild-v1";
 const STALE_PROCESSING_JOB_MS = 5 * 60 * 1_000;
 
@@ -199,10 +202,11 @@ export const recoverStaleEmbeddingJobs = async (
   );
 };
 
-const isMemoPresent = async (memoId: string): Promise<boolean> => {
-  const result = await executeSql("SELECT id FROM memos WHERE id = ? LIMIT 1", [
-    memoId,
-  ]);
+const hasIndexedDocument = async (documentId: string): Promise<boolean> => {
+  const result = await executeSql(
+    "SELECT chunk_id FROM chunk_index WHERE memo_id = ? LIMIT 1",
+    [documentId],
+  );
   return result.rows.length > 0;
 };
 
@@ -233,6 +237,16 @@ const markJobPending = async (
   await executeSql(
     "UPDATE embedding_jobs SET status = 'pending', locked_at = NULL, updated_at = ? WHERE id = ?",
     [now, jobId],
+  );
+};
+
+const deferJobUntilAuthenticated = async (
+  jobId: string,
+  now: number,
+): Promise<void> => {
+  await executeSql(
+    "UPDATE embedding_jobs SET status = 'pending', attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, next_run_at = ?, locked_at = NULL, last_error = NULL, updated_at = ? WHERE id = ?",
+    [now + AUTHENTICATION_RETRY_DELAY_MS, now, jobId],
   );
 };
 
@@ -277,7 +291,7 @@ export const runEmbeddingJob = async (
     };
   }
 
-  if (!(await isMemoPresent(job.memoId))) {
+  if (!(await hasIndexedDocument(job.memoId))) {
     await executeSql("DELETE FROM chunk_index WHERE memo_id = ?", [job.memoId]);
     await deleteJob(job.id);
     invalidateHybridSearchCache();
@@ -298,6 +312,7 @@ export const runEmbeddingJob = async (
       embeddingModel: target.embeddingModel,
       embeddingModelVersion: target.embeddingModelVersion,
       embeddingDim: target.embeddingDim,
+      limit: MAX_EMBEDDINGS_PER_REQUEST,
     });
 
     if (chunks.length === 0) {
@@ -358,6 +373,18 @@ export const runEmbeddingJob = async (
       error: null,
     };
   } catch (error) {
+    if (error instanceof OpenAIEmbeddingAuthenticationError) {
+      await markMemoEmbeddingPending(job.memoId, target.embeddingModelVersion);
+      await deferJobUntilAuthenticated(job.id, Date.now());
+      invalidateHybridSearchCache();
+      return {
+        jobId: job.id,
+        memoId: job.memoId,
+        status: "pending",
+        chunkCount: 0,
+        error: null,
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     await markMemoEmbeddingFailed(job.memoId, message);
     await markJobFailed(job, message, Date.now());

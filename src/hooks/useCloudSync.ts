@@ -13,6 +13,12 @@ import {
   signOutGoogleSyncUser,
   type GoogleSyncUser,
 } from "../services/auth/googleSignIn";
+import {
+  isAppleSignInCancelledError,
+  signInAppleSyncUser,
+} from "../services/auth/appleSignIn";
+import { isSyncFirebaseUser, toSyncUser, type SyncUser } from "../services/auth/syncUser";
+import { getFirebaseAuth } from "../services/sync/firebaseApp";
 import { subscribeSyncQueueChanges } from "../services/sync/syncQueueEvents";
 import { waitForResolvedValue } from "../services/auth/waitForResolvedValue";
 
@@ -39,7 +45,7 @@ export const useCloudSync = ({
   const [authStatus, setAuthStatus] = useState<
     "restoring" | "signedOut" | "signingIn" | "signedIn"
   >("restoring");
-  const [user, setUser] = useState<GoogleSyncUser | null>(null);
+  const [user, setUser] = useState<SyncUser | null>(null);
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialSyncStatusRef = useRef<SyncEntityStatus>("idle");
   const initialSyncUserIdRef = useRef<string | null>(null);
@@ -59,7 +65,10 @@ export const useCloudSync = ({
 
   const restoreSession = useCallback(async () => {
     try {
-      const restoredUser = await restoreGoogleSyncUser();
+      const firebaseUser = getFirebaseAuth().currentUser;
+      const restoredUser = isSyncFirebaseUser(firebaseUser)
+        ? toSyncUser(firebaseUser)
+        : await restoreGoogleSyncUser();
       setUser(restoredUser);
       setAuthStatus(restoredUser ? "signedIn" : "signedOut");
       return restoredUser;
@@ -92,13 +101,16 @@ export const useCloudSync = ({
       clearAutoSyncTimer();
       return null;
     }
-    const restoredUser = getCurrentGoogleSyncUser() ?? (await restoreSession());
+    const firebaseUser = getFirebaseAuth().currentUser;
+    const restoredUser = isSyncFirebaseUser(firebaseUser)
+      ? toSyncUser(firebaseUser)
+      : getCurrentGoogleSyncUser() ?? (await restoreSession());
     if (!restoredUser) {
       setUser(null);
       setAuthStatus("signedOut");
       setStatus("idle");
-      setError("Sign in with Google before using Cloud Sync.");
-      setLastResultMessage("Sign in with Google before using Cloud Sync.");
+      setError("Sign in before using Cloud Sync.");
+      setLastResultMessage("Sign in before using Cloud Sync.");
       return null;
     }
     setUser(restoredUser);
@@ -177,6 +189,31 @@ export const useCloudSync = ({
     }
   }, []);
 
+  const signInWithApple = useCallback(async () => {
+    setAuthStatus("signingIn");
+    setError(null);
+    try {
+      const signedInUser = await signInAppleSyncUser();
+      setUser(signedInUser);
+      setAuthStatus("signedIn");
+      return signedInUser;
+    } catch (signInError) {
+      if (isAppleSignInCancelledError(signInError)) {
+        const currentUser = getFirebaseAuth().currentUser;
+        setUser(isSyncFirebaseUser(currentUser) ? toSyncUser(currentUser) : null);
+        setAuthStatus(isSyncFirebaseUser(currentUser) ? "signedIn" : "signedOut");
+        return null;
+      }
+      const message =
+        signInError instanceof Error ? signInError.message : String(signInError);
+      setUser(null);
+      setAuthStatus("signedOut");
+      setError(message);
+      setLastResultMessage(message);
+      return null;
+    }
+  }, []);
+
   const signOut = useCallback(async () => {
     try {
       await signOutGoogleSyncUser();
@@ -228,6 +265,7 @@ export const useCloudSync = ({
     authStatus,
     user,
     signIn,
+    signInWithApple,
     signOut,
     capabilities: SYNC_CAPABILITIES,
     initialSyncStatus,

@@ -13,7 +13,8 @@ import {
 } from "firebase/firestore";
 
 import { getFirebaseAuth, getFirebaseFirestore } from "../sync/firebaseApp";
-import type { GoogleSyncUser } from "../auth/googleSignIn";
+import { unpublishGuildPostsForProfile, updateGuildPostAuthorSnapshot } from "../guild/guildService";
+import type { SyncUser } from "../auth/syncUser";
 import {
   USERNAME_CHANGE_INTERVAL_MS,
   USERNAME_RELEASE_RESERVATION_MS,
@@ -66,7 +67,7 @@ const requireCurrentUserId = (): string => {
 const makeTemporaryUsername = (userId: string, attempt: number) =>
   `user_${userId.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 16)}${attempt || ""}`.slice(0, 30);
 
-const profileDefaults = (user: GoogleSyncUser, username: string, timestamp: number): UserProfile => ({
+const profileDefaults = (user: SyncUser, username: string, timestamp: number): UserProfile => ({
   userId: user.id,
   username,
   displayName: user.name?.trim() || "Temisユーザー",
@@ -114,8 +115,8 @@ const normalizeProjectTask = (task: ProjectTask): ProjectTask => ({
   isArchived: task.isArchived === true,
 });
 
-/** Creates one Google-user profile and atomically claims its temporary public ID. */
-export const ensureUserProfile = async (user: GoogleSyncUser): Promise<UserProfile> => {
+/** Creates one signed-in user profile and atomically claims its temporary public ID. */
+export const ensureUserProfile = async (user: SyncUser): Promise<UserProfile> => {
   const existing = await getDoc(profileRef(user.id));
   if (existing.exists()) return existing.data() as UserProfile;
 
@@ -194,7 +195,7 @@ export const updateDisplayName = async (input: string): Promise<UserProfile> => 
   if (displayName.length > 50) throw new Error("表示名は50文字以内で入力してください。");
 
   const userId = requireCurrentUserId();
-  return runTransaction(db(), async (transaction) => {
+  const updated = await runTransaction(db(), async (transaction) => {
     const profileSnapshot = await transaction.get(profileRef(userId));
     if (!profileSnapshot.exists()) throw new Error("プロフィールが見つかりません。");
     const updated: UserProfile = {
@@ -205,6 +206,8 @@ export const updateDisplayName = async (input: string): Promise<UserProfile> => 
     transaction.set(profileRef(userId), updated);
     return updated;
   });
+  await updateGuildPostAuthorSnapshot({ displayName: updated.displayName, photoUrl: updated.photoUrl ?? null });
+  return updated;
 };
 
 export const updateUserProfile = async (
@@ -212,6 +215,10 @@ export const updateUserProfile = async (
 ): Promise<void> => {
   const userId = requireCurrentUserId();
   await setDoc(profileRef(userId), { ...input, updatedAt: now() }, { merge: true });
+  if (input.profileVisibility !== "public") {
+    await unpublishGuildPostsForProfile();
+  }
+  await updateGuildPostAuthorSnapshot({ displayName: input.displayName, photoUrl: input.photoUrl ?? null });
 };
 
 export const searchProfiles = async (input: string): Promise<UserProfile[]> => {
@@ -404,6 +411,25 @@ export const setProjectTaskEnabled = async (projectId: string, enabled: boolean)
     ]);
     if (!projectSnapshot.exists() || memberSnapshot.data()?.role !== "owner") throw new Error("設定権限がありません。");
     transaction.set(projectRef(projectId), { taskEnabled: enabled, updatedAt: now() }, { merge: true });
+  });
+};
+
+/** Guild can only expose public projects through approval-required joining. */
+export const setProjectGuildVisibility = async (projectId: string, isPublic: boolean): Promise<Project> => {
+  const userId = requireCurrentUserId();
+  return runTransaction(db(), async (transaction) => {
+    const [projectSnapshot, memberSnapshot] = await Promise.all([
+      transaction.get(projectRef(projectId)), transaction.get(memberRef(projectId, userId)),
+    ]);
+    if (!projectSnapshot.exists() || memberSnapshot.data()?.role !== "owner") throw new Error("公開設定を変更する権限がありません。");
+    const updated: Project = {
+      ...(projectSnapshot.data() as Project),
+      visibility: isPublic ? "public" : "private",
+      joinPolicy: isPublic ? "approval_required" : "invitation_only",
+      updatedAt: now(),
+    };
+    transaction.set(projectRef(projectId), updated);
+    return updated;
   });
 };
 

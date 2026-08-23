@@ -190,6 +190,7 @@ const SettingsShell = ({
     authStatus: syncAuthStatus,
     user: syncUser,
     signIn: signInToSync,
+    signInWithApple: signInWithAppleToSync,
     signOut: signOutFromSync,
   } = useCloudSyncContext();
   const dataConfig: SettingsDataConfig = {
@@ -437,6 +438,9 @@ const SettingsShell = ({
           }}
           onSignInWithGoogle={() => {
             void signInToSync();
+          }}
+          onSignInWithApple={() => {
+            void signInWithAppleToSync();
           }}
           onSignOutGoogle={() => {
             void signOutFromSync();

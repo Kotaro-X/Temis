@@ -2,6 +2,7 @@ import { nanoid } from "nanoid/non-secure";
 
 import { loadSyncDeviceId } from "../../storage";
 import { getEmbeddingProvider } from "../services/EmbeddingProvider";
+import { enqueueMemoEmbeddingJob } from "../services/embeddingJobs";
 import { invalidateHybridSearchCache } from "../services/hybridSearch";
 import { buildIndexText, buildNoteDocumentId } from "../services/indexTextBuilder";
 import { buildNoteSyncEnvelope } from "../services/sync/syncEntityModels";
@@ -120,9 +121,10 @@ const rebuildSearchIndexesForNote = async (note: NoteRecord): Promise<void> => {
   await rebuildNoteLinks(noteId, indexText);
   const tokenStats = await rebuildTokenIndexForDocument(documentId, indexText);
   const chunkStats = await rebuildChunkIndexForDocument(documentId, indexText);
+  await enqueueMemoEmbeddingJob(documentId);
   invalidateHybridSearchCache();
   console.log(
-    `[Index][Note] done noteId=${noteId} chunks=${chunkStats.chunkCount} embedding=${chunkStats.chunkCount > 0 ? "yes" : "no"} embeddingModel=${chunkStats.embeddingModel} embeddingDim=${chunkStats.embeddingDim} tokens=${tokenStats.tokenCount}`,
+    `[Index][Note] done noteId=${noteId} chunks=${chunkStats.chunkCount} embedding=queued embeddingModel=${chunkStats.embeddingModel} embeddingDim=${chunkStats.embeddingDim} tokens=${tokenStats.tokenCount}`,
   );
 };
 

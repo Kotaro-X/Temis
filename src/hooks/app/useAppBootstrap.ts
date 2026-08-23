@@ -57,7 +57,7 @@ export const useAppBootstrap = ({ syncNow, onSynced }: Args) => {
     const llmConfig = configureLLMProviderFromEnv();
 
     console.log(
-      `[Embedding] provider=${config.useOllama ? "ollama" : "dummy"} model=${config.ollamaModel}`,
+      `[Embedding] provider=${config.provider}`,
     );
     console.log(
       `[LLM] provider=${llmConfig.provider} baseUrl=${llmConfig.ollamaBaseUrl} model=${llmConfig.ollamaModel}`,

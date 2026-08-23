@@ -15,6 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
+      "usesAppleSignIn": true,
       "bundleIdentifier": "com.anonymous.WeMemo",
       "googleServicesFile": "./config/GoogleService-Info.plist",
       "icon": "./assets/icon.png",
@@ -35,6 +36,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "expo-apple-authentication",
       "expo-notifications",
       "expo-sqlite",
       [

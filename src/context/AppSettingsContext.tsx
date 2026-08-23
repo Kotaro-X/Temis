@@ -186,7 +186,10 @@ export const AppSettingsProvider = ({
       languagePickerOpen,
       storageReady,
       cloudSyncEntitled: isCloudSyncEntitled,
-      cloudSyncEnabled: isCloudSyncEntitled ? cloudSyncEnabled : false,
+      // This is the user's persisted preference. Runtime sync is gated by
+      // `cloudSyncEnabled && cloudSyncEntitled` in useCloudSync, so an
+      // entitlement refresh must never make the preference appear disabled.
+      cloudSyncEnabled,
       tagLibrary,
       archivedTagLibrary,
       timeBoxSchedule,

@@ -6,6 +6,7 @@ import {
   listResearchNotes,
 } from "../services/researchNoteService";
 import { buildTankyuDocumentId } from "./indexTextBuilder";
+import { hybridSearch } from "./hybridSearch";
 import { SearchItem, SearchItemKind } from "../types/SearchItem";
 import { normalizeParens, normalizeSearchToken } from "../utils/wikiLink";
 
@@ -152,6 +153,45 @@ export const searchAllMemos = async (query: string): Promise<SearchMemo[]> => {
     searchTankyuMemos(query),
   ]);
   return [...taskResults, ...noteResults, ...tankyuResults];
+};
+
+const getSearchItemByDocumentId = async (
+  documentId: string,
+): Promise<SearchItem | null> => {
+  if (documentId.startsWith("note:")) {
+    return getSearchItemById("note", documentId.slice("note:".length));
+  }
+  if (documentId.startsWith("tankyu:")) {
+    return getSearchItemById("tankyu", documentId.slice("tankyu:".length));
+  }
+  return getSearchItemById("task", documentId);
+};
+
+export const searchAllMemosSemantically = async (
+  query: string,
+): Promise<SearchMemo[]> => {
+  const hits = await hybridSearch(query, { topK: 12, topN: 12 });
+  const resolved = await Promise.all(
+    hits.map(async (hit) => ({
+      hit,
+      item: await getSearchItemByDocumentId(hit.memoId),
+    })),
+  );
+  return resolved.flatMap(({ hit, item }) => {
+    if (!item) {
+      return [];
+    }
+    return [{
+      key: hit.memoId,
+      taskId: item.kind === "task" ? item.id : "",
+      date: item.date,
+      memoText: hit.snippetText,
+      taskTitle: item.title,
+      source: item.kind,
+      noteId: item.kind === "note" ? item.id : undefined,
+      tankyuId: item.kind === "tankyu" ? item.id : undefined,
+    }];
+  });
 };
 
 export const searchTankyuMemos = async (query: string): Promise<SearchMemo[]> => {

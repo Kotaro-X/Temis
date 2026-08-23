@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import * as AppleAuthentication from "expo-apple-authentication";
 import {
   Pressable,
   RefreshControl,
@@ -73,6 +74,7 @@ export type SettingsScreenProps = {
   onRestoreCloudSync?: () => void;
   onRedeemInviteCode?: () => void;
   onSignInWithGoogle?: () => void;
+  onSignInWithApple?: () => void;
   onSignOutGoogle?: () => void;
   onSyncNow?: () => void;
   initialSection?: SectionKey;
@@ -124,6 +126,7 @@ const SettingsScreen = ({
   onRestoreCloudSync,
   onRedeemInviteCode,
   onSignInWithGoogle,
+  onSignInWithApple,
   onSignOutGoogle,
   onSyncNow,
   initialSection,
@@ -148,6 +151,21 @@ const SettingsScreen = ({
   const [displayNameDraft, setDisplayNameDraft] = useState("");
   const [displayNameError, setDisplayNameError] = useState<string | null>(null);
   const [savingDisplayName, setSavingDisplayName] = useState(false);
+  const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void AppleAuthentication.isAvailableAsync()
+      .then((available) => {
+        if (active) setAppleSignInAvailable(available);
+      })
+      .catch(() => {
+        if (active) setAppleSignInAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     setUsernameDraft(username ?? "");
@@ -250,6 +268,15 @@ const SettingsScreen = ({
                   : t(language, "settings.sync.signInGoogle")}
           </Text>
         </Pressable>
+        {googleAuthStatus !== "signedIn" && appleSignInAvailable && onSignInWithApple ? (
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+            cornerRadius={8}
+            onPress={onSignInWithApple}
+            style={styles.appleAuthButton}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -511,12 +538,10 @@ const SettingsScreen = ({
                     {subscriptionAccessCaption}
                   </Text>
                 ) : null}
-                {googleAuthStatus === "signedIn" ? (
-                  <>
-                    {subscriptionError ? (
-                      <Text style={styles.syncErrorText}>{subscriptionError}</Text>
-                    ) : null}
-                    <Pressable
+                {subscriptionError ? (
+                  <Text style={styles.syncErrorText}>{subscriptionError}</Text>
+                ) : null}
+                <Pressable
                       style={[
                         styles.subscriptionPrimaryButton,
                         isSubscriptionBusy && styles.syncButtonDisabled,
@@ -529,8 +554,8 @@ const SettingsScreen = ({
                           ? t(language, "settings.sync.purchasing")
                           : t(language, "settings.sync.subscriptionPurchase")}
                       </Text>
-                    </Pressable>
-                    <Pressable
+                </Pressable>
+                <Pressable
                       style={[
                         styles.googleAuthButton,
                         styles.googleAuthButtonSecondary,
@@ -549,40 +574,10 @@ const SettingsScreen = ({
                           ? t(language, "settings.sync.restoringPurchase")
                           : t(language, "settings.sync.restorePurchase")}
                       </Text>
-                    </Pressable>
-                    <Text style={styles.subscriptionFootnote}>
-                      {t(language, "settings.sync.subscriptionRestoreCaption")}
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.subscriptionFootnote}>
-                      {t(language, "settings.sync.subscriptionLoginRequired")}
-                    </Text>
-                    <Pressable
-                      style={[
-                        styles.subscriptionPrimaryButton,
-                        (googleAuthStatus === "restoring" ||
-                          googleAuthStatus === "signingIn") &&
-                          styles.syncButtonDisabled,
-                      ]}
-                      onPress={onSignInWithGoogle}
-                      disabled={
-                        googleAuthStatus === "restoring" ||
-                        googleAuthStatus === "signingIn" ||
-                        !onSignInWithGoogle
-                      }
-                    >
-                      <Text style={styles.subscriptionPrimaryButtonText}>
-                        {googleAuthStatus === "signingIn"
-                          ? t(language, "settings.sync.signingIn")
-                          : googleAuthStatus === "restoring"
-                            ? t(language, "settings.sync.restoring")
-                            : t(language, "settings.sync.signInGoogle")}
-                      </Text>
-                    </Pressable>
-                  </>
-                )}
+                </Pressable>
+                <Text style={styles.subscriptionFootnote}>
+                  {t(language, "settings.sync.subscriptionRestoreCaption")}
+                </Text>
               </View>
               {googleAuthStatus === "signedIn" ? (
                 <View style={styles.nestedSection}>{renderGoogleAccountCard()}</View>
@@ -893,6 +888,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginTop: 6,
+  },
+  appleAuthButton: {
+    width: "100%",
+    height: 44,
+    marginTop: 10,
   },
   googleAuthButtonSecondary: {
     backgroundColor: "#ffffff",

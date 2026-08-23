@@ -11,7 +11,11 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { searchAllMemos, SearchMemo } from "../services/searchIndex";
+import {
+  searchAllMemos,
+  searchAllMemosSemantically,
+  SearchMemo,
+} from "../services/searchIndex";
 import type { MemoNavigation } from "../screens/MemoScreen";
 import { AppLanguage, t } from "../i18n";
 
@@ -22,6 +26,8 @@ type Props = {
   initialQuery?: string;
   language: AppLanguage;
 };
+
+type SearchMode = "keyword" | "ai";
 
 const MemoSearchModal = ({
   visible,
@@ -34,12 +40,15 @@ const MemoSearchModal = ({
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SearchMemo[]>([]);
+  const [mode, setMode] = useState<SearchMode>("keyword");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) {
       setQuery("");
       setResults([]);
       setLoading(false);
+      setError(null);
       return;
     }
     setQuery(initialQuery ?? "");
@@ -53,20 +62,32 @@ const MemoSearchModal = ({
     if (!trimmed) {
       setResults([]);
       setLoading(false);
+      setError(null);
       return;
     }
     let active = true;
     setLoading(true);
     const handler = setTimeout(() => {
-      searchAllMemos(trimmed)
+      const search = mode === "ai" ? searchAllMemosSemantically : searchAllMemos;
+      search(trimmed)
         .then((items) => {
           if (active) {
             setResults(items);
+            setError(null);
           }
         })
         .catch(() => {
           if (active) {
             setResults([]);
+            setError(
+              mode === "ai"
+                ? language === "en"
+                  ? "AI search is unavailable. Sign in and try again."
+                  : "AI検索を利用できません。ログイン後にもう一度お試しください。"
+                : language === "en"
+                  ? "Search failed. Please try again."
+                  : "検索に失敗しました。もう一度お試しください。",
+            );
           }
         })
         .finally(() => {
@@ -79,7 +100,7 @@ const MemoSearchModal = ({
       active = false;
       clearTimeout(handler);
     };
-  }, [query, visible]);
+  }, [language, mode, query, visible]);
 
   const buildSnippet = (text: string, maxLength = 100) => {
     const trimmed = text.replace(/\s+/g, " ").trim();
@@ -122,14 +143,49 @@ const MemoSearchModal = ({
           </Pressable>
         </View>
         <View style={styles.container}>
+          <View style={styles.modeSelector}>
+            <Pressable
+              style={[styles.modeButton, mode === "keyword" && styles.modeButtonActive]}
+              onPress={() => setMode("keyword")}
+            >
+              <Text style={[styles.modeText, mode === "keyword" && styles.modeTextActive]}>
+                {language === "en" ? "Keyword" : "キーワード"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeButton, mode === "ai" && styles.modeButtonActive]}
+              onPress={() => setMode("ai")}
+            >
+              <Text style={[styles.modeText, mode === "ai" && styles.modeTextActive]}>
+                {language === "en" ? "AI Search" : "AI検索"}
+              </Text>
+            </Pressable>
+          </View>
           <TextInput
             style={styles.input}
-            placeholder={language === "en" ? "Search by keyword" : "単語で検索"}
+            placeholder={
+              mode === "ai"
+                ? language === "en"
+                  ? "Search in natural language"
+                  : "自然な言葉で検索"
+                : language === "en"
+                  ? "Search by keyword"
+                  : "単語で検索"
+            }
             value={query}
             onChangeText={setQuery}
           />
+          {mode === "ai" ? (
+            <Text style={styles.disclosureText}>
+              {language === "en"
+                ? "AI search sends memo text and your query to OpenAI to create search embeddings."
+                : "AI検索では、検索用の埋め込み生成のためメモ本文と検索語を OpenAI API に送信します。"}
+            </Text>
+          ) : null}
           {loading ? (
             <Text style={styles.helperText}>{language === "en" ? "Searching..." : "検索中..."}</Text>
+          ) : error ? (
+            <Text style={styles.errorText}>{error}</Text>
           ) : results.length === 0 ? (
             <Text style={styles.helperText}>
               {language === "en" ? "No matching memos" : "該当メモがありません"}
@@ -215,9 +271,45 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 12,
   },
+  modeSelector: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  modeButton: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 999,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    justifyContent: "center",
+  },
+  modeButtonActive: {
+    borderColor: "#2563eb",
+    backgroundColor: "#eff6ff",
+  },
+  modeText: {
+    fontSize: 12,
+    color: "#4b5563",
+  },
+  modeTextActive: {
+    color: "#1d4ed8",
+    fontWeight: "600",
+  },
+  disclosureText: {
+    color: "#6b7280",
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: -4,
+    marginBottom: 12,
+  },
   helperText: {
     fontSize: 12,
     color: "#6b7280",
+  },
+  errorText: {
+    fontSize: 12,
+    color: "#b91c1c",
   },
   listBody: {
     paddingBottom: 4,

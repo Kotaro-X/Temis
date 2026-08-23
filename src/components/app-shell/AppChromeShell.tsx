@@ -1,11 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAppSettings } from "../../context/AppSettingsContext";
 import { useAppUI } from "../../context/AppUIContext";
 import { useCollaboration } from "../../context/CollaborationContext";
+import { useSubscription } from "../../context/SubscriptionContext";
+import { hasStaffFreeAccess } from "../../services/subscription/staffAccess";
 import { t } from "../../i18n";
 import appChromeStyles from "../../styles/appChromeStyles";
 import AppLanguageBridge from "../app-bridges/AppLanguageBridge";
@@ -13,7 +15,7 @@ import AppMenuBridge from "../app-bridges/AppMenuBridge";
 import AppNoticeBridge from "../app-bridges/AppNoticeBridge";
 import AppPickerBridge from "../app-bridges/AppPickerBridge";
 
-export type AppChromeTab = "tasks" | "todo" | "memos" | "projects";
+export type AppChromeTab = "tasks" | "todo" | "memos" | "projects" | "guild";
 
 type Props = {
   insetsTop: number;
@@ -71,11 +73,13 @@ const BottomTabBar = ({
   onTabPress,
   bottomInset,
   showProjects,
+  showGuild,
 }: {
   activeTab: AppChromeTab;
   onTabPress: (tab: AppChromeTab) => void;
   bottomInset: number;
   showProjects: boolean;
+  showGuild: boolean;
 }) => {
   const { appLanguage } = useAppSettings();
 
@@ -108,6 +112,13 @@ const BottomTabBar = ({
           onPress={() => onTabPress("projects")}
         />
       ) : null}
+      {showGuild ? (
+        <TabButton
+          label="ギルド"
+          active={activeTab === "guild"}
+          onPress={() => onTabPress("guild")}
+        />
+      ) : null}
     </View>
   );
 };
@@ -135,6 +146,8 @@ const AppChromeShell = ({
     activeProjectId,
     openPrivateWorkspace,
     openProjectWorkspace,
+    openSettingsSync,
+    openGuildAdmin,
     menuOpen,
     closeMenu,
     datePickerOpen,
@@ -153,6 +166,7 @@ const AppChromeShell = ({
     downloadCompleteNoticeOpen,
     dismissDownloadCompleteNotice,
   } = useAppUI();
+  const { isCloudSyncEntitled, accessGrant } = useSubscription();
   const { projects, status: collaborationStatus } = useCollaboration();
   const [scopePickerOpen, setScopePickerOpen] = useState(false);
   const isWorkspaceScreen = rootScreen !== "settings";
@@ -169,6 +183,23 @@ const AppChromeShell = ({
   const chooseProjectScope = (projectId: string) => {
     setScopePickerOpen(false);
     openProjectWorkspace(projectId);
+  };
+
+  const showProjectSubscriptionNotice = () => {
+    Alert.alert(
+      "Temis Plus限定機能",
+      "プロジェクト機能を利用するにはTemis Plusへの加入が必要です。",
+      [
+        { text: "あとで", style: "cancel" },
+        {
+          text: "Temis Plusを見る",
+          onPress: () => {
+            setScopePickerOpen(false);
+            openSettingsSync();
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -192,7 +223,8 @@ const AppChromeShell = ({
         activeTab={activeTab}
         onTabPress={onTabPress}
         bottomInset={insetsBottom}
-        showProjects={workspaceScope === "projects"}
+        showProjects={workspaceScope === "projects" && isCloudSyncEntitled}
+        showGuild={workspaceScope === "private"}
       />
       <Modal
         visible={scopePickerOpen}
@@ -228,36 +260,55 @@ const AppChromeShell = ({
             </Pressable>
 
             <Text style={appChromeStyles.scopePickerSectionTitle}>Projects</Text>
-            {collaborationStatus === "loading" ? (
-              <Text style={appChromeStyles.scopePickerEmpty}>プロジェクトを読み込み中です…</Text>
-            ) : null}
-            {collaborationStatus !== "loading" && projects.length === 0 ? (
-              <Text style={appChromeStyles.scopePickerEmpty}>参加中のプロジェクトはありません。</Text>
-            ) : null}
-            {projects.map((project) => {
-              const selected = workspaceScope === "projects" && activeProjectId === project.id;
-              return (
-                <Pressable
-                  key={project.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${project.name} を開く`}
-                  style={appChromeStyles.scopePickerItem}
-                  onPress={() => chooseProjectScope(project.id)}
-                >
-                  <View style={appChromeStyles.scopePickerProjectText}>
-                    <Text numberOfLines={1} style={appChromeStyles.scopePickerTitle}>
-                      {project.icon ? `${project.icon} ` : ""}{project.name}
-                    </Text>
-                    <Text numberOfLines={1} style={appChromeStyles.scopePickerCaption}>
-                      {project.description || "プロジェクトの共有データ"}
-                    </Text>
-                  </View>
-                  {selected ? (
-                    <Ionicons name="checkmark" size={22} color="#111827" />
-                  ) : null}
-                </Pressable>
-              );
-            })}
+            {!isCloudSyncEntitled ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Temis Plusでプロジェクト機能を利用する"
+                style={appChromeStyles.scopePickerItem}
+                onPress={showProjectSubscriptionNotice}
+              >
+                <View style={appChromeStyles.scopePickerProjectText}>
+                  <Text style={appChromeStyles.scopePickerTitle}>Projects</Text>
+                  <Text style={appChromeStyles.scopePickerCaption}>
+                    Temis Plusに加入すると利用できます
+                  </Text>
+                </View>
+                <Ionicons name="lock-closed-outline" size={20} color="#6b7280" />
+              </Pressable>
+            ) : (
+              <>
+                {collaborationStatus === "loading" ? (
+                  <Text style={appChromeStyles.scopePickerEmpty}>プロジェクトを読み込み中です…</Text>
+                ) : null}
+                {collaborationStatus !== "loading" && projects.length === 0 ? (
+                  <Text style={appChromeStyles.scopePickerEmpty}>参加中のプロジェクトはありません。</Text>
+                ) : null}
+                {projects.map((project) => {
+                  const selected = workspaceScope === "projects" && activeProjectId === project.id;
+                  return (
+                    <Pressable
+                      key={project.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${project.name} を開く`}
+                      style={appChromeStyles.scopePickerItem}
+                      onPress={() => chooseProjectScope(project.id)}
+                    >
+                      <View style={appChromeStyles.scopePickerProjectText}>
+                        <Text numberOfLines={1} style={appChromeStyles.scopePickerTitle}>
+                          {project.icon ? `${project.icon} ` : ""}{project.name}
+                        </Text>
+                        <Text numberOfLines={1} style={appChromeStyles.scopePickerCaption}>
+                          {project.description || "プロジェクトの共有データ"}
+                        </Text>
+                      </View>
+                      {selected ? (
+                        <Ionicons name="checkmark" size={22} color="#111827" />
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </>
+            )}
           </ScrollView>
         </View>
       </Modal>
@@ -295,6 +346,8 @@ const AppChromeShell = ({
         onOpenTodo={onOpenTodo}
         onOpenSettings={onOpenSettings}
         onOpenAccountSettings={onOpenAccountSettings}
+        onOpenGuildAdmin={openGuildAdmin}
+        showGuildAdmin={hasStaffFreeAccess(accessGrant)}
         showSyncUpgradePrompt={storageReady && !cloudSyncEnabled}
         tr={tr}
         helpUrl={HELP_URL}

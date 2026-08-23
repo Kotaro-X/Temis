@@ -52,6 +52,8 @@ type AppUIContextValue = {
   openTodo: () => void;
   openMemos: (screen?: MemoWorkspaceScreenKey) => void;
   openProjects: () => void;
+  openGuild: () => void;
+  openGuildAdmin: () => void;
   openPrivateWorkspace: () => void;
   openProjectWorkspace: (projectId?: string | null) => void;
   selectProject: (projectId: string | null) => void;
@@ -351,6 +353,16 @@ export const AppUIProvider = ({
     switchRootScreen("projects");
   }, [switchRootScreen]);
 
+  const openGuild = useCallback(() => {
+    setWorkspaceScope("private");
+    switchRootScreen("guild");
+  }, [switchRootScreen]);
+
+  const openGuildAdmin = useCallback(() => {
+    setWorkspaceScope("private");
+    switchRootScreen("guildAdmin");
+  }, [switchRootScreen]);
+
   const openPrivateWorkspace = useCallback(() => {
     setWorkspaceScope("private");
     if (rootScreen === "projects") {
@@ -361,14 +373,11 @@ export const AppUIProvider = ({
   const openProjectWorkspace = useCallback((projectId?: string | null) => {
     setWorkspaceScope("projects");
     setActiveProjectId(projectId ?? null);
-    if (projectId) {
-      if (rootScreen === "projects") {
-        switchRootScreen("tasks");
-      }
-      return;
-    }
-    switchRootScreen("projects");
-  }, [rootScreen, switchRootScreen]);
+    // A selected project is always entered through its task workspace. This
+    // also prevents leaving a private-only root (such as Guild) active after
+    // the scope has changed to projects, which otherwise has no screen to render.
+    switchRootScreen("tasks");
+  }, [switchRootScreen]);
 
   const selectProject = useCallback((projectId: string | null) => {
     setActiveProjectId(projectId);
@@ -476,6 +485,8 @@ export const AppUIProvider = ({
       openTodo,
       openMemos,
       openProjects,
+      openGuild,
+      openGuildAdmin,
       openPrivateWorkspace,
       openProjectWorkspace,
       selectProject,
@@ -533,7 +544,9 @@ export const AppUIProvider = ({
       openDatePicker,
       openMemoDetail,
       openMemos,
-      openProjects,
+    openGuild,
+    openGuildAdmin,
+    openProjects,
       openPrivateWorkspace,
       openProjectWorkspace,
       openMemoHome,

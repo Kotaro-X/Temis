@@ -1,4 +1,4 @@
-export type AppRootScreen = "tasks" | "todo" | "settings" | "memos" | "projects";
+export type AppRootScreen = "tasks" | "todo" | "settings" | "memos" | "projects" | "guild" | "guildAdmin";
 
 export type TaskWorkspaceScreenKey =
   | "today"
@@ -49,6 +49,14 @@ export const APP_WORKSPACE_TRANSITION_POLICY = {
     keepSearchOverlayAcrossTabs: true,
   },
   projects: {
+    resetOnDeactivate: true,
+  },
+  guild: {
+    // Guild owns its own feed filter and scroll state so it survives a tab
+    // round trip in the Private workspace.
+    keepStateOnDeactivate: true,
+  },
+  guildAdmin: {
     resetOnDeactivate: true,
   },
   settings: {

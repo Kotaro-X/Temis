@@ -16,6 +16,8 @@
       "env": {
         "BUNDLE_LOCAL_LLM": "false",
         "EXPO_PUBLIC_LLM_PROVIDER": "disabled",
+        "EXPO_PUBLIC_EMBEDDING_PROVIDER": "openai",
+        "EXPO_PUBLIC_OPENAI_FUNCTION_REGION": "asia-northeast1",
         "IOS_NEW_ARCH_ENABLED": "false"
       }
     }

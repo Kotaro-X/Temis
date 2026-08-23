@@ -6,6 +6,7 @@ import { Tag } from "../../types";
 import { rebuildChunkIndexForDocument } from "../db/chunkIndexRepo";
 import { ensureDbReady, executeSql } from "../db/sqlite";
 import { rebuildTokenIndexForDocument } from "../db/tokenIndexRepo";
+import { enqueueMemoEmbeddingJob } from "./embeddingJobs";
 import { invalidateHybridSearchCache } from "../services/hybridSearch";
 import {
   buildTankyuDocumentId,
@@ -80,6 +81,7 @@ const rebuildSearchIndexesForResearchNote = async (
   const indexText = buildTankyuIndexText(note.title, note.body);
   await rebuildTokenIndexForDocument(documentId, indexText);
   await rebuildChunkIndexForDocument(documentId, indexText);
+  await enqueueMemoEmbeddingJob(documentId);
   invalidateHybridSearchCache();
 };
 

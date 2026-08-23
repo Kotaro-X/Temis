@@ -172,6 +172,7 @@ export const getChunksNeedingEmbeddingForMemo = async (
     embeddingModel: string;
     embeddingModelVersion: string;
     embeddingDim: number | null;
+    limit?: number;
   },
 ): Promise<PendingEmbeddingChunk[]> => {
   await ensureDbReady();
@@ -182,8 +183,8 @@ export const getChunksNeedingEmbeddingForMemo = async (
     options.embeddingDim,
   );
   const result = await executeSql(
-    `SELECT chunk_id, memo_id, text, embedding_attempts FROM chunk_index WHERE memo_id = ? AND ${whereSql} ORDER BY created_at ASC`,
-    [memoId, ...whereParams],
+    `SELECT chunk_id, memo_id, text, embedding_attempts FROM chunk_index WHERE memo_id = ? AND ${whereSql} ORDER BY created_at ASC LIMIT ?`,
+    [memoId, ...whereParams, Math.max(1, options.limit ?? 20)],
   );
   return (result.rows._array as Array<{
     chunk_id: string;
@@ -314,57 +315,15 @@ export const rebuildChunkIndexForDocument = async (
   text: string,
 ): Promise<ChunkIndexRebuildStats> => {
   await ensureDbReady();
-  await replaceChunkIndexTextForDocument(documentId, text, {
-    embeddingModelVersion: getEmbeddingProvider().getModelVersion(),
-  });
   const provider = getEmbeddingProvider();
-  const model = provider.getModel();
-  const modelVersion = provider.getModelVersion();
-  const chunks = await getChunksByMemoId(documentId);
-  if (chunks.length === 0) {
-    return {
-      chunkCount: 0,
-      indexedTextLength: text.length,
-      embeddingModel: model,
-      embeddingDim: provider.getDim(),
-      embeddedAt: null,
-    };
-  }
-
-  const embeddings = await provider.embedBatch(chunks.map((chunk) => chunk.text));
-  const dim = provider.getDim();
-  if (embeddings.length !== chunks.length) {
-    throw new Error("EmbeddingProvider returned invalid batch size.");
-  }
-
-  const now = Date.now();
-  let resolvedDim = dim;
-  for (let index = 0; index < chunks.length; index += 1) {
-    const chunk = chunks[index];
-    const embedding = embeddings[index];
-    const embeddingDim = dim > 0 ? dim : embedding.length;
-    resolvedDim = embeddingDim;
-    if (embeddingDim > 0 && embedding.length !== embeddingDim) {
-      throw new Error("EmbeddingProvider returned invalid vector dimension.");
-    }
-    await executeSql(
-      "UPDATE chunk_index SET embedding = ?, embedding_model = ?, embedding_dim = ?, embedded_at = ?, embedding_status = 'completed', embedding_model_version = ?, embedding_error = NULL WHERE chunk_id = ?",
-      [
-        JSON.stringify(embedding),
-        model,
-        embeddingDim,
-        now,
-        modelVersion,
-        chunk.chunkId,
-      ],
-    );
-  }
+  const indexStats = await replaceChunkIndexTextForDocument(documentId, text, {
+    embeddingModelVersion: provider.getModelVersion(),
+  });
   return {
-    chunkCount: chunks.length,
-    indexedTextLength: text.length,
-    embeddingModel: model,
-    embeddingDim: resolvedDim,
-    embeddedAt: now,
+    ...indexStats,
+    embeddingModel: provider.getModel(),
+    embeddingDim: provider.getDim(),
+    embeddedAt: null,
   };
 };
 

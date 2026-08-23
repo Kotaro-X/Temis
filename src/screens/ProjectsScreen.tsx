@@ -25,7 +25,9 @@ import {
   respondToProjectInvitation,
   searchProfiles,
   setProjectTaskEnabled,
+  setProjectGuildVisibility,
 } from "../services/collaboration/collaborationService";
+import { listProjectJoinRequests, respondToProjectJoinRequest } from "../services/guild/guildService";
 import type {
   Project,
   ProjectMember,
@@ -34,6 +36,7 @@ import type {
   ProjectInvitation,
   UserProfile,
 } from "../types/collaboration";
+import type { ProjectJoinRequest } from "../types/guild";
 
 type Props = {
   visible: boolean;
@@ -72,6 +75,7 @@ const ProjectsScreen = ({
   const [inviteResults, setInviteResults] = useState<UserProfile[]>([]);
   const [pendingInvitations, setPendingInvitations] = useState<ProjectInvitation[]>([]);
   const [inviting, setInviting] = useState(false);
+  const [joinRequests, setJoinRequests] = useState<ProjectJoinRequest[]>([]);
 
   const loadProject = useCallback(
     async (project: Project) => {
@@ -91,6 +95,7 @@ const ProjectsScreen = ({
         setNotes(nextNotes);
         setTasks(nextTasks);
         setMyRole(membership?.role ?? null);
+        setJoinRequests(membership?.role === "owner" ? await listProjectJoinRequests(project.id) : []);
       } catch (cause) {
         Alert.alert(
           "プロジェクトを開けません",
@@ -197,6 +202,23 @@ const ProjectsScreen = ({
     }
   };
 
+  const handleProjectVisibility = async (isPublic: boolean) => {
+    if (!selected) return;
+    try {
+      const updated = await setProjectGuildVisibility(selected.id, isPublic);
+      setSelected(updated);
+      await refresh();
+    } catch (cause) { Alert.alert("公開設定を変更できません", cause instanceof Error ? cause.message : "もう一度お試しください。"); }
+  };
+
+  const handleJoinRequest = async (request: ProjectJoinRequest, accept: boolean) => {
+    try {
+      await respondToProjectJoinRequest(request.id, accept);
+      setJoinRequests((current) => current.map((item) => item.id === request.id ? { ...item, status: accept ? "accepted" : "declined" } : item));
+      if (selected) await loadProject(selected);
+    } catch (cause) { Alert.alert("参加申請を処理できません", cause instanceof Error ? cause.message : "もう一度お試しください。"); }
+  };
+
   const handleInvitationResponse = async (invitation: ProjectInvitation, accept: boolean) => {
     try {
       await respondToProjectInvitation(invitation.id, accept);
@@ -289,6 +311,20 @@ const ProjectsScreen = ({
                   </View>
                 ))}
               </View>
+            </>
+          ) : null}
+
+          {myRole === "owner" ? (
+            <>
+              <Text style={styles.sectionTitle}>ギルド公開</Text>
+              <View style={styles.surfaceRow}>
+                <View><Text style={styles.rowTitle}>{selected.visibility === "public" ? "公開・承認制" : "非公開"}</Text><Text style={styles.caption}>公開しても、メモ・タスク・メンバー一覧はギルドには公開されません。</Text></View>
+                <Pressable style={styles.inviteButton} onPress={() => void handleProjectVisibility(selected.visibility !== "public")}><Text style={styles.inviteButtonText}>{selected.visibility === "public" ? "非公開にする" : "公開する"}</Text></Pressable>
+              </View>
+              {joinRequests.filter((request) => request.status === "pending").length > 0 ? <>
+                <Text style={styles.sectionTitle}>参加申請</Text>
+                {joinRequests.filter((request) => request.status === "pending").map((request) => <View key={request.id} style={styles.invitationRow}><View style={styles.rowBodyNoMargin}><Text style={styles.rowTitle}>参加希望: {request.requestedRole}</Text><Text style={styles.caption}>{request.message || "メッセージなし"}</Text></View><Pressable style={styles.declineButton} onPress={() => void handleJoinRequest(request, false)}><Text style={styles.declineButtonText}>却下</Text></Pressable><Pressable style={styles.inviteButton} onPress={() => void handleJoinRequest(request, true)}><Text style={styles.inviteButtonText}>承認</Text></Pressable></View>)}
+              </> : null}
             </>
           ) : null}
 

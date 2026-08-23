@@ -69,6 +69,12 @@ const sanitizeQuestionText = (text: string): string => {
   return cleaned || text.trim();
 };
 
+const extractQuestionTopic = (question: string): string =>
+  sanitizeQuestionText(question)
+    .replace(/[?？].*$/, "")
+    .replace(/(?:について|とは|に関して|を教えてください|を教えて|を知りたい)$/u, "")
+    .trim();
+
 const normalizeForSimilarity = (text: string): string =>
   text.replace(/\s+/g, "").replace(/[。.!?！？、,，]/g, "").trim();
 
@@ -236,6 +242,24 @@ const debugLog = (message: string): void => {
 
 const isInsufficientText = (text: string): boolean =>
   /情報不足|見つかりません/.test(text);
+
+const missesQuestionTopic = (
+  answerText: string,
+  question: string,
+  evidence: LabeledEvidence[],
+): boolean => {
+  const topic = normalizeForSimilarity(extractQuestionTopic(question));
+  if (topic.length < 2 || topic.length > 30) {
+    return false;
+  }
+  const evidenceText = normalizeForSimilarity(
+    evidence.map((item) => item.snippetText).join(" "),
+  );
+  if (!evidenceText.includes(topic)) {
+    return false;
+  }
+  return !normalizeForSimilarity(answerText).includes(topic);
+};
 
 const hasPromptArtifact = (text: string): boolean =>
   PROMPT_ARTIFACT_PATTERN.test(text);
@@ -408,7 +432,17 @@ const buildEvidenceSummaryAnswer = (evidence: LabeledEvidence[]): string => {
     return FALLBACK_UNKNOWN_TEXT;
   }
   const memoBlocks = buildMemoBlocks(evidence);
-  const summarySeed = memoBlocks.map((block) => block.mergedText).join(" ");
+  const sentenceBudgetPerMemo = Math.max(
+    1,
+    Math.floor(ANSWER_GUARDRAIL_DEFAULTS.maxSentences / memoBlocks.length),
+  );
+  const summarySeed = memoBlocks
+    .map((block) =>
+      splitSentences(block.mergedText)
+        .slice(0, sentenceBudgetPerMemo)
+        .join(" "),
+    )
+    .join(" ");
   if (!summarySeed) {
     return "根拠から読み取れる内容を要約できませんでした。";
   }
@@ -540,6 +574,7 @@ export const buildAnswerPrompt = (
     "13) 根拠が短文1文でも同じ文面をそのまま出力せず、必ず言い換える。",
     "14) できるだけ短くまとめる（原文より短く）。",
     "15) 番号や識別子は出力しない。",
+    "16) 質問の対象語が根拠に含まれる場合は、その対象語を回答に明記する。",
     "",
     "[OUTPUT_JSON_SCHEMA]",
     '{"answer":"string","citations":["E1"]}',
@@ -593,6 +628,7 @@ const buildLocalAnswerPrompt = (
     "Step 3) 統合要約を1つだけ出力する。",
     "- 出力は日本語2〜3文。",
     "- 参照した内容の範囲を逸脱しない。",
+    "- 質問の対象語が文書に含まれる場合は、その対象語を回答に明記する。",
     "",
     "=== 出力フォーマット（厳守）===",
     "ANSWER: 日本語2〜3文。",
@@ -984,6 +1020,13 @@ export const answerWithCitations = async (
       isLocal,
       localMaxTokens,
     });
+    if (missesQuestionTopic(refinedAnswer, trimmedQuestion, promptEvidence)) {
+      debugLog("final route=question-topic-missing -> retrieval fallback");
+      return {
+        answerText: buildEvidenceSummaryAnswer(promptEvidence),
+        citedEvidenceKeys: parsed.citedEvidenceKeys,
+      };
+    }
     debugLog(`final route=llm answerLength=${refinedAnswer.length}`);
     return {
       answerText: refinedAnswer,

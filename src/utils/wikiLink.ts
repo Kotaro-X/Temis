@@ -6,6 +6,9 @@ export type TokenOccurrence = {
 };
 
 const TOKEN_REGEX = /\(\((.*?)\)\)/g;
+// A tag starts at the beginning of a line or after whitespace. This keeps
+// fragments such as C# and URL anchors from becoming memo tags.
+const HASHTAG_REGEX = /(?:^|\s)[#＃]([^\s#＃()（）\[\]{}<>、。！？!?,，．:：;；]+)/gu;
 
 export const normalizeParens = (input: string): string =>
   input.replace(/\uFF08/g, "(").replace(/\uFF09/g, ")");
@@ -16,6 +19,23 @@ export const extractTokens = (body: string): string[] => {
     tokens.add(occurrence.token);
   }
   return Array.from(tokens);
+};
+
+/** Extracts the #tags authored in memo text, preserving their display casing. */
+export const extractHashtags = (body: string): string[] => {
+  if (!body) {
+    return [];
+  }
+  const tags = new Set<string>();
+  HASHTAG_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null = null;
+  while ((match = HASHTAG_REGEX.exec(body))) {
+    const tag = (match[1] ?? "").trim();
+    if (tag) {
+      tags.add(tag);
+    }
+  }
+  return Array.from(tags);
 };
 
 export const extractTokenOccurrences = (body: string): TokenOccurrence[] => {

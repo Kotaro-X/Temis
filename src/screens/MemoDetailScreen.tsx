@@ -17,6 +17,7 @@ import WikiReferenceOverlay, {
   WikiReferenceFilter,
 } from "../components/WikiReferenceOverlay";
 import MemoTextEditor from "../components/inputs/MemoTextEditor";
+import GuildPostComposerModal from "../components/guild/GuildPostComposerModal";
 import TokenChips from "../components/TokenChips";
 import {
   deleteMemo,
@@ -45,6 +46,7 @@ import {
   WikiReferenceItem,
 } from "../services/wikiReferenceService";
 import { extractTokens } from "../utils/wikiLink";
+import { unpublishGuildPostsForSource } from "../services/guild/guildService";
 import { AppLanguage, t } from "../i18n";
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
@@ -142,6 +144,7 @@ const MemoDetailScreen = ({
   const [titleDraft, setTitleDraft] = useState("");
   const [bodyDraft, setBodyDraft] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [guildComposerOpen, setGuildComposerOpen] = useState(false);
   const [referenceVisible, setReferenceVisible] = useState(false);
   const [referenceToken, setReferenceToken] = useState<string | null>(null);
   const [referenceFilter, setReferenceFilter] =
@@ -559,13 +562,16 @@ const MemoDetailScreen = ({
         }
       }
       if (detail.kind === "task") {
+        if (profile) await unpublishGuildPostsForSource(detail.memoId);
         await deleteMemo(detail.memoId);
       } else if (detail.kind === "note") {
+        if (profile) await unpublishGuildPostsForSource(detail.memoId);
         if (detail.scope === "project") {
           await removeProjectSharedNote(detail.noteId);
         }
         await deleteNoteById(detail.noteId);
       } else {
+        if (profile) await unpublishGuildPostsForSource(detail.memoId);
         await deleteResearchNoteById(detail.tankyuId);
       }
       if (historyStack.length > 0) {
@@ -650,6 +656,13 @@ const MemoDetailScreen = ({
                 : tr("memo.detailTitle")}
           </Text>
           <Pressable
+            style={[styles.guildButton, (loading || !detail) && styles.deleteButtonDisabled]}
+            onPress={() => setGuildComposerOpen(true)}
+            disabled={loading || !detail}
+          >
+            <Text style={styles.guildButtonText}>ギルドに投稿</Text>
+          </Pressable>
+          <Pressable
             style={[
               styles.deleteButton,
               (deleting || loading || !detail) && styles.deleteButtonDisabled,
@@ -724,6 +737,19 @@ const MemoDetailScreen = ({
         onChangeFilter={setReferenceFilter}
         onSelectItem={(nextMemoId) => void handleSelectReference(nextMemoId)}
       />
+      {detail ? (
+        <GuildPostComposerModal
+          visible={guildComposerOpen}
+          onClose={() => setGuildComposerOpen(false)}
+          initialBody={bodyDraft}
+          source={{
+            scope: detail.kind === "note" && detail.scope === "project" ? "project" : "personal",
+            memoId: detail.memoId,
+            projectId: detail.kind === "note" && detail.scope === "project" ? detail.projectId : null,
+          }}
+          onPublished={() => setGuildComposerOpen(false)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 };
@@ -771,6 +797,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#6b7280",
     alignItems: "center",
   },
+  guildButton: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6, backgroundColor: "#2563eb", alignItems: "center", marginHorizontal: 4 },
+  guildButtonText: { color: "#ffffff", fontSize: 11, fontWeight: "700" },
   deleteButtonDisabled: {
     opacity: 0.6,
   },

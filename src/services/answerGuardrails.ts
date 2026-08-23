@@ -64,8 +64,14 @@ const sanitizeSentence = (sentence: string): string => {
     return "";
   }
   const withoutPunctuation = trimmed.replace(/[。.!?！？]+$/g, "");
+  if (!withoutPunctuation.trim()) {
+    return "";
+  }
   return withSentenceEnding(withoutPunctuation);
 };
+
+const hasSubstantiveContent = (text: string): boolean =>
+  /[\p{L}\p{N}]/u.test(text);
 
 export const evaluateEvidenceQuality = (
   evidence: EvidenceLike[],
@@ -102,9 +108,12 @@ export const guardAnswerText = (text: string): GuardedAnswerResult => {
     .filter((item) => item.length > 0)
     .join(" ")
     .trim();
+  if (!hasSubstantiveContent(sanitized)) {
+    return { ok: false, reason: "empty", answerText: "" };
+  }
   return {
-    ok: !!sanitized,
-    reason: sanitized ? "ok" : "empty",
+    ok: true,
+    reason: "ok",
     answerText: sanitized,
   };
 };

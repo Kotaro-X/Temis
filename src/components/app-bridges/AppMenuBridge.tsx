@@ -20,6 +20,8 @@ type Props = {
   onOpenTodo: () => void;
   onOpenSettings: () => void;
   onOpenAccountSettings: () => void;
+  onOpenGuildAdmin: () => void;
+  showGuildAdmin: boolean;
   showSyncUpgradePrompt: boolean;
   tr: (key: string) => string;
   helpUrl: string;
@@ -31,6 +33,8 @@ const AppMenuBridge = ({
   onOpenTodo,
   onOpenSettings,
   onOpenAccountSettings,
+  onOpenGuildAdmin,
+  showGuildAdmin,
   showSyncUpgradePrompt,
   tr,
   helpUrl,
@@ -119,6 +123,27 @@ const AppMenuBridge = ({
             tr={tr}
             onCloseMenu={onCloseMenu}
           />
+          {showGuildAdmin ? (
+            <Pressable
+              style={appChromeStyles.sheetItem}
+              onPress={() => {
+                onOpenGuildAdmin();
+                onCloseMenu();
+              }}
+            >
+              <View style={appChromeStyles.sheetItemInline}>
+                <Ionicons name="shield-checkmark-outline" size={16} color="#111827" />
+                <Text
+                  style={[
+                    appChromeStyles.sheetItemText,
+                    appChromeStyles.sheetItemTextWithIcon,
+                  ]}
+                >
+                  運営画面
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
           <Pressable
             style={appChromeStyles.sheetItem}
             onPress={() => {

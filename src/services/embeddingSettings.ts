@@ -3,13 +3,23 @@ import {
   OllamaEmbeddingProvider,
   OllamaEmbeddingProviderOptions,
 } from "./OllamaEmbeddingProvider";
+import {
+  OpenAIEmbeddingProvider,
+  OpenAIEmbeddingProviderOptions,
+} from "./OpenAIEmbeddingProvider";
+import { requestOpenAIEmbeddings } from "./openAIEmbeddingCallable";
+
+export type EmbeddingProviderKind = "dummy" | "ollama" | "openai";
 
 export type EmbeddingRuntimeConfig = {
+  provider: EmbeddingProviderKind;
   useOllama: boolean;
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaTimeoutMs: number;
   ollamaMaxInputChars: number;
+  openAiFunctionRegion: string;
+  openAiMaxInputChars: number;
   probeOnStartup: boolean;
 };
 
@@ -17,6 +27,8 @@ const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_MODEL = "nomic-embed-text";
 const DEFAULT_OLLAMA_TIMEOUT_MS = 10_000;
 const DEFAULT_OLLAMA_MAX_INPUT_CHARS = 2_000;
+const DEFAULT_OPENAI_FUNCTION_REGION = "asia-northeast1";
+const DEFAULT_OPENAI_MAX_INPUT_CHARS = 4_000;
 
 const parseBoolean = (
   value: string | undefined,
@@ -46,14 +58,38 @@ const parseNumber = (value: string | undefined, fallback: number): number => {
   return Math.floor(parsed);
 };
 
+const parseProvider = (
+  value: string | undefined,
+  fallback: EmbeddingProviderKind,
+): EmbeddingProviderKind => {
+  const normalized = value?.trim().toLowerCase();
+  if (
+    normalized === "dummy" ||
+    normalized === "ollama" ||
+    normalized === "openai"
+  ) {
+    return normalized;
+  }
+  return fallback;
+};
+
 export const getEmbeddingRuntimeConfig = (): EmbeddingRuntimeConfig => {
   const useOllamaFlag = parseBoolean(
     process.env.EXPO_PUBLIC_USE_OLLAMA_EMBEDDINGS,
     false,
   );
   const isDev = typeof __DEV__ === "boolean" ? __DEV__ : false;
+  const configuredProvider = parseProvider(
+    process.env.EXPO_PUBLIC_EMBEDDING_PROVIDER,
+    useOllamaFlag && isDev ? "ollama" : "dummy",
+  );
+  // Keep Ollama local-only. OpenAI is invoked through a Firebase Callable
+  // Function, so its secret never enters the Expo bundle.
+  const provider =
+    configuredProvider === "ollama" && !isDev ? "dummy" : configuredProvider;
   return {
-    useOllama: isDev && useOllamaFlag,
+    provider,
+    useOllama: provider === "ollama",
     ollamaBaseUrl:
       process.env.EXPO_PUBLIC_OLLAMA_BASE_URL ?? DEFAULT_OLLAMA_BASE_URL,
     ollamaModel: process.env.EXPO_PUBLIC_OLLAMA_MODEL ?? DEFAULT_OLLAMA_MODEL,
@@ -64,6 +100,13 @@ export const getEmbeddingRuntimeConfig = (): EmbeddingRuntimeConfig => {
     ollamaMaxInputChars: parseNumber(
       process.env.EXPO_PUBLIC_OLLAMA_MAX_INPUT_CHARS,
       DEFAULT_OLLAMA_MAX_INPUT_CHARS,
+    ),
+    openAiFunctionRegion:
+      process.env.EXPO_PUBLIC_OPENAI_FUNCTION_REGION ??
+      DEFAULT_OPENAI_FUNCTION_REGION,
+    openAiMaxInputChars: parseNumber(
+      process.env.EXPO_PUBLIC_OPENAI_MAX_INPUT_CHARS,
+      DEFAULT_OPENAI_MAX_INPUT_CHARS,
     ),
     probeOnStartup: parseBoolean(
       process.env.EXPO_PUBLIC_OLLAMA_EMBEDDING_PROBE,
@@ -81,14 +124,25 @@ export const createOllamaOptionsFromConfig = (
   maxInputChars: config.ollamaMaxInputChars,
 });
 
+export const createOpenAIOptionsFromConfig = (
+  config: EmbeddingRuntimeConfig,
+): OpenAIEmbeddingProviderOptions => ({
+  region: config.openAiFunctionRegion,
+  maxInputChars: config.openAiMaxInputChars,
+  requestEmbeddings: requestOpenAIEmbeddings,
+});
+
 export const configureEmbeddingProviderFromEnv = (): EmbeddingRuntimeConfig => {
   const config = getEmbeddingRuntimeConfig();
-  if (!config.useOllama) {
-    return config;
+  if (config.provider === "ollama") {
+    setEmbeddingProvider(
+      new OllamaEmbeddingProvider(createOllamaOptionsFromConfig(config)),
+    );
+  } else if (config.provider === "openai") {
+    setEmbeddingProvider(
+      new OpenAIEmbeddingProvider(createOpenAIOptionsFromConfig(config)),
+    );
   }
-  setEmbeddingProvider(
-    new OllamaEmbeddingProvider(createOllamaOptionsFromConfig(config)),
-  );
   return config;
 };
 
@@ -101,6 +155,6 @@ export const runEmbeddingProviderProbe = async (
   const provider = getEmbeddingProvider();
   const vector = await provider.embed("embedding provider health check");
   console.log(
-    `[Embedding] probe ok provider=${config.useOllama ? "ollama" : "dummy"} dim=${vector.length}`,
+    `[Embedding] probe ok provider=${config.provider} dim=${vector.length}`,
   );
 };

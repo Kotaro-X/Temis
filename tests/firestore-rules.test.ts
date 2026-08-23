@@ -500,4 +500,42 @@ if (!FIRESTORE_EMULATOR_HOST) {
       }),
     );
   });
+
+  test("Guild posts are public only while visible, owner-editable, and staff-moderated", async () => {
+    const now = 1_783_292_400_000;
+    const aliceDb = env.authenticatedContext("guild-alice", createGoogleToken()).firestore();
+    const bobDb = env.authenticatedContext("guild-bob", createGoogleToken()).firestore();
+    const staffDb = env.authenticatedContext("guild-staff", createGoogleToken()).firestore();
+    const post = {
+      id: "guild-post-1", authorUserId: "guild-alice", authorDisplayName: "Alice", authorPhotoUrl: null,
+      // A personal Guild post may contain Wiki links or ordinary text only;
+      // hashtags are optional and are represented as an empty list.
+      body: "公開する探究", tags: [], type: "personal", projectId: null,
+      source: { scope: "personal", memoId: "private-memo-1" }, status: "published",
+      moderation: { visibility: "visible", hiddenByUserId: null, hiddenAt: null, reason: null },
+      createdAt: now, updatedAt: now, publishedAt: now,
+    };
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection("subscriptionAccess").doc("guild-staff").set({
+        userId: "guild-staff", active: true, grantType: "staff_free", inviteCode: null,
+        offeringId: null, packageId: null, expiresAt: null, grantedBy: "admin", note: null,
+        redeemedAt: null, updatedAt: now,
+      });
+    });
+
+    await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).set(post));
+    await assertSucceeds(bobDb.collection("guildPosts").doc(post.id).get());
+    await assertSucceeds(bobDb.collection("guildPosts")
+      .where("status", "==", "published")
+      .where("moderation.visibility", "==", "visible")
+      .orderBy("publishedAt", "desc")
+      .orderBy("__name__", "desc")
+      .get());
+    await assertFails(bobDb.collection("guildPosts").doc(post.id).update({ body: "改ざん" }));
+    await assertSucceeds(staffDb.collection("guildPosts").doc(post.id).update({
+      moderation: { visibility: "hidden", hiddenByUserId: "guild-staff", hiddenAt: now + 1, reason: "確認中" },
+      updatedAt: now + 1,
+    }));
+    await assertFails(bobDb.collection("guildPosts").doc(post.id).get());
+  });
 }
