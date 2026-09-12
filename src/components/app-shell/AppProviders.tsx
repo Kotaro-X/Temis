@@ -5,7 +5,6 @@ import { useCloudSyncContext, CloudSyncProvider } from "../../context/CloudSyncC
 import { AppRefreshProvider } from "../../context/AppRefreshContext";
 import { AppSettingsProvider } from "../../context/AppSettingsContext";
 import { AppUIProvider } from "../../context/AppUIContext";
-import { useAppRefresh } from "../../context/AppRefreshContext";
 import { SubscriptionProvider } from "../../context/SubscriptionContext";
 import { CollaborationProvider } from "../../context/CollaborationContext";
 
@@ -15,8 +14,7 @@ const AppBootstrapBoundary = ({
   children: React.ReactNode;
 }) => {
   const { syncNow } = useCloudSyncContext();
-  const { refreshApp } = useAppRefresh();
-  useAppBootstrap({ syncNow, onSynced: refreshApp });
+  useAppBootstrap({ syncNow });
   return <>{children}</>;
 };
 

@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import * as AppleAuthentication from "expo-apple-authentication";
+import SocialSignInButtons from "../components/settings/SocialSignInButtons";
+import MenuButton from "../components/common/MenuButton";
 import {
+  Alert,
+  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -23,6 +26,12 @@ import TimeBoxSettingsSection, {
 } from "../components/settings/TimeBoxSettingsSection";
 import { AppLanguage, t } from "../i18n";
 import { normalizeUsername, validateUsername } from "../types/collaboration";
+import { isAppleSignInAvailable } from "../services/auth/appleSignIn";
+import {
+  APPLE_SUBSCRIPTIONS_URL,
+  PRIVACY_POLICY_URL,
+  TERMS_OF_USE_URL,
+} from "../config/legalLinks";
 
 type SectionKey = "Account" | "TimeBoxes" | "Tags" | "DeletedItems";
 
@@ -44,7 +53,7 @@ export type SettingsScreenProps = {
   lastSyncedAt?: number | null;
   syncError?: string | null;
   syncResultMessage?: string | null;
-  googleAuthStatus?: "restoring" | "signedOut" | "signingIn" | "signedIn";
+  googleAuthStatus?: "restoring" | "signedOut" | "signingIn" | "deleting" | "signedIn";
   googleAccountEmail?: string | null;
   googleAccountName?: string | null;
   username?: string | null;
@@ -55,6 +64,10 @@ export type SettingsScreenProps = {
   cloudSyncEnabled?: boolean;
   subscriptionStatus?: "idle" | "loading" | "ready" | "purchasing" | "error";
   subscriptionError?: string | null;
+  subscriptionProductTitle?: string | null;
+  subscriptionPrice?: string | null;
+  subscriptionPeriod?: string | null;
+  subscriptionMonthlyPrice?: string | null;
   subscriptionAccessSource?:
     | "none"
     | "revenuecat"
@@ -76,6 +89,7 @@ export type SettingsScreenProps = {
   onSignInWithGoogle?: () => void;
   onSignInWithApple?: () => void;
   onSignOutGoogle?: () => void;
+  onDeleteAccount?: (input: { deleteLocalData: boolean }) => void;
   onSyncNow?: () => void;
   initialSection?: SectionKey;
   visibleSections?: SectionKey[];
@@ -112,6 +126,10 @@ const SettingsScreen = ({
   cloudSyncEnabled = false,
   subscriptionStatus = "idle",
   subscriptionError = null,
+  subscriptionProductTitle = null,
+  subscriptionPrice = null,
+  subscriptionPeriod = null,
+  subscriptionMonthlyPrice = null,
   subscriptionAccessSource = "none",
   subscriptionAccessCaption = null,
   inviteStatus = "idle",
@@ -128,6 +146,7 @@ const SettingsScreen = ({
   onSignInWithGoogle,
   onSignInWithApple,
   onSignOutGoogle,
+  onDeleteAccount,
   onSyncNow,
   initialSection,
   visibleSections,
@@ -152,10 +171,12 @@ const SettingsScreen = ({
   const [displayNameError, setDisplayNameError] = useState<string | null>(null);
   const [savingDisplayName, setSavingDisplayName] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
+  const [showAccountDeletion, setShowAccountDeletion] = useState(false);
+  const [deleteLocalData, setDeleteLocalData] = useState(true);
 
   useEffect(() => {
     let active = true;
-    void AppleAuthentication.isAvailableAsync()
+    void isAppleSignInAvailable()
       .then((available) => {
         if (active) setAppleSignInAvailable(available);
       })
@@ -209,6 +230,19 @@ const SettingsScreen = ({
     googleAuthStatus === "signedIn"
       ? t(language, "settings.account.connected")
       : t(language, "settings.account.notConnected");
+  const isDeletingAccount = googleAuthStatus === "deleting";
+  const subscriptionPeriodLabel = (() => {
+    const match = subscriptionPeriod?.match(/^P(\d+)([DWMY])$/);
+    if (!match) {
+      return subscriptionPeriod;
+    }
+    const [, count, unit] = match;
+    const labels =
+      language === "ja"
+        ? { D: "日", W: "週間", M: "か月", Y: "年" }
+        : { D: "day(s)", W: "week(s)", M: "month(s)", Y: "year(s)" };
+    return language === "ja" ? `${count}${labels[unit as "D" | "W" | "M" | "Y"]}` : `${count} ${labels[unit as "D" | "W" | "M" | "Y"]}`;
+  })();
   const showSubscriptionScreen = focusCloudSyncPurchase && !cloudSyncEntitled;
   const headerTitle = showSubscriptionScreen
     ? t(language, "settings.sync.subscriptionScreenTitle")
@@ -235,21 +269,19 @@ const SettingsScreen = ({
         <Text style={styles.accountLabelText}>
           {accountLabel ?? t(language, "settings.account.noAccount")}
         </Text>
-        <Pressable
+        {googleAuthStatus === "signedIn" || isDeletingAccount ? <Pressable
           style={[
             styles.googleAuthButton,
             googleAuthStatus === "signedIn" && styles.googleAuthButtonSecondary,
-            (googleAuthStatus === "restoring" ||
-              googleAuthStatus === "signingIn") &&
+            isDeletingAccount &&
               styles.syncButtonDisabled,
           ]}
           onPress={
-            googleAuthStatus === "signedIn" ? onSignOutGoogle : onSignInWithGoogle
+            onSignOutGoogle
           }
           disabled={
-            googleAuthStatus === "restoring" ||
-            googleAuthStatus === "signingIn" ||
-            (googleAuthStatus === "signedIn" ? !onSignOutGoogle : !onSignInWithGoogle)
+            isDeletingAccount ||
+            !onSignOutGoogle
           }
         >
           <Text
@@ -259,24 +291,116 @@ const SettingsScreen = ({
                 styles.googleAuthButtonTextSecondary,
             ]}
           >
-            {googleAuthStatus === "restoring"
-              ? t(language, "settings.sync.restoring")
-              : googleAuthStatus === "signingIn"
-                ? t(language, "settings.sync.signingIn")
-                : googleAuthStatus === "signedIn"
-                  ? t(language, "settings.sync.signOutGoogle")
-                  : t(language, "settings.sync.signInGoogle")}
+            {isDeletingAccount
+                  ? t(language, "settings.account.deleting")
+                  : t(language, "settings.sync.signOut")}
           </Text>
-        </Pressable>
-        {googleAuthStatus !== "signedIn" && appleSignInAvailable && onSignInWithApple ? (
-          <AppleAuthentication.AppleAuthenticationButton
-            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-            cornerRadius={8}
-            onPress={onSignInWithApple}
-            style={styles.appleAuthButton}
-          />
+        </Pressable> : <SocialSignInButtons
+          onGoogle={onSignInWithGoogle}
+          onApple={onSignInWithApple}
+          showApple={appleSignInAvailable}
+          disabled={googleAuthStatus === "restoring" || googleAuthStatus === "signingIn"}
+        />}
+        {googleAuthStatus === "signedIn" && onDeleteAccount ? (
+          <View style={styles.accountDeletionSection}>
+            {!showAccountDeletion ? (
+              <Pressable
+                style={styles.accountDeletionOpenButton}
+                onPress={() => setShowAccountDeletion(true)}
+              >
+                <Text style={styles.accountDeletionOpenButtonText}>
+                  {t(language, "settings.account.deleteOpen")}
+                </Text>
+              </Pressable>
+            ) : (
+              <View style={styles.accountDeletionCard}>
+                <Text style={styles.accountDeletionTitle}>
+                  {t(language, "settings.account.deleteTitle")}
+                </Text>
+                <Text style={styles.accountDeletionText}>
+                  {t(language, "settings.account.deleteIntro")}
+                </Text>
+                <Text style={styles.accountDeletionText}>
+                  {t(language, "settings.account.deleteCloudScope")}
+                </Text>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: deleteLocalData }}
+                  style={styles.accountDeletionCheckboxRow}
+                  onPress={() => setDeleteLocalData((current) => !current)}
+                >
+                  <Ionicons
+                    name={deleteLocalData ? "checkbox" : "square-outline"}
+                    size={22}
+                    color="#991b1b"
+                  />
+                  <Text style={styles.accountDeletionCheckboxText}>
+                    {t(language, "settings.account.deleteLocalLabel")}
+                  </Text>
+                </Pressable>
+                <Text style={styles.accountDeletionText}>
+                  {t(language, "settings.account.deleteLocalDescription")}
+                </Text>
+                <Text style={styles.accountDeletionNotice}>
+                  {t(language, "settings.account.deleteSubscriptionNotice")}
+                </Text>
+                <Pressable
+                  onPress={() => void Linking.openURL(APPLE_SUBSCRIPTIONS_URL)}
+                >
+                  <Text style={styles.accountDeletionLegalLink}>
+                    {t(language, "settings.account.manageSubscription")}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.accountDeletionConfirmButton,
+                    isDeletingAccount && styles.syncButtonDisabled,
+                  ]}
+                  disabled={isDeletingAccount}
+                  onPress={() => {
+                    Alert.alert(
+                      t(language, "settings.account.deleteConfirmTitle"),
+                      t(language, "settings.account.deleteConfirmBody"),
+                      [
+                        { text: t(language, "common.cancel"), style: "cancel" },
+                        {
+                          text: t(language, "settings.account.deleteConfirm"),
+                          style: "destructive",
+                          onPress: () => onDeleteAccount({ deleteLocalData }),
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  <Text style={styles.accountDeletionConfirmButtonText}>
+                    {isDeletingAccount
+                      ? t(language, "settings.account.deleting")
+                      : t(language, "settings.account.deleteConfirm")}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
         ) : null}
+        {syncError ? <Text accessibilityRole="alert" style={styles.syncErrorText}>{syncError}</Text> : null}
+        {googleAuthStatus === "signedIn" && cloudSyncEntitled && onSyncNow ? (
+          <Pressable accessibilityRole="button" onPress={onSyncNow} disabled={syncStatus === "syncing"} style={styles.googleAuthButtonSecondary}>
+            <Text style={styles.linkText}>{language === "ja" ? "同期を再実行" : "Retry sync"}</Text>
+          </Pressable>
+        ) : null}
+        <View style={styles.accountLegalLinks}>
+          <Pressable onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
+            <Text style={styles.subscriptionLegalLink}>
+              {t(language, "settings.sync.privacyPolicy")}
+            </Text>
+          </Pressable>
+          <Text style={styles.subscriptionFootnote}> / </Text>
+          <Pressable onPress={() => void Linking.openURL(TERMS_OF_USE_URL)}>
+            <Text style={styles.subscriptionLegalLink}>
+              {t(language, "settings.sync.termsOfUse")}
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -465,9 +589,7 @@ const SettingsScreen = ({
     >
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Pressable style={styles.menuButton} onPress={onOpenMenu}>
-            <Ionicons name="menu" size={20} color="#111827" />
-          </Pressable>
+          <MenuButton styles={styles} onPress={onOpenMenu} />
           <Pressable style={styles.backButton} onPress={onBack}>
             <Text style={styles.linkText}>{t(language, "common.back")}</Text>
           </Pressable>
@@ -528,10 +650,41 @@ const SettingsScreen = ({
                   </Text>
                 </View>
                 <Text style={styles.subscriptionTitle}>
-                  {t(language, "settings.sync.subscriptionHeadline")}
+                  {subscriptionProductTitle ?? t(language, "settings.sync.subscriptionHeadline")}
                 </Text>
                 <Text style={styles.subscriptionDescription}>
                   {t(language, "settings.sync.subscriptionBody")}
+                </Text>
+                {subscriptionPrice && subscriptionPeriodLabel ? (
+                  <View style={styles.subscriptionRequiredInfo}>
+                    <Text style={styles.subscriptionRequiredInfoText}>
+                      {t(language, "settings.sync.subscriptionDuration").replace(
+                        "{period}",
+                        subscriptionPeriodLabel,
+                      )}
+                    </Text>
+                    <Text style={styles.subscriptionRequiredInfoText}>
+                      {t(language, "settings.sync.subscriptionPrice").replace(
+                        "{price}",
+                        subscriptionPrice,
+                      )}
+                    </Text>
+                    {subscriptionMonthlyPrice && subscriptionPeriod !== "P1M" ? (
+                      <Text style={styles.subscriptionRequiredInfoText}>
+                        {t(language, "settings.sync.subscriptionUnitPrice").replace(
+                          "{price}",
+                          subscriptionMonthlyPrice,
+                        )}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={styles.subscriptionFootnote}>
+                    {t(language, "settings.sync.subscriptionPriceLoading")}
+                  </Text>
+                )}
+                <Text style={styles.subscriptionFootnote}>
+                  {t(language, "settings.sync.subscriptionAutoRenew")}
                 </Text>
                 {subscriptionAccessCaption ? (
                   <Text style={styles.subscriptionHighlight}>
@@ -544,10 +697,18 @@ const SettingsScreen = ({
                 <Pressable
                       style={[
                         styles.subscriptionPrimaryButton,
-                        isSubscriptionBusy && styles.syncButtonDisabled,
+                        (isSubscriptionBusy ||
+                          !subscriptionPrice ||
+                          !subscriptionPeriodLabel) &&
+                          styles.syncButtonDisabled,
                       ]}
                       onPress={onPurchaseCloudSync}
-                      disabled={isSubscriptionBusy || !onPurchaseCloudSync}
+                      disabled={
+                        isSubscriptionBusy ||
+                        !subscriptionPrice ||
+                        !subscriptionPeriodLabel ||
+                        !onPurchaseCloudSync
+                      }
                     >
                       <Text style={styles.subscriptionPrimaryButtonText}>
                         {subscriptionStatus === "purchasing"
@@ -576,8 +737,27 @@ const SettingsScreen = ({
                       </Text>
                 </Pressable>
                 <Text style={styles.subscriptionFootnote}>
+                  {t(language, "settings.sync.subscriptionLoginRequired")}
+                </Text>
+                <Text style={styles.subscriptionFootnote}>
                   {t(language, "settings.sync.subscriptionRestoreCaption")}
                 </Text>
+                <View style={styles.subscriptionLegalRow}>
+                  <Text style={styles.subscriptionFootnote}>
+                    {t(language, "settings.sync.subscriptionLegalPrefix")}
+                  </Text>
+                  <Pressable onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
+                    <Text style={styles.subscriptionLegalLink}>
+                      {t(language, "settings.sync.privacyPolicy")}
+                    </Text>
+                  </Pressable>
+                  <Text style={styles.subscriptionFootnote}> / </Text>
+                  <Pressable onPress={() => void Linking.openURL(TERMS_OF_USE_URL)}>
+                    <Text style={styles.subscriptionLegalLink}>
+                      {t(language, "settings.sync.termsOfUse")}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
               {googleAuthStatus === "signedIn" ? (
                 <View style={styles.nestedSection}>{renderGoogleAccountCard()}</View>
@@ -889,15 +1069,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginTop: 6,
   },
-  appleAuthButton: {
-    width: "100%",
-    height: 44,
-    marginTop: 10,
-  },
   googleAuthButtonSecondary: {
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#d1d5db",
+  },
+  appleAuthButton: {
+    width: "100%",
+    height: 44,
+    marginTop: 10,
   },
   googleAuthButtonText: {
     fontSize: 13,
@@ -928,6 +1108,79 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#111827",
     fontWeight: "500",
+  },
+  accountDeletionSection: {
+    marginTop: 12,
+  },
+  accountLegalLinks: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    marginTop: 12,
+  },
+  accountDeletionOpenButton: {
+    alignSelf: "flex-start",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#dc2626",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  accountDeletionOpenButtonText: {
+    color: "#b91c1c",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  accountDeletionCard: {
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#fecaca",
+    paddingTop: 12,
+  },
+  accountDeletionTitle: {
+    color: "#991b1b",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  accountDeletionText: {
+    color: "#374151",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  accountDeletionNotice: {
+    color: "#92400e",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  accountDeletionLegalLink: {
+    alignSelf: "flex-start",
+    color: "#2563eb",
+    fontSize: 12,
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
+  accountDeletionCheckboxRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  accountDeletionCheckboxText: {
+    flex: 1,
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  accountDeletionConfirmButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    backgroundColor: "#b91c1c",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  accountDeletionConfirmButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "700",
   },
   usernameTitle: {
     fontSize: 14,
@@ -995,6 +1248,14 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: "#374151",
   },
+  subscriptionRequiredInfo: {
+    gap: 3,
+  },
+  subscriptionRequiredInfoText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "600",
+  },
   subscriptionHighlight: {
     fontSize: 13,
     fontWeight: "600",
@@ -1016,6 +1277,16 @@ const styles = StyleSheet.create({
   subscriptionFootnote: {
     fontSize: 12,
     color: "#6b7280",
+  },
+  subscriptionLegalRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+  subscriptionLegalLink: {
+    color: "#2563eb",
+    fontSize: 12,
+    textDecorationLine: "underline",
   },
   languageRow: {
     flexDirection: "row",

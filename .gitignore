@@ -50,6 +50,8 @@ yarn-error.*
 # local env files (commit the documented template only)
 .env
 .env.local
+.env.*.save
+.env.*.local
 !.env.example
 
 # typescript

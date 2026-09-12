@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid/non-secure";
+import { withLocalEntityMutation } from "../services/sync/localMutationLock";
 
 import {
   loadSimpleTodos,
@@ -18,7 +19,9 @@ type SaveTodosOptions = {
 const areTodosEqual = (left: SimpleTodoItem, right: SimpleTodoItem) =>
   JSON.stringify(left) === JSON.stringify(right);
 
-export const saveTodos = async (
+export const saveTodos = (...args: Parameters<typeof saveTodosImpl>) => args[1]?.enqueueSync === false ? saveTodosImpl(...args) : withLocalEntityMutation("todo", () => saveTodosImpl(...args));
+
+const saveTodosImpl = async (
   items: SimpleTodoItem[],
   options?: SaveTodosOptions,
 ): Promise<void> => {

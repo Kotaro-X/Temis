@@ -52,6 +52,7 @@ type AppSettingsContextValue = {
   setCloudSyncEnabled: (value: boolean) => Promise<void>;
   selectInitialLanguage: (language: AppLanguage) => void;
   refreshSettings: () => Promise<void>;
+  refreshSyncedTags: () => Promise<void>;
 };
 
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null);
@@ -141,6 +142,12 @@ export const AppSettingsProvider = ({
     await saveCloudSyncEnabled(value);
   }, []);
 
+  const refreshSyncedTags = useCallback(async () => {
+    const tags = await loadTagLibraries();
+    setTagLibrary(tags.activeTags);
+    setArchivedTagLibrary(tags.archivedTags);
+  }, [loadTagLibraries, setTagLibrary, setArchivedTagLibrary]);
+
   const refreshSettings = useCallback(async () => {
     const [loadedTagState, loadedSchedule, loadedCloudSyncEnabled] = await Promise.all([
       loadTagLibraries(),
@@ -213,6 +220,7 @@ export const AppSettingsProvider = ({
       setCloudSyncEnabled,
       selectInitialLanguage,
       refreshSettings,
+      refreshSyncedTags,
     }),
     [
       appLanguage,
@@ -226,6 +234,7 @@ export const AppSettingsProvider = ({
       persistArchivedTags,
       persistTagState,
       refreshSettings,
+      refreshSyncedTags,
       addTag,
       renameTag,
       archiveTag,

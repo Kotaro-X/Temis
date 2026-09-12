@@ -48,6 +48,7 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.signInGoogle": "Google でログイン",
     "settings.sync.signingIn": "ログイン中",
     "settings.sync.signOutGoogle": "Google からログアウト",
+    "settings.sync.signOut": "ログアウト",
     "settings.sync.syncNow": "今すぐ同期",
     "settings.sync.syncing": "同期中",
     "settings.sync.purchase": "購入する",
@@ -60,9 +61,18 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.subscriptionHeadline": "Temis Plus でクラウド同期を有効化",
     "settings.sync.subscriptionBody":
       "サブスクリプションを購入すると、Temis のデータを複数端末で同期できます。",
+    "settings.sync.subscriptionPriceLoading": "価格情報を読み込み中…",
+    "settings.sync.subscriptionDuration": "利用期間：{period}",
+    "settings.sync.subscriptionPrice": "料金：{price}",
+    "settings.sync.subscriptionUnitPrice": "月額換算：{price}",
+    "settings.sync.subscriptionAutoRenew":
+      "自動更新サブスクリプションです。次回更新日の24時間以上前までにAppleの「サブスクリプション」から解約しない限り、同じ期間・価格で自動更新されます。",
+    "settings.sync.subscriptionLegalPrefix": "購入前に、",
+    "settings.sync.privacyPolicy": "プライバシーポリシー",
+    "settings.sync.termsOfUse": "利用規約（Apple標準EULA）",
     "settings.sync.subscriptionPurchase": "サブスクリプションを購入",
     "settings.sync.subscriptionLoginRequired":
-      "購入はアカウントなしで行えます。複数端末で同期するには、後からログインしてください。",
+      "購入はアカウントなしで行えます。複数端末で同期する場合は、後からアカウントを接続してください。",
     "settings.sync.subscriptionRestoreCaption": "以前購入した場合は購入を復元してください",
     "settings.sync.inviteSectionTitle": "招待コードを使う",
     "settings.sync.inviteCodeLabel": "招待コード",
@@ -92,6 +102,23 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.account.displayNameSaving": "保存中...",
     "settings.account.displayNameSaveError": "表示名を保存できませんでした。",
     "settings.account.displayNameRequired": "表示名を入力してください。",
+    "settings.account.deleteTitle": "アカウントを削除",
+    "settings.account.deleteOpen": "アカウント削除へ進む",
+    "settings.account.deleteIntro":
+      "クラウド上のアカウントと同期済みデータを完全に削除します。",
+    "settings.account.deleteCloudScope":
+      "削除対象：アカウント、クラウド同期データ、クラウドアクセス情報",
+    "settings.account.deleteLocalLabel": "この端末のローカルデータも削除する",
+    "settings.account.deleteLocalDescription":
+      "オンの場合、この端末のメモ・タスク・設定なども削除されます。オフの場合、端末だけにあるデータはこの端末に残ります。ほかの端末のローカルデータは、その端末で削除するかアプリを削除してください。",
+    "settings.account.deleteSubscriptionNotice":
+      "定期購入はアカウント削除では解約されません。削除を続ける前に、Appleの「サブスクリプション」から解約してください。",
+    "settings.account.manageSubscription": "Appleのサブスクリプションを管理する",
+    "settings.account.deleteConfirm": "アカウントを完全に削除",
+    "settings.account.deleteConfirmTitle": "アカウントを削除しますか？",
+    "settings.account.deleteConfirmBody":
+      "クラウド上のアカウントと同期済みデータは完全に削除され、元に戻せません。",
+    "settings.account.deleting": "削除中…",
     "memo.title": "Memo",
     "memo.defaultTitle": "メモ",
     "memo.searchPlaceholder": "メモを検索",
@@ -327,6 +354,7 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.signInGoogle": "Sign in with Google",
     "settings.sync.signingIn": "Signing in",
     "settings.sync.signOutGoogle": "Sign out from Google",
+    "settings.sync.signOut": "Sign out",
     "settings.sync.syncNow": "Sync now",
     "settings.sync.syncing": "Syncing",
     "settings.sync.purchase": "Purchase",
@@ -339,6 +367,15 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.sync.subscriptionHeadline": "Unlock Cloud Sync with Temis Plus",
     "settings.sync.subscriptionBody":
       "Purchase the subscription to sync your Temis data across devices.",
+    "settings.sync.subscriptionPriceLoading": "Loading price information…",
+    "settings.sync.subscriptionDuration": "Subscription length: {period}",
+    "settings.sync.subscriptionPrice": "Price: {price}",
+    "settings.sync.subscriptionUnitPrice": "Monthly equivalent: {price}",
+    "settings.sync.subscriptionAutoRenew":
+      "This is an auto-renewable subscription. It renews for the same period and price unless canceled in Apple Subscriptions at least 24 hours before the renewal date.",
+    "settings.sync.subscriptionLegalPrefix": "Before purchasing, review the ",
+    "settings.sync.privacyPolicy": "Privacy Policy",
+    "settings.sync.termsOfUse": "Terms of Use (Apple Standard EULA)",
     "settings.sync.subscriptionPurchase": "Purchase subscription",
     "settings.sync.subscriptionLoginRequired":
       "You can purchase without an account. Sign in later to sync across devices.",
@@ -372,6 +409,23 @@ const MESSAGES: Record<AppLanguage, Record<string, string>> = {
     "settings.account.displayNameSaving": "Saving...",
     "settings.account.displayNameSaveError": "Could not save display name.",
     "settings.account.displayNameRequired": "Enter a display name.",
+    "settings.account.deleteTitle": "Delete account",
+    "settings.account.deleteOpen": "Delete account",
+    "settings.account.deleteIntro":
+      "Permanently delete your cloud account and synced data.",
+    "settings.account.deleteCloudScope":
+      "Deleted: account, cloud-synced data, and cloud access records.",
+    "settings.account.deleteLocalLabel": "Also delete local data on this device",
+    "settings.account.deleteLocalDescription":
+      "When on, memos, tasks, and settings on this device are deleted too. When off, device-only data remains on this device. Delete local data on other devices from those devices or by uninstalling the app.",
+    "settings.account.deleteSubscriptionNotice":
+      "Deleting an account does not cancel a subscription. Before continuing, cancel it in Apple Subscriptions.",
+    "settings.account.manageSubscription": "Manage Apple subscriptions",
+    "settings.account.deleteConfirm": "Permanently delete account",
+    "settings.account.deleteConfirmTitle": "Delete your account?",
+    "settings.account.deleteConfirmBody":
+      "Your cloud account and synced data will be permanently deleted and cannot be restored.",
+    "settings.account.deleting": "Deleting…",
     "memo.title": "Memo",
     "memo.defaultTitle": "Memo",
     "memo.searchPlaceholder": "Search memos",

@@ -14,6 +14,7 @@ import {
 } from "../services/sync/firebaseApp";
 import {
   configurePurchases,
+  getCloudSyncPlanDetails,
   getCustomerInfo,
   isCloudSyncEntitled as isRevenueCatCloudSyncEntitled,
   isRevenueCatSupportedPlatform,
@@ -32,6 +33,7 @@ import {
   type CloudSyncAccessGrant,
 } from "../services/subscription/cloudSyncAccess";
 import { isSyncFirebaseUser } from "../services/auth/syncUser";
+import type { CloudSyncPlanDetails } from "../services/subscription/revenueCat";
 
 type SubscriptionStatus = "idle" | "loading" | "ready" | "purchasing" | "error";
 type InviteStatus = "idle" | "redeeming" | "error";
@@ -46,6 +48,7 @@ type SubscriptionContextValue = {
   status: SubscriptionStatus;
   inviteStatus: InviteStatus;
   customerInfo: CustomerInfo | null;
+  planDetails: CloudSyncPlanDetails | null;
   accessGrant: CloudSyncAccessGrant | null;
   revenueCatEntitled: boolean;
   isCloudSyncEntitled: boolean;
@@ -98,6 +101,7 @@ export const SubscriptionProvider = ({
   const [status, setStatus] = useState<SubscriptionStatus>("idle");
   const [inviteStatus, setInviteStatus] = useState<InviteStatus>("idle");
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
+  const [planDetails, setPlanDetails] = useState<CloudSyncPlanDetails | null>(null);
   const [accessGrant, setAccessGrant] = useState<CloudSyncAccessGrant | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
@@ -141,6 +145,7 @@ export const SubscriptionProvider = ({
     setStatus("loading");
     setError(null);
     try {
+      // Store metadata failures must not revoke an already purchased entitlement.
       const nextCustomerInfo = await getCustomerInfo();
       await refreshAccessGrant(firebaseUser);
       return applyCustomerInfo(nextCustomerInfo);
@@ -290,6 +295,32 @@ export const SubscriptionProvider = ({
     if (!purchasesConfigured) {
       return;
     }
+    let active = true;
+    const override = hasInviteDiscountAccess(accessGrant)
+      ? { offeringId: accessGrant?.offeringId, packageId: accessGrant?.packageId }
+      : undefined;
+    setPlanDetails(null);
+    void getCloudSyncPlanDetails(override)
+      .then((details) => {
+        if (active) {
+          setPlanDetails(details);
+        }
+      })
+      .catch((detailsError) => {
+        if (active) {
+          setPlanDetails(null);
+          setError(formatError(detailsError));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [accessGrant, purchasesConfigured]);
+
+  useEffect(() => {
+    if (!purchasesConfigured) {
+      return;
+    }
 
     let active = true;
     const user =
@@ -335,6 +366,7 @@ export const SubscriptionProvider = ({
       status,
       inviteStatus,
       customerInfo,
+      planDetails,
       accessGrant,
       revenueCatEntitled,
       isCloudSyncEntitled,
@@ -360,6 +392,7 @@ export const SubscriptionProvider = ({
       inviteError,
       inviteStatus,
       isCloudSyncEntitled,
+      planDetails,
       purchase,
       redeemInviteCodeForAccess,
       refresh,

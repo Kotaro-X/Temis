@@ -22,6 +22,7 @@ import {
 } from "../services/sync/syncEntityModels";
 import { persistAndEnqueueSyncEnvelope } from "../services/sync/syncEnvelopeStore";
 import { SLOT_KEYS } from "../types";
+import { withLocalEntityMutation } from "../services/sync/localMutationLock";
 
 export const loadTasks = async (
   date: string,
@@ -47,7 +48,9 @@ const areTasksEqual = (left: TaskState, right: TaskState) =>
 const areLogsEqual = (left: LogEntry, right: LogEntry) =>
   JSON.stringify(left) === JSON.stringify(right);
 
-export const saveTasks = async (
+export const saveTasks = (...args: Parameters<typeof saveTasksImpl>) => args[1]?.enqueueSync === false ? saveTasksImpl(...args) : withLocalEntityMutation("task", () => saveTasksImpl(...args));
+
+const saveTasksImpl = async (
   state: TodayState,
   options?: SaveTasksOptions,
 ): Promise<void> => {
@@ -113,7 +116,9 @@ export const saveTasks = async (
 
 export const loadTaskLogs = async (): Promise<LogEntry[]> => loadStoredLogs();
 
-export const saveTaskLogs = async (
+export const saveTaskLogs = (...args: Parameters<typeof saveTaskLogsImpl>) => args[1]?.enqueueSync === false ? saveTaskLogsImpl(...args) : withLocalEntityMutation("task", () => saveTaskLogsImpl(...args));
+
+const saveTaskLogsImpl = async (
   logs: LogEntry[],
   options?: SaveTaskLogsOptions,
 ): Promise<void> => {

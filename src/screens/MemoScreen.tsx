@@ -408,7 +408,7 @@ const MemoScreen = ({
 
   const loadItems = useCallback(() => {
     let active = true;
-    setLoading(true);
+    // Keep editors mounted while background sync refreshes the list.
     buildMemoItems()
       .then((loaded) => {
         if (active) {
@@ -417,7 +417,7 @@ const MemoScreen = ({
       })
       .catch(() => {
         if (active) {
-          setItems([]);
+          setLoading(false);
         }
       })
       .finally(() => {

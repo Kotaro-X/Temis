@@ -1,4 +1,6 @@
 import type { SyncEntityEnvelope, SyncEntityType, SyncQueueItem } from "../../types";
+import { withSyncStoreMutation } from "./localMutationLock.ts";
+import { reconcileProcessedQueue } from "./reconcileProcessedQueue.ts";
 import {
   logSkippedSyncEnvelope,
   validateSyncEnvelope,
@@ -98,6 +100,8 @@ export const syncQueuedEnvelopes = async <
   const queue = await loadSyncQueue();
   const result = await processSyncQueue(entityType, queue, now, pushEnvelope);
 
-  await saveSyncQueue(result.queue);
+  await withSyncStoreMutation(async () => {
+    await saveSyncQueue(reconcileProcessedQueue(queue, result.queue, await loadSyncQueue()));
+  });
   return result;
 };

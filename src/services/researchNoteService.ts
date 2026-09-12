@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { nanoid } from "nanoid/non-secure";
+import { withLocalEntityMutation } from "./sync/localMutationLock";
 
 import { loadSyncDeviceId } from "../../storage";
 import { Tag } from "../../types";
@@ -94,7 +95,9 @@ export const getResearchNoteById = async (
   return notes.find((note) => note.id === noteId) ?? null;
 };
 
-export const upsertResearchNote = async (input: {
+export const upsertResearchNote = (...args: Parameters<typeof upsertResearchNoteImpl>) => args[0].enqueueSync === false ? upsertResearchNoteImpl(...args) : withLocalEntityMutation("memo", () => upsertResearchNoteImpl(...args));
+
+const upsertResearchNoteImpl = async (input: {
   id?: string;
   title: string;
   body: string;
@@ -201,7 +204,9 @@ export const upsertResearchNoteRecord = async (
   return record;
 };
 
-export const deleteResearchNoteById = async (
+export const deleteResearchNoteById = (...args: Parameters<typeof deleteResearchNoteByIdImpl>) => args[1]?.enqueueSync === false ? deleteResearchNoteByIdImpl(...args) : withLocalEntityMutation("memo", () => deleteResearchNoteByIdImpl(...args));
+
+const deleteResearchNoteByIdImpl = async (
   noteId: string,
   options?: { enqueueSync?: boolean },
 ): Promise<void> => {

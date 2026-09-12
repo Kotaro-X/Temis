@@ -32,7 +32,28 @@ export const isAppleSignInCancelledError = (error: unknown): boolean =>
   "code" in error &&
   (error as { code?: string }).code === "ERR_REQUEST_CANCELED";
 
+export const requestAppleAccountDeletionAuthorizationCode = async (): Promise<
+  string | null
+> => {
+  try {
+    const credential = await AppleAuthentication.signInAsync({
+      requestedScopes: [],
+    });
+    if (!credential.authorizationCode) {
+      throw new Error("Apple authorization code could not be obtained.");
+    }
+    return credential.authorizationCode;
+  } catch (error) {
+    if (isAppleSignInCancelledError(error)) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 export const signInAppleSyncUser = async (): Promise<SyncUser> => {
+  // Firebase checks this raw nonce against the SHA-256 value embedded in the
+  // Apple ID token, preventing a token captured from another request being reused.
   const rawNonce = nonceFromBytes(await Crypto.getRandomBytesAsync(32));
   const hashedNonce = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
