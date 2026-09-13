@@ -3,6 +3,8 @@ import { defineSecret } from "firebase-functions/params";
 import accountDeletion from "./accountDeletion.cjs";
 
 export const deleteAccount = accountDeletion.deleteAccount;
+export const getAccountDeletionBlockers = accountDeletion.getAccountDeletionBlockers;
+export const resolveAccountDeletionBlocker = accountDeletion.resolveAccountDeletionBlocker;
 
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
 // The project has no Compute Engine default service account. Use a dedicated,

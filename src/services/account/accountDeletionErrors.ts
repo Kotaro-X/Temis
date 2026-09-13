@@ -8,7 +8,7 @@ export const accountDeletionErrorMessage = (error: unknown): string => {
   if (value?.code === "ERR_REQUEST_CANCELED") return "Appleでの確認をキャンセルしました。今回の削除要求は送信していません。";
   const details = value?.details;
   if (details?.stage === "shared_data") {
-    return "Guild・プロジェクト・共有データがあるため削除を開始できません。共有データの整理について運営にお問い合わせください。アカウントとデータは削除していません。";
+    return "Guild・プロジェクト・共有データが残っているため削除を開始できません。アカウント設定の「共有データを確認・整理する」から整理後、もう一度削除してください。アカウントとデータは削除していません。";
   }
   if (details?.stage?.startsWith("apple_")) {
     const reason = details.reason === "configuration" ? "Apple連携の設定に問題があります。運営にお知らせください。"

@@ -28,6 +28,12 @@ import { subscribeSyncQueueChanges } from "../services/sync/syncQueueEvents";
 import { waitForResolvedValue } from "../services/auth/waitForResolvedValue";
 import { clearAccountDeletionState, readAccountDeletionState, saveAccountDeletionState } from "../services/account/accountDeletionState";
 import { accountDeletionErrorMessage } from "../services/account/accountDeletionErrors";
+import {
+  getAccountDeletionBlockers,
+  resolveAccountDeletionBlocker,
+  type AccountDeletionBlockers,
+  type AccountDeletionResolution,
+} from "../services/account/accountDeletionBlockers";
 
 const SYNC_CAPABILITIES: SyncCapabilities = {
   tag: "enabled",
@@ -55,6 +61,10 @@ export const useCloudSync = ({
     "restoring" | "signedOut" | "signingIn" | "deleting" | "signedIn"
   >("restoring");
   const [user, setUser] = useState<SyncUser | null>(null);
+  const [accountDeletionBlockers, setAccountDeletionBlockers] =
+    useState<AccountDeletionBlockers | null>(null);
+  const [accountDeletionBlockersStatus, setAccountDeletionBlockersStatus] =
+    useState<"idle" | "loading" | "error">("idle");
   const autoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncInFlightRef = useRef<Promise<SyncResult | null> | null>(null);
   const autoSyncPendingRef = useRef(false);
@@ -220,6 +230,8 @@ export const useCloudSync = ({
       }
       setUser(signedInUser);
       await clearAccountDeletionState();
+      setAccountDeletionBlockers(null);
+      setAccountDeletionBlockersStatus("idle");
       setAuthStatus("signedIn");
       return signedInUser;
     } catch (signInError) {
@@ -241,6 +253,8 @@ export const useCloudSync = ({
       const signedInUser = await signInAppleSyncUser();
       await clearAccountDeletionState();
       setUser(signedInUser);
+      setAccountDeletionBlockers(null);
+      setAccountDeletionBlockersStatus("idle");
       setAuthStatus("signedIn");
       return signedInUser;
     } catch (signInError) {
@@ -271,6 +285,8 @@ export const useCloudSync = ({
       await syncInFlightRef.current;
       await signOutSyncUser();
       setUser(null);
+      setAccountDeletionBlockers(null);
+      setAccountDeletionBlockersStatus("idle");
       setAuthStatus("signedOut");
       setStatus("idle");
       setInitialSyncStatus("idle");
@@ -332,6 +348,8 @@ export const useCloudSync = ({
         // Keep silent Google restoration disabled even when local storage was cleared.
         await saveAccountDeletionState("deleted");
         setUser(null);
+        setAccountDeletionBlockers(null);
+        setAccountDeletionBlockersStatus("idle");
         setAuthStatus("signedOut");
         setStatus("idle");
         setInitialSyncStatus("idle");
@@ -358,6 +376,37 @@ export const useCloudSync = ({
       }
     },
     [clearAutoSyncTimer],
+  );
+
+  const loadAccountDeletionBlockers = useCallback(async () => {
+    setAccountDeletionBlockersStatus("loading");
+    try {
+      const blockers = await getAccountDeletionBlockers();
+      setAccountDeletionBlockers(blockers);
+      setAccountDeletionBlockersStatus("idle");
+      return blockers;
+    } catch (blockerError) {
+      setAccountDeletionBlockersStatus("error");
+      setError(accountDeletionErrorMessage(blockerError));
+      throw blockerError;
+    }
+  }, []);
+
+  const resolveDeletionBlocker = useCallback(
+    async (input: AccountDeletionResolution) => {
+      setAccountDeletionBlockersStatus("loading");
+      try {
+        const blockers = await resolveAccountDeletionBlocker(input);
+        setAccountDeletionBlockers(blockers);
+        setAccountDeletionBlockersStatus("idle");
+        return blockers;
+      } catch (blockerError) {
+        setAccountDeletionBlockersStatus("error");
+        setError(accountDeletionErrorMessage(blockerError));
+        throw blockerError;
+      }
+    },
+    [],
   );
 
   useEffect(() => {
@@ -396,6 +445,10 @@ export const useCloudSync = ({
     signInWithApple,
     signOut,
     deleteAccount,
+    accountDeletionBlockers,
+    accountDeletionBlockersStatus,
+    loadAccountDeletionBlockers,
+    resolveDeletionBlocker,
     capabilities: SYNC_CAPABILITIES,
     initialSyncStatus,
   };

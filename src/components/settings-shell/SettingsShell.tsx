@@ -169,7 +169,7 @@ const SettingsShell = ({
     archiveTag,
     restoreTag,
   } = useAppSettings();
-  const { openMenu, settingsScreen, setSettingsScreen } = useAppUI();
+  const { openGuild, openMenu, openProjects, settingsScreen, setSettingsScreen } = useAppUI();
   const { profile, saveDisplayName, saveUsername } = useCollaboration();
   const { resetApp } = useAppReset();
   const { isRefreshing, refreshApp } = useAppRefresh();
@@ -197,6 +197,10 @@ const SettingsShell = ({
     signInWithApple: signInWithAppleToSync,
     signOut: signOutFromSync,
     deleteAccount: deleteCloudAccount,
+    accountDeletionBlockers,
+    accountDeletionBlockersStatus,
+    loadAccountDeletionBlockers,
+    resolveDeletionBlocker,
   } = useCloudSyncContext();
   const dataConfig: SettingsDataConfig = {
     language: appLanguage,
@@ -454,6 +458,12 @@ const SettingsShell = ({
           onSignOutGoogle={() => {
             void signOutFromSync();
           }}
+          accountDeletionBlockers={accountDeletionBlockers}
+          accountDeletionBlockersStatus={accountDeletionBlockersStatus}
+          onLoadAccountDeletionBlockers={loadAccountDeletionBlockers}
+          onResolveAccountDeletionBlocker={resolveDeletionBlocker}
+          onOpenProjects={openProjects}
+          onOpenGuild={openGuild}
           onDeleteAccount={({ deleteLocalData }) => {
             void deleteCloudAccount({ deleteLocalData })
               .then((result) => {

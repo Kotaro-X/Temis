@@ -67,8 +67,8 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
   const db = {
     doc: (path: string) => ({ path, delete: () => step(path.startsWith("profiles/") ? "profile" : "subscription_access") }),
     collection: () => ({ where: () => ({
-      get: async () => ({ docs: [] }),
-      limit: () => ({ get: async () => ({ empty: !options.sharedData }) }),
+      get: async () => ({ docs: [], size: 0, empty: true }),
+      limit: () => ({ get: async () => ({ docs: [], size: 0, empty: !options.sharedData }) }),
     }) }),
     recursiveDelete: () => step("cloud_data"),
     collectionGroup: () => ({ where: () => ({ get: async () => { await step("query"); return { docs: Array.from({ length: options.redemptionCount ?? 1 }, () => ({ ref: {} })) }; } }) }),
@@ -106,7 +106,13 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
     exports, URL, URLSearchParams, AbortSignal, setTimeout, clearTimeout,
     fetch: async () => { events.push("external"); return { ok: !options.externalFailure, status: options.externalFailure ? 403 : 200, json: async () => ({}) }; },
   });
-  return { call: exports.deleteAccount, events, logs };
+  return {
+    call: exports.deleteAccount,
+    getBlockers: exports.getAccountDeletionBlockers,
+    resolveBlocker: exports.resolveAccountDeletionBlocker,
+    events,
+    logs,
+  };
 }
 
 const request = { auth: { uid: "FAKE_DISPOSABLE_UID", token: { firebase: { sign_in_provider: "google.com" } } }, data: {} };
@@ -160,6 +166,23 @@ test("actual callable: repeated deletion accepts an already absent Firebase Auth
 test("actual callable: unauthenticated deletion has no side effects", async () => {
   const fixture = callableFixture();
   await assert.rejects(fixture.call({ data: {} }), (error: any) => error.code === "unauthenticated");
+  assert.deepEqual(fixture.events, []);
+});
+
+test("shared-data inspection is authenticated and does not start deletion", async () => {
+  const fixture = callableFixture();
+  await assert.rejects(fixture.getBlockers({ data: {} }), (error: any) => error.code === "unauthenticated");
+  const result = await fixture.getBlockers(request);
+  assert.equal(result.total, 0);
+  assert.deepEqual(fixture.events, []);
+});
+
+test("unsupported shared-data resolution is rejected without destructive work", async () => {
+  const fixture = callableFixture();
+  await assert.rejects(
+    fixture.resolveBlocker({ ...request, data: { action: "not_supported" } }),
+    (error: any) => error.code === "invalid-argument",
+  );
   assert.deepEqual(fixture.events, []);
 });
 

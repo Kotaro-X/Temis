@@ -24,7 +24,7 @@ import DeletedItemsSection, {
 import TimeBoxSettingsSection, {
   TimeBoxSettingsSectionProps,
 } from "../components/settings/TimeBoxSettingsSection";
-import { AppLanguage, t } from "../i18n";
+import { AppLanguage, t, tf } from "../i18n";
 import { normalizeUsername, validateUsername } from "../types/collaboration";
 import { isAppleSignInAvailable } from "../services/auth/appleSignIn";
 import {
@@ -32,6 +32,10 @@ import {
   PRIVACY_POLICY_URL,
   TERMS_OF_USE_URL,
 } from "../config/legalLinks";
+import type {
+  AccountDeletionBlockers,
+  AccountDeletionResolution,
+} from "../services/account/accountDeletionBlockers";
 
 type SectionKey = "Account" | "TimeBoxes" | "Tags" | "DeletedItems";
 
@@ -90,6 +94,14 @@ export type SettingsScreenProps = {
   onSignInWithApple?: () => void;
   onSignOutGoogle?: () => void;
   onDeleteAccount?: (input: { deleteLocalData: boolean }) => void;
+  accountDeletionBlockers?: AccountDeletionBlockers | null;
+  accountDeletionBlockersStatus?: "idle" | "loading" | "error";
+  onLoadAccountDeletionBlockers?: () => Promise<unknown>;
+  onResolveAccountDeletionBlocker?: (
+    input: AccountDeletionResolution,
+  ) => Promise<unknown>;
+  onOpenProjects?: () => void;
+  onOpenGuild?: () => void;
   onSyncNow?: () => void;
   initialSection?: SectionKey;
   visibleSections?: SectionKey[];
@@ -147,6 +159,12 @@ const SettingsScreen = ({
   onSignInWithApple,
   onSignOutGoogle,
   onDeleteAccount,
+  accountDeletionBlockers = null,
+  accountDeletionBlockersStatus = "idle",
+  onLoadAccountDeletionBlockers,
+  onResolveAccountDeletionBlocker,
+  onOpenProjects,
+  onOpenGuild,
   onSyncNow,
   initialSection,
   visibleSections,
@@ -172,6 +190,8 @@ const SettingsScreen = ({
   const [savingDisplayName, setSavingDisplayName] = useState(false);
   const [appleSignInAvailable, setAppleSignInAvailable] = useState(false);
   const [showAccountDeletion, setShowAccountDeletion] = useState(false);
+  const [showAccountDeletionBlockers, setShowAccountDeletionBlockers] =
+    useState(false);
   const [deleteLocalData, setDeleteLocalData] = useState(true);
 
   useEffect(() => {
@@ -231,6 +251,18 @@ const SettingsScreen = ({
       ? t(language, "settings.account.connected")
       : t(language, "settings.account.notConnected");
   const isDeletingAccount = googleAuthStatus === "deleting";
+  const isResolvingAccountDeletion = accountDeletionBlockersStatus === "loading";
+  const openAccountDeletionBlockers = () => {
+    setShowAccountDeletionBlockers(true);
+    void onLoadAccountDeletionBlockers?.().catch(() => {
+      // The sync context surfaces a safe error message in the account card.
+    });
+  };
+  const resolveAccountDeletionBlocker = (input: AccountDeletionResolution) => {
+    void onResolveAccountDeletionBlocker?.(input).catch(() => {
+      // The sync context surfaces a safe error message in the account card.
+    });
+  };
   const subscriptionPeriodLabel = (() => {
     const match = subscriptionPeriod?.match(/^P(\d+)([DWMY])$/);
     if (!match) {
@@ -323,6 +355,131 @@ const SettingsScreen = ({
                 <Text style={styles.accountDeletionText}>
                   {t(language, "settings.account.deleteCloudScope")}
                 </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isResolvingAccountDeletion || !onLoadAccountDeletionBlockers}
+                  onPress={openAccountDeletionBlockers}
+                  style={[
+                    styles.accountDeletionResolveButton,
+                    (isResolvingAccountDeletion || !onLoadAccountDeletionBlockers) && styles.syncButtonDisabled,
+                  ]}
+                >
+                  <Text style={styles.accountDeletionResolveButtonText}>
+                    {isResolvingAccountDeletion
+                      ? t(language, "settings.account.deleteBlockersLoading")
+                      : t(language, "settings.account.deleteBlockersOpen")}
+                  </Text>
+                </Pressable>
+                {showAccountDeletionBlockers ? (
+                  <View style={styles.accountDeletionBlockerList}>
+                    <Text style={styles.accountDeletionText}>
+                      {accountDeletionBlockers?.total
+                        ? t(language, "settings.account.deleteBlockersFound")
+                        : t(language, "settings.account.deleteBlockersNone")}
+                    </Text>
+                    {accountDeletionBlockers?.projects.map((project) => (
+                      <View key={project.projectId} style={styles.accountDeletionBlockerCard}>
+                        <Text style={styles.accountDeletionBlockerTitle}>{project.projectName}</Text>
+                        <Text style={styles.accountDeletionText}>
+                          {project.role === "owner"
+                            ? t(language, "settings.account.deleteProjectOwner")
+                            : t(language, "settings.account.deleteProjectMember")}
+                        </Text>
+                        {project.ownedTaskCount || project.ownedNoteCount || project.assignedTaskCount ? (
+                          <Text style={styles.accountDeletionText}>
+                            {tf(language, "settings.account.deleteProjectContent", {
+                              tasks: String(project.ownedTaskCount),
+                              notes: String(project.ownedNoteCount),
+                              assigned: String(project.assignedTaskCount),
+                            })}
+                          </Text>
+                        ) : null}
+                        <View style={styles.accountDeletionActions}>
+                          <Pressable onPress={onOpenProjects} style={styles.accountDeletionSecondaryButton}>
+                            <Text style={styles.accountDeletionSecondaryButtonText}>{t(language, "settings.account.openProjects")}</Text>
+                          </Pressable>
+                          {project.role === "owner" ? (
+                            <>
+                              {project.transferCandidates.map((candidate) => (
+                                <Pressable
+                                  key={candidate.userId}
+                                  disabled={isResolvingAccountDeletion || !onResolveAccountDeletionBlocker}
+                                  onPress={() => resolveAccountDeletionBlocker({
+                                    action: "transfer_project_ownership",
+                                    projectId: project.projectId,
+                                    targetUserId: candidate.userId,
+                                  })}
+                                  style={styles.accountDeletionSecondaryButton}
+                                >
+                                  <Text style={styles.accountDeletionSecondaryButtonText}>
+                                    {tf(language, "settings.account.transferProject", { name: candidate.label })}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                              <Pressable
+                                disabled={isResolvingAccountDeletion || !onResolveAccountDeletionBlocker}
+                                onPress={() => Alert.alert(
+                                  t(language, "settings.account.deleteProjectConfirmTitle"),
+                                  tf(language, "settings.account.deleteProjectConfirmBody", { name: project.projectName }),
+                                  [
+                                    { text: t(language, "common.cancel"), style: "cancel" },
+                                    {
+                                      text: t(language, "common.delete"),
+                                      style: "destructive",
+                                      onPress: () => resolveAccountDeletionBlocker({ action: "delete_project", projectId: project.projectId, confirmed: true }),
+                                    },
+                                  ],
+                                )}
+                                style={styles.accountDeletionDangerButton}
+                              >
+                                <Text style={styles.accountDeletionDangerButtonText}>{t(language, "settings.account.deleteProject")}</Text>
+                              </Pressable>
+                            </>
+                          ) : (
+                            <Pressable
+                              disabled={isResolvingAccountDeletion || !onResolveAccountDeletionBlocker}
+                              onPress={() => Alert.alert(
+                                t(language, "settings.account.leaveProjectConfirmTitle"),
+                                t(language, "settings.account.leaveProjectConfirmBody"),
+                                [
+                                  { text: t(language, "common.cancel"), style: "cancel" },
+                                  {
+                                    text: t(language, "settings.account.leaveProject"),
+                                    style: "destructive",
+                                    onPress: () => resolveAccountDeletionBlocker({ action: "leave_project", projectId: project.projectId }),
+                                  },
+                                ],
+                              )}
+                              style={styles.accountDeletionDangerButton}
+                            >
+                              <Text style={styles.accountDeletionDangerButtonText}>{t(language, "settings.account.leaveProject")}</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                    ))}
+                    {(accountDeletionBlockers?.counts.invitations || accountDeletionBlockers?.counts.joinRequests) ? (
+                      <Pressable disabled={isResolvingAccountDeletion || !onResolveAccountDeletionBlocker} onPress={() => resolveAccountDeletionBlocker({ action: "delete_invitations" })} style={styles.accountDeletionSecondaryButton}>
+                        <Text style={styles.accountDeletionSecondaryButtonText}>{t(language, "settings.account.deleteInvitations")}</Text>
+                      </Pressable>
+                    ) : null}
+                    {accountDeletionBlockers?.counts.connections ? (
+                      <Pressable disabled={isResolvingAccountDeletion || !onResolveAccountDeletionBlocker} onPress={() => resolveAccountDeletionBlocker({ action: "delete_connections" })} style={styles.accountDeletionSecondaryButton}>
+                        <Text style={styles.accountDeletionSecondaryButtonText}>{t(language, "settings.account.deleteConnections")}</Text>
+                      </Pressable>
+                    ) : null}
+                    {(accountDeletionBlockers?.counts.guildPosts || accountDeletionBlockers?.counts.guildReports || accountDeletionBlockers?.counts.guildModeration) ? (
+                      <View style={styles.accountDeletionActions}>
+                        <Pressable onPress={onOpenGuild} style={styles.accountDeletionSecondaryButton}>
+                          <Text style={styles.accountDeletionSecondaryButtonText}>{t(language, "settings.account.openGuild")}</Text>
+                        </Pressable>
+                        <Pressable disabled={isResolvingAccountDeletion || !onResolveAccountDeletionBlocker} onPress={() => Alert.alert(t(language, "settings.account.deleteGuildConfirmTitle"), t(language, "settings.account.deleteGuildConfirmBody"), [{ text: t(language, "common.cancel"), style: "cancel" }, { text: t(language, "common.delete"), style: "destructive", onPress: () => resolveAccountDeletionBlocker({ action: "delete_guild_content" }) }])} style={styles.accountDeletionDangerButton}>
+                          <Text style={styles.accountDeletionDangerButtonText}>{t(language, "settings.account.deleteGuildContent")}</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
                 <Pressable
                   accessibilityRole="checkbox"
                   accessibilityState={{ checked: deleteLocalData }}
@@ -1136,6 +1293,70 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#fecaca",
     paddingTop: 12,
+  },
+  accountDeletionResolveButton: {
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  accountDeletionResolveButtonText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  accountDeletionBlockerList: {
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    paddingTop: 12,
+  },
+  accountDeletionBlockerCard: {
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#fed7aa",
+    borderRadius: 8,
+    backgroundColor: "#fffaf5",
+    padding: 10,
+  },
+  accountDeletionBlockerTitle: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  accountDeletionActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  accountDeletionSecondaryButton: {
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  accountDeletionSecondaryButtonText: {
+    color: "#374151",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  accountDeletionDangerButton: {
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    borderRadius: 7,
+    backgroundColor: "#fef2f2",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  accountDeletionDangerButtonText: {
+    color: "#b91c1c",
+    fontSize: 12,
+    fontWeight: "600",
   },
   accountDeletionTitle: {
     color: "#991b1b",

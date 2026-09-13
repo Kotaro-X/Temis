@@ -191,8 +191,8 @@ export const updateUsername = async (input: string): Promise<UserProfile> => {
 
 export const updateDisplayName = async (input: string): Promise<UserProfile> => {
   const displayName = input.trim();
-  if (!displayName) throw new Error("表示名を入力してください。");
-  if (displayName.length > 50) throw new Error("表示名は50文字以内で入力してください。");
+  if (!displayName) throw new Error("ユーザーネームを入力してください。");
+  if (displayName.length > 50) throw new Error("ユーザーネームは50文字以内で入力してください。");
 
   const userId = requireCurrentUserId();
   const updated = await runTransaction(db(), async (transaction) => {
