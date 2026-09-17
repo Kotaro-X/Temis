@@ -348,12 +348,12 @@ const ProjectWorkspaceScreen = ({
     try {
       setSaving(true);
       if (composer === "memos") {
-        if (!profile) throw new Error("Googleでログインしてからメモを作成してください。");
+        if (!profile) throw new Error("アカウントにログインしてからメモを作成してください。");
         const note = await upsertFreeNote({ id: editingNote?.sourceNoteId ?? null, title: titleDraft.trim(), body: bodyDraft });
         if (!editingNote) await setNoteScope(note.id, { scope: "project", projectId: project.id });
         await upsertProjectSharedNote({ id: note.id, ownerUserId: profile.userId, creatorDisplayName: profile.displayName?.trim() || `@${profile.username}`, projectId: project.id, sourceNoteId: note.id, title: note.title, body: note.body, updatedAt: note.updatedAt });
       } else {
-        if (!profile) throw new Error("Googleでログインしてからタスクを保存してください。");
+        if (!profile) throw new Error("アカウントにログインしてからタスクを保存してください。");
         const estimateMinutes = Math.max(0, Number.parseInt(estimateDraft, 10) || 0);
         const update = {
           title: titleDraft.trim(), description: bodyDraft.trim() || null, status: statusDraft,

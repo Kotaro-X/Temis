@@ -14,6 +14,7 @@ import AppLanguageBridge from "../app-bridges/AppLanguageBridge";
 import AppMenuBridge from "../app-bridges/AppMenuBridge";
 import AppNoticeBridge from "../app-bridges/AppNoticeBridge";
 import AppPickerBridge from "../app-bridges/AppPickerBridge";
+import ProjectCreateModal from "../project/ProjectCreateModal";
 
 export type AppChromeTab = "tasks" | "todo" | "memos" | "projects" | "guild";
 
@@ -167,8 +168,9 @@ const AppChromeShell = ({
     dismissDownloadCompleteNotice,
   } = useAppUI();
   const { isCloudSyncEntitled, accessGrant } = useSubscription();
-  const { projects, status: collaborationStatus } = useCollaboration();
+  const { profile, projects, status: collaborationStatus } = useCollaboration();
   const [scopePickerOpen, setScopePickerOpen] = useState(false);
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const isWorkspaceScreen = rootScreen !== "settings";
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const scopeLabel = workspaceScope === "private"
@@ -307,11 +309,34 @@ const AppChromeShell = ({
                     </Pressable>
                   );
                 })}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="新規プロジェクトを作成"
+                  style={appChromeStyles.scopePickerItem}
+                  disabled={collaborationStatus !== "ready" || !profile}
+                  onPress={() => {
+                    setScopePickerOpen(false);
+                    setProjectCreateOpen(true);
+                  }}
+                >
+                  <View style={appChromeStyles.scopePickerProjectText}>
+                    <Text style={appChromeStyles.scopePickerTitle}>＋ 新規プロジェクトを作成</Text>
+                    <Text style={appChromeStyles.scopePickerCaption}>作成後、そのプロジェクトを開きます</Text>
+                  </View>
+                </Pressable>
               </>
             )}
           </ScrollView>
         </View>
       </Modal>
+      <ProjectCreateModal
+        visible={projectCreateOpen}
+        onClose={() => setProjectCreateOpen(false)}
+        onCreated={(project) => {
+          setProjectCreateOpen(false);
+          openProjectWorkspace(project.id);
+        }}
+      />
       <AppPickerBridge
         visible={datePickerOpen}
         onRequestClose={closeDatePicker}

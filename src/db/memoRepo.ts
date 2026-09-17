@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid/non-secure";
+import { withLocalEntityMutation } from "../services/sync/localMutationLock";
 
 import { loadSyncDeviceId } from "../../storage";
 import { extractTokens, normalizeSearchToken } from "../utils/wikiLink";
@@ -145,7 +146,9 @@ const runMemoEmbeddingJobAsync = (memoId: string): void => {
   });
 };
 
-export const upsertMemoForTask = async (
+export const upsertMemoForTask = (...args: Parameters<typeof upsertMemoForTaskImpl>) => args[2]?.enqueueSync === false ? upsertMemoForTaskImpl(...args) : withLocalEntityMutation("memo", () => upsertMemoForTaskImpl(...args));
+
+const upsertMemoForTaskImpl = async (
   taskId: string,
   body: string,
   options?: UpsertMemoOptions,
@@ -243,7 +246,9 @@ export const upsertMemoRecord = async (
   return record;
 };
 
-export const deleteMemoById = async (
+export const deleteMemoById = (...args: Parameters<typeof deleteMemoByIdImpl>) => args[1]?.enqueueSync === false ? deleteMemoByIdImpl(...args) : withLocalEntityMutation("memo", () => deleteMemoByIdImpl(...args));
+
+const deleteMemoByIdImpl = async (
   memoId: string,
   options?: { enqueueSync?: boolean },
 ): Promise<void> => {

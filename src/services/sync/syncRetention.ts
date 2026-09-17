@@ -5,6 +5,7 @@ import type {
   SyncQueueItem,
   TagRecord,
 } from "../../types";
+import { withLocalEntityMutation, withSyncStoreMutation } from "./localMutationLock.ts";
 
 export const DELETED_ITEM_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -112,7 +113,14 @@ export const cleanupExpiredDeletedTodoStorage = async (
   return removedTodoIds;
 };
 
-export const cleanupExpiredLocalDeletedState = async (
+export const cleanupExpiredLocalDeletedState = (now = Date.now()) =>
+  withLocalEntityMutation("tag", () =>
+    withLocalEntityMutation("todo", () =>
+      withLocalEntityMutation("task", () =>
+        withLocalEntityMutation("memo", () =>
+          withSyncStoreMutation(() => cleanupExpiredLocalDeletedStateImpl(now))))));
+
+const cleanupExpiredLocalDeletedStateImpl = async (
   now = Date.now(),
 ): Promise<{
   todoIds: string[];

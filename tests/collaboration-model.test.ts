@@ -35,7 +35,9 @@ test("project permissions preserve the owner/member/viewer boundary", () => {
   const project: Project = { id: "p1", name: "P", ownerUserId: "owner", tags: [], visibility: "invite_only", joinPolicy: "invitation_only", invitationPolicy: "members", taskEnabled: true, createdAt: 1, updatedAt: 1 };
   const task: ProjectTask = { id: "t", ownerUserId: "owner", creatorUserId: "owner", projectId: "p1", title: "Task", status: "todo", createdAt: 1, updatedAt: 1 };
   assert.equal(canInviteToProject(project, "member"), true);
+  assert.equal(canInviteToProject(project, "owner"), true);
   assert.equal(canInviteToProject(project, "viewer"), false);
+  assert.equal(canInviteToProject({ ...project, invitationPolicy: "owner_only" }, "member"), false);
   assert.equal(canEditProjectTask(task, "viewer", "viewer"), false);
   assert.equal(canEditProjectTask(task, "member", "member"), true);
 });

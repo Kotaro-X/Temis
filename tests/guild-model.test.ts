@@ -24,7 +24,7 @@ test("Guild tags are extracted from #tags in the memo body", () => {
 });
 
 test("Guild posts need a body and project for project post kinds", () => {
-  const base = { body: "活動報告 #開発", type: "personal" as const, projectId: null, source: { scope: "personal" as const, memoId: "m1" } };
+  const base = { title: "活動報告", body: "活動報告 #開発", type: "personal" as const, projectId: null, source: { scope: "personal" as const, memoId: "m1" } };
   assert.equal(validateGuildPostInput(base), null);
   assert.match(validateGuildPostInput({ ...base, body: "" }) ?? "", /本文/);
   assert.equal(validateGuildPostInput({ ...base, body: "タグなし" }), null);

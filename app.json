@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "usesAppleSignIn": true,
+      "buildNumber": "85",
       "bundleIdentifier": "com.anonymous.WeMemo",
       "googleServicesFile": "./config/GoogleService-Info.plist",
       "icon": "./assets/icon.png",
@@ -53,15 +54,6 @@
         "@react-native-google-signin/google-signin",
         {
           "iosUrlScheme": "com.googleusercontent.apps.9459134170-t4lm1mns4hv6qli65jatpac757pbf4gf"
-        }
-      ],
-      [
-        "llama.rn",
-        {
-          "enableEntitlements": false,
-          "entitlementsProfile": "production",
-          "forceCxx20": true,
-          "enableOpenCL": true
         }
       ]
     ],

@@ -87,7 +87,7 @@ Suggested fields:
 
 1. Load RevenueCat `CustomerInfo`
 2. Listen to Firebase auth state
-3. If signed in with Google/Firebase, load `subscriptionAccess/{userId}`
+3. If signed in with a supported Google or Apple Firebase account, load `subscriptionAccess/{userId}`
 4. Resolve:
    - `revenueCatEntitled`
    - `accessGrant`

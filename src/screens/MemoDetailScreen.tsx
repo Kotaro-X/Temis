@@ -741,6 +741,7 @@ const MemoDetailScreen = ({
         <GuildPostComposerModal
           visible={guildComposerOpen}
           onClose={() => setGuildComposerOpen(false)}
+          initialTitle={displayTitle}
           initialBody={bodyDraft}
           source={{
             scope: detail.kind === "note" && detail.scope === "project" ? "project" : "personal",

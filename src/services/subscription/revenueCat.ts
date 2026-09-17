@@ -29,6 +29,14 @@ export type CloudSyncPurchaseOverride = {
   packageId?: string | null;
 };
 
+export type CloudSyncPlanDetails = {
+  productTitle: string;
+  priceString: string;
+  subscriptionPeriod: string | null;
+  pricePerMonthString: string | null;
+  pricePerWeekString: string | null;
+};
+
 type RevenueCatEnvSource = Record<string, string | undefined>;
 
 const DEFAULT_CLOUD_SYNC_ENTITLEMENT_ID = "cloud_sync";
@@ -275,6 +283,29 @@ export const purchaseCloudSyncPlan = async (
 
   const result = await Purchases.purchasePackage(selectedPackage);
   return result.customerInfo;
+};
+
+export const getCloudSyncPlanDetails = async (
+  override?: CloudSyncPurchaseOverride,
+): Promise<CloudSyncPlanDetails | null> => {
+  const configured = await configurePurchases();
+  if (!configured) {
+    return null;
+  }
+  const config = getRevenueCatRuntimeConfig();
+  const offerings = await Purchases.getOfferings();
+  const selectedPackage = resolveTargetPackage(offerings, config, override);
+  if (!selectedPackage) {
+    return null;
+  }
+  const product = selectedPackage.product;
+  return {
+    productTitle: product.title,
+    priceString: product.priceString,
+    subscriptionPeriod: product.subscriptionPeriod,
+    pricePerMonthString: product.pricePerMonthString,
+    pricePerWeekString: product.pricePerWeekString,
+  };
 };
 
 export const restorePurchases = async (): Promise<CustomerInfo | null> => {

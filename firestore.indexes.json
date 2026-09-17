@@ -44,6 +44,15 @@
       "collectionGroup": "guildPosts",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "authorUserId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "guildPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "moderation.visibility", "order": "ASCENDING" },
         { "fieldPath": "publishedAt", "order": "DESCENDING" },
@@ -75,7 +84,26 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "guildPostAIIndex",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "moderationVisibility", "order": "ASCENDING" },
+        {
+          "fieldPath": "embedding",
+          "vectorConfig": {
+            "dimension": 1536,
+            "flat": {}
+          }
+        }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [{
+    "collectionGroup": "redemptions",
+    "fieldPath": "userId",
+    "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }]
+  }]
 }

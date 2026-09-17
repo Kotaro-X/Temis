@@ -8,6 +8,7 @@ import {
   limitAnswerSentences,
 } from "./answerGuardrails";
 import { checkOllamaConnection, getLLMRuntimeConfig } from "./llmSettings";
+import { requestOpenAIGroundedAnswer } from "./openAIGroundedAnswerCallable";
 
 export type AnswerEvidence = {
   memoId: string;
@@ -21,6 +22,7 @@ export type AnswerEvidence = {
 export type AnswerWithCitationsResult = {
   answerText: string;
   citedEvidenceKeys: string[];
+  errorText?: string;
 };
 
 export type LabeledEvidence = AnswerEvidence & {
@@ -54,6 +56,9 @@ const OLLAMA_ERROR_TEXT =
   "ローカルLLMに接続できません。Ollamaの起動状態を確認してください。";
 const LOCAL_LLM_ERROR_TEXT =
   "ローカルLLMを初期化できません。モデルファイルと設定を確認してください。";
+const DISABLED_LLM_ERROR_TEXT = "AI回答機能は現在無効です。";
+const OPENAI_ERROR_TEXT =
+  "AI回答を生成できませんでした。しばらくしてからもう一度お試しください。";
 
 const normalizeTopK = (value: number): number =>
   Math.min(10, Math.max(1, Math.floor(value)));
@@ -976,26 +981,52 @@ export const answerWithCitations = async (
     debugLog("final route=no-evidence");
     return buildRetrievalOnlyFallback(promptEvidence);
   }
-  const prompt = isLocal
-    ? buildLocalAnswerPrompt(trimmedQuestion, promptEvidence)
-    : buildAnswerPrompt(trimmedQuestion, promptEvidence, logSummaryText);
-  const head = prompt.slice(0, 500);
-  const tail = prompt.length > 500 ? prompt.slice(-500) : prompt;
-  debugLog(
-    `prompt evidenceCount=${promptEvidence.length} hasE1=${String(
-      prompt.includes("[E1]"),
-    )} hasE2=${String(prompt.includes("[E2]"))} hasStrongSnippet=${String(
-      evidenceQuality.hasStrongSnippet,
-    )}`,
-  );
-  debugLog(`prompt head(500)=\n${head}`);
-  debugLog(`prompt tail(500)=\n${tail}`);
   const localMaxTokens = parseNumber(
     process.env.EXPO_PUBLIC_LOCAL_LLM_MAX_TOKENS,
     LOCAL_DEFAULT_MAX_TOKENS,
   );
 
   try {
+    if (runtimeConfig.provider === "openai") {
+      const generated = await requestOpenAIGroundedAnswer(
+        {
+          question: trimmedQuestion,
+          evidence: promptEvidence.map((item) => ({
+            key: item.evidenceKey,
+            text: item.snippetText.slice(0, 1_200),
+          })),
+          logSummaryText: logSummaryText?.slice(0, 500),
+        },
+        runtimeConfig.openAiFunctionRegion,
+      );
+      const guarded = guardAnswerText(generated.answerText);
+      const citedEvidenceKeys = sanitizeCitations(
+        generated.citedEvidenceKeys,
+        promptEvidence,
+      );
+      if (!guarded.ok || citedEvidenceKeys.length === 0) {
+        debugLog("final route=openai-invalid -> retrieval fallback");
+        return buildRetrievalOnlyFallback(promptEvidence);
+      }
+      if (missesQuestionTopic(guarded.answerText, trimmedQuestion, promptEvidence)) {
+        debugLog("final route=openai-question-topic-missing -> retrieval fallback");
+        return {
+          answerText: buildEvidenceSummaryAnswer(promptEvidence),
+          citedEvidenceKeys,
+        };
+      }
+      return { answerText: guarded.answerText, citedEvidenceKeys };
+    }
+    const prompt = isLocal
+      ? buildLocalAnswerPrompt(trimmedQuestion, promptEvidence)
+      : buildAnswerPrompt(trimmedQuestion, promptEvidence, logSummaryText);
+    debugLog(
+      `prompt evidenceCount=${promptEvidence.length} hasE1=${String(
+        prompt.includes("[E1]"),
+      )} hasE2=${String(prompt.includes("[E2]"))} hasStrongSnippet=${String(
+        evidenceQuality.hasStrongSnippet,
+      )}`,
+    );
     const raw = await provider.generate(prompt, {
       temperature: Math.min(
         isLocal ? LOCAL_DEFAULT_TEMPERATURE : DEFAULT_TEMPERATURE,
@@ -1049,8 +1080,19 @@ export const answerWithCitations = async (
       }
     }
     debugLog("final route=llm-error-connection");
+    if (config.provider === "openai") {
+      return {
+        answerText: "",
+        errorText: OPENAI_ERROR_TEXT,
+        citedEvidenceKeys: buildFallbackCitations(promptEvidence),
+      };
+    }
     const baseText =
-      config.provider === "ollama" ? OLLAMA_ERROR_TEXT : LOCAL_LLM_ERROR_TEXT;
+      config.provider === "ollama"
+        ? OLLAMA_ERROR_TEXT
+        : config.provider === "disabled"
+          ? DISABLED_LLM_ERROR_TEXT
+          : LOCAL_LLM_ERROR_TEXT;
     return {
       answerText: `${baseText}${devDetails}`,
       citedEvidenceKeys: buildFallbackCitations(promptEvidence),

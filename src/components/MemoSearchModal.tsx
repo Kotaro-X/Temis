@@ -178,8 +178,8 @@ const MemoSearchModal = ({
           {mode === "ai" ? (
             <Text style={styles.disclosureText}>
               {language === "en"
-                ? "AI search sends memo text and your query to OpenAI to create search embeddings."
-                : "AI検索では、検索用の埋め込み生成のためメモ本文と検索語を OpenAI API に送信します。"}
+                ? "AI search sends memo text for embeddings, and sends your question with selected memo excerpts to OpenAI for answers."
+                : "AI検索では、埋め込み生成用のメモ本文と、回答生成用の質問・選択済みメモ断片を OpenAI API に送信します。"}
             </Text>
           ) : null}
           {loading ? (

@@ -16,10 +16,10 @@ service cloud.firestore {
         && request.auth.token.admin == true;
     }
 
-    function isGoogleUser() {
+    function isSupportedAccountUser() {
       return signedIn()
         && request.auth.token.keys().hasAny(["firebase"])
-        && request.auth.token.firebase.sign_in_provider == "google.com";
+        && request.auth.token.firebase.sign_in_provider in ["google.com", "apple.com"];
     }
 
     function subscriptionAccessPath(userId) {
@@ -100,7 +100,7 @@ service cloud.firestore {
         ? get(subscriptionAccessPath(userId)).data
         : null;
       return isSelf(userId)
-        && isGoogleUser()
+        && isSupportedAccountUser()
         && grantKeysAreValid()
         && request.resource.data.userId == userId
         && request.resource.data.active == true
@@ -130,7 +130,7 @@ service cloud.firestore {
       let redemptionAfter = getAfter(inviteRedemptionPath(code, request.auth.uid)).data;
       return signedIn()
         && !isAdmin()
-        && isGoogleUser()
+        && isSupportedAccountUser()
         && resource.data.active == true
         && isInviteGrantType(resource.data.grantType)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -153,7 +153,7 @@ service cloud.firestore {
       let accessAfter = getAfter(subscriptionAccessPath(userId)).data;
       let inviteAfter = getAfter(inviteCodePath(code)).data;
       return isSelf(userId)
-        && isGoogleUser()
+        && isSupportedAccountUser()
         && inviteRedemptionFieldsAreValid()
         && validInviteCodeForSelfRedemption(code)
         && request.resource.data.userId == userId
@@ -560,12 +560,14 @@ service cloud.firestore {
 
     function validGuildPost(data, postId) {
       return data.keys().hasOnly([
-          "id", "authorUserId", "authorDisplayName", "authorPhotoUrl", "body", "tags", "type", "projectId",
+          "id", "authorUserId", "authorDisplayName", "authorPhotoUrl", "title", "body", "tags", "type", "projectId",
           "source", "status", "moderation", "createdAt", "updatedAt", "publishedAt",
         ])
         && data.id == postId
         && validString(data.authorUserId, 128) && validString(data.authorDisplayName, 100)
-        && validNullableString(data.authorPhotoUrl, 4096) && validString(data.body, 900000)
+        && validNullableString(data.authorPhotoUrl, 4096)
+        && (!data.keys().hasAny(["title"]) || validNullableString(data.title, 200))
+        && validString(data.body, 900000)
         && validStringList(data.tags, 5)
         && data.type in ["personal", "project_activity", "project_recruiting"]
         && validNullableString(data.projectId, 128)
@@ -604,7 +606,7 @@ service cloud.firestore {
     match /profiles/{userId} {
       allow get: if isSelf(userId) || resource.data.profileVisibility == "public";
       allow list: if signedIn() && resource.data.profileVisibility == "public";
-      allow create: if isSelf(userId) && isGoogleUser() && validProfile(request.resource.data, userId)
+      allow create: if isSelf(userId) && isSupportedAccountUser() && validProfile(request.resource.data, userId)
         && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.userId == userId;
       allow update: if isSelf(userId) && validProfile(request.resource.data, userId)
         && request.resource.data.updatedAt >= resource.data.updatedAt
@@ -724,7 +726,9 @@ service cloud.firestore {
         resource.data.authorUserId == request.auth.uid || isGuildStaff() ||
         (guildPostIsVisible(resource.data) && !isBlockedWith(resource.data.authorUserId))
       );
-      allow list: if signedIn() && guildPostIsVisible(resource.data);
+      allow list: if signedIn() && (
+        resource.data.authorUserId == request.auth.uid || guildPostIsVisible(resource.data)
+      );
       allow create: if signedIn() && validGuildPost(request.resource.data, postId)
         && request.resource.data.authorUserId == request.auth.uid
         && request.resource.data.status == "published"
@@ -739,6 +743,12 @@ service cloud.firestore {
         || (isGuildStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["moderation", "updatedAt"]))
       );
       allow delete: if false;
+    }
+
+    // Embeddings and search metadata are server-only. Admin SDK access from
+    // Cloud Functions bypasses these client rules.
+    match /guildPostAIIndex/{postId} {
+      allow read, write: if false;
     }
 
     match /projectJoinRequests/{requestId} {

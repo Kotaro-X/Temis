@@ -5,9 +5,8 @@ import {
 } from "./LLMProvider";
 import { OllamaLLMProvider, OllamaLLMProviderOptions } from "./OllamaLLMProvider";
 import { resolveOllamaBaseUrl } from "./resolveOllamaBaseUrl";
-import { LlamaRnLLMProvider } from "./LlamaRnLLMProvider";
 
-export type LLMProviderKind = "disabled" | "local" | "ollama";
+export type LLMProviderKind = "disabled" | "local" | "ollama" | "openai";
 
 export type LLMRuntimeConfig = {
   provider: LLMProviderKind;
@@ -17,6 +16,7 @@ export type LLMRuntimeConfig = {
   ollamaTimeoutMs: number;
   ollamaMaxRetries: number;
   probeOnStartup: boolean;
+  openAiFunctionRegion: string;
 };
 
 export type OllamaConnectionCheckResult = {
@@ -37,7 +37,8 @@ const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "llama3.1:8b";
 const DEFAULT_OLLAMA_TIMEOUT_MS = 30_000;
 const DEFAULT_OLLAMA_MAX_RETRIES = 0;
-const DEFAULT_PROVIDER: LLMProviderKind = "local";
+const DEFAULT_PROVIDER: LLMProviderKind = "openai";
+const DEFAULT_OPENAI_FUNCTION_REGION = "asia-northeast1";
 
 const parseBoolean = (
   value: string | undefined,
@@ -103,9 +104,12 @@ const parseProviderKind = (
   if (normalized === "ollama") {
     return "ollama";
   }
-  if (normalized === "local") {
-    return "local";
+  if (normalized === "openai") {
+    return "openai";
   }
+  // "local" was the legacy bundled llama.rn provider. Treat stale settings
+  // as disabled now that the multi-gigabyte native model has been removed.
+  if (normalized === "local") return "disabled";
   if (normalized === "disabled") {
     return "disabled";
   }
@@ -151,6 +155,10 @@ export const getLLMRuntimeConfig = (): LLMRuntimeConfig => {
       process.env.EXPO_PUBLIC_OLLAMA_LLM_PROBE,
       false,
     ),
+    openAiFunctionRegion: normalizeEnvString(
+      process.env.EXPO_PUBLIC_OPENAI_FUNCTION_REGION,
+      DEFAULT_OPENAI_FUNCTION_REGION,
+    ),
   };
 };
 
@@ -169,8 +177,6 @@ export const configureLLMProviderFromEnv = (): LLMRuntimeConfig => {
   const config = getLLMRuntimeConfig();
   if (config.provider === "ollama") {
     setLLMProvider(new OllamaLLMProvider(createOllamaLLMOptionsFromConfig(config)));
-  } else if (config.provider === "local") {
-    setLLMProvider(new LlamaRnLLMProvider());
   } else {
     setLLMProvider(new UnavailableLLMProvider());
   }

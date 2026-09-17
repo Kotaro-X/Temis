@@ -8,6 +8,7 @@ import {
 } from "../../storage";
 import { notifySyncQueueChanged } from "../services/sync/syncQueueEvents";
 import type { SyncQueueItem, Tag, TagRecord } from "../types";
+import { withLocalEntityMutation, withSyncStoreMutation } from "../services/sync/localMutationLock";
 
 type TagState = {
   activeTags: Tag[];
@@ -56,7 +57,7 @@ const normalizeOrders = (records: TagRecord[]): TagRecord[] =>
 const areTagRecordsEqual = (left: TagRecord, right: TagRecord) =>
   JSON.stringify(left) === JSON.stringify(right);
 
-const upsertQueueRecord = async (record: TagRecord): Promise<void> => {
+const upsertQueueRecord = async (record: TagRecord): Promise<void> => withSyncStoreMutation(async () => {
   const queue = await loadSyncQueue();
   const now = Date.now();
   const existing = queue.find(
@@ -80,7 +81,7 @@ const upsertQueueRecord = async (record: TagRecord): Promise<void> => {
   nextQueue.push(nextItem);
   await saveSyncQueue(nextQueue);
   notifySyncQueueChanged();
-};
+});
 
 const persistRecords = async (records: TagRecord[]): Promise<TagState> => {
   const normalized = normalizeOrders(records);
@@ -116,7 +117,9 @@ export const loadTags = async (): Promise<{
 export const loadTagState = async (): Promise<TagState> =>
   toTagState(await loadTagRecords());
 
-export const persistTagState = async (params: {
+export const persistTagState = (...args: Parameters<typeof persistTagStateImpl>) => withLocalEntityMutation("tag", () => persistTagStateImpl(...args));
+
+const persistTagStateImpl = async (params: {
   activeTags: Tag[];
   archivedTags: Tag[];
   deviceId?: string | null;
@@ -245,7 +248,9 @@ export const restoreTag = (
   archivedTags: archivedTags.filter((item) => item !== tag),
 });
 
-export const addTag = async (params: {
+export const addTag = (...args: Parameters<typeof addTagImpl>) => withLocalEntityMutation("tag", () => addTagImpl(...args));
+
+const addTagImpl = async (params: {
   name: string;
   deviceId?: string | null;
 }): Promise<TagState> => {
@@ -270,7 +275,9 @@ export const addTag = async (params: {
   return next;
 };
 
-export const renameTag = async (params: {
+export const renameTag = (...args: Parameters<typeof renameTagImpl>) => withLocalEntityMutation("tag", () => renameTagImpl(...args));
+
+const renameTagImpl = async (params: {
   current: Tag;
   nextName: string;
   deviceId?: string | null;
@@ -302,7 +309,9 @@ export const renameTag = async (params: {
   return { ok: true, state: next };
 };
 
-export const setTagArchived = async (params: {
+export const setTagArchived = (...args: Parameters<typeof setTagArchivedImpl>) => withLocalEntityMutation("tag", () => setTagArchivedImpl(...args));
+
+const setTagArchivedImpl = async (params: {
   tag: Tag;
   archived: boolean;
   deviceId?: string | null;

@@ -28,6 +28,8 @@ import {
   type SyncRunDiagnosticContext,
 } from "./syncDiagnosticObserver";
 import { syncDiagnosticReporter } from "./syncTelemetry";
+import { withLocalEntityMutation, withSyncStoreMutation } from "./localMutationLock";
+import { reconcileProcessedQueue } from "./reconcileProcessedQueue";
 import {
   ClassifiedSyncError,
   classifySyncError,
@@ -108,7 +110,9 @@ const syncQueuedTags = async (
     }
   }
 
-  await saveSyncQueue(nextQueue);
+  await withSyncStoreMutation(async () => {
+    await saveSyncQueue(reconcileProcessedQueue(queue, nextQueue, await loadSyncQueue()));
+  });
   return {
     queue: nextQueue,
     firstError,
@@ -118,7 +122,7 @@ const syncQueuedTags = async (
   };
 };
 
-const enqueueMissingTagRecords = async (records: TagRecord[]) => {
+const enqueueMissingTagRecords = async (records: TagRecord[]) => withSyncStoreMutation(async () => {
   if (records.length === 0) {
     return;
   }
@@ -144,7 +148,7 @@ const enqueueMissingTagRecords = async (records: TagRecord[]) => {
   if (additions.length > 0) {
     await saveSyncQueue([...queue, ...additions]);
   }
-};
+});
 
 export const syncTagRecords = async (
   identity: SyncIdentity,
@@ -175,7 +179,7 @@ export const syncTagRecords = async (
       metadata.lastPulledAt === null &&
       metadata.lastPulledId === null;
     await saveSyncEntityMetadata(identity.userId, "tag", metadata);
-    let localRecords = await loadTagRecords();
+    const localRecords = await withLocalEntityMutation("tag", loadTagRecords);
     if (isFreshInitialSync) {
       await enqueueMissingTagRecords(localRecords);
     }
@@ -204,9 +208,10 @@ export const syncTagRecords = async (
       },
       applyPage: async (remotePage) => {
         await diagnostics.phase("resolve_conflicts", { retryCount });
-        localRecords = mergeTagRecords(localRecords, remotePage);
         await diagnostics.phase("write_local_db", { retryCount });
-        await saveTagRecords(localRecords);
+        await withLocalEntityMutation("tag", async () => {
+          await saveTagRecords(mergeTagRecords(await loadTagRecords(), remotePage));
+        });
       },
       saveProgress: async (progress) => {
         metadata = progress;

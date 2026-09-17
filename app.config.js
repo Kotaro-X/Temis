@@ -19,12 +19,7 @@ module.exports = () => {
     process.env.GOOGLE_SERVICES_PLIST?.trim() || ios.googleServicesFile;
   const androidGoogleServicesFile =
     process.env.GOOGLE_SERVICES_JSON?.trim() || android.googleServicesFile;
-  // Cloud builds for subscription testing can omit the 786 MB local model.
-  const shouldBundleLocalModel = process.env.BUNDLE_LOCAL_LLM !== "false";
-  const basePlugins = (expoConfig.plugins || []).filter((plugin) => {
-    const pluginName = Array.isArray(plugin) ? plugin[0] : plugin;
-    return shouldBundleLocalModel || pluginName !== "llama.rn";
-  });
+  const basePlugins = expoConfig.plugins || [];
   const infoPlist = ios.infoPlist || {};
   const ats = infoPlist.NSAppTransportSecurity || {};
   const exceptionDomains = ats.NSExceptionDomains || {};
@@ -58,6 +53,9 @@ module.exports = () => {
     newArchEnabled: shouldUseIosNewArchitecture,
     ios: {
       ...ios,
+      ...(process.env.IOS_BUILD_NUMBER
+        ? { buildNumber: process.env.IOS_BUILD_NUMBER }
+        : {}),
       newArchEnabled: shouldUseIosNewArchitecture,
       ...(iosGoogleServicesFile
         ? { googleServicesFile: iosGoogleServicesFile }
@@ -75,12 +73,12 @@ module.exports = () => {
     },
     plugins: [
       ...basePlugins,
-      ...(shouldBundleLocalModel ? ["./plugins/withBundledModel"] : []),
       [
         "./plugins/withIosNewArchitecture",
         { enabled: shouldUseIosNewArchitecture },
       ],
       "./plugins/withReactNativeFirebaseIos",
+      "./plugins/withFmtAppleClang",
     ],
   };
 };

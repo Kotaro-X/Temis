@@ -7,15 +7,16 @@ import { useSubscription } from "./SubscriptionContext";
 import {
   createProject,
   ensureUserProfile,
-  listMyProjects,
+  listMyProjectAccess,
   updateDisplayName,
   updateUsername,
 } from "../services/collaboration/collaborationService";
-import type { Project, UserProfile } from "../types/collaboration";
+import { canInviteToProject, type Project, type UserProfile } from "../types/collaboration";
 
 type CollaborationContextValue = {
   profile: UserProfile | null;
   projects: Project[];
+  inviteableProjects: Project[];
   status: "loading" | "signed_out" | "ready" | "error";
   error: string | null;
   refresh: () => Promise<void>;
@@ -30,6 +31,7 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
   const { isCloudSyncEntitled } = useSubscription();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [inviteableProjects, setInviteableProjects] = useState<Project[]>([]);
   const [status, setStatus] = useState<CollaborationContextValue["status"]>("loading");
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +40,7 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
     if (!isSyncFirebaseUser(user)) {
       setProfile(null);
       setProjects([]);
+      setInviteableProjects([]);
       setStatus("signed_out");
       return;
     }
@@ -48,12 +51,16 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
       if (!isCloudSyncEntitled) {
         setProfile(nextProfile);
         setProjects([]);
+        setInviteableProjects([]);
         setStatus("ready");
         return;
       }
-      const nextProjects = await listMyProjects();
+      const projectAccess = await listMyProjectAccess();
       setProfile(nextProfile);
-      setProjects(nextProjects);
+      setProjects(projectAccess.map(({ project }) => project));
+      setInviteableProjects(projectAccess
+        .filter(({ project, role }) => canInviteToProject(project, role))
+        .map(({ project }) => project));
       setStatus("ready");
     } catch (cause) {
       setStatus("error");
@@ -84,12 +91,13 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
     }
     const project = await createProject(input);
     setProjects((current) => [project, ...current]);
+    setInviteableProjects((current) => [project, ...current]);
     return project;
   }, [isCloudSyncEntitled]);
 
   const value = useMemo<CollaborationContextValue>(() => ({
-    profile, projects, status, error, refresh, saveUsername, saveDisplayName, addProject,
-  }), [addProject, error, profile, projects, refresh, saveDisplayName, saveUsername, status]);
+    profile, projects, inviteableProjects, status, error, refresh, saveUsername, saveDisplayName, addProject,
+  }), [addProject, error, inviteableProjects, profile, projects, refresh, saveDisplayName, saveUsername, status]);
 
   return <CollaborationContext.Provider value={value}>{children}</CollaborationContext.Provider>;
 };

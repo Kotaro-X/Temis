@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,6 +14,7 @@ import {
 } from "react-native";
 
 import { useCollaboration } from "../context/CollaborationContext";
+import ProjectCreateModal from "../components/project/ProjectCreateModal";
 import {
   getProjectMember,
   inviteToProject,
@@ -59,12 +59,9 @@ const ProjectsScreen = ({
     status,
     error,
     refresh,
-    addProject,
     saveUsername,
   } = useCollaboration();
   const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
   const [selected, setSelected] = useState<Project | null>(null);
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [notes, setNotes] = useState<ProjectSharedNote[]>([]);
@@ -139,27 +136,6 @@ const ProjectsScreen = ({
       Alert.alert(
         "ユーザーIDを変更できません",
         cause instanceof Error ? cause.message : "もう一度お試しください。",
-      );
-    }
-  };
-
-  const handleCreate = async () => {
-    if (!name.trim()) return;
-    try {
-      const project = await addProject({
-        name,
-        description,
-        icon: null,
-        tags: [],
-      });
-      setName("");
-      setDescription("");
-      setCreating(false);
-      void loadProject(project);
-    } catch (cause) {
-      Alert.alert(
-        "作成できません",
-        cause instanceof Error ? cause.message : "プロジェクトの作成に失敗しました。",
       );
     }
   };
@@ -428,7 +404,7 @@ const ProjectsScreen = ({
             {status === "signed_out" ? (
               <View style={styles.emptySurface}>
                 <Text style={styles.emptyText}>
-                  Googleでログインすると、つながりとプロジェクトを利用できます。
+                  GoogleまたはAppleでログインすると、つながりとプロジェクトを利用できます。
                 </Text>
               </View>
             ) : null}
@@ -502,39 +478,14 @@ const ProjectsScreen = ({
         )}
       />
 
-      <Modal
+      <ProjectCreateModal
         visible={creating}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCreating(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modal}>
-            <Text style={styles.modalTitle}>プロジェクトを作成</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="プロジェクト名"
-            />
-            <TextInput
-              style={[styles.input, styles.multiline]}
-              value={description}
-              onChangeText={setDescription}
-              placeholder="説明（任意）"
-              multiline
-            />
-            <View style={styles.actions}>
-              <Pressable onPress={() => setCreating(false)}>
-                <Text style={styles.cancelText}>キャンセル</Text>
-              </Pressable>
-              <Pressable style={styles.createButton} onPress={() => void handleCreate()}>
-                <Text style={styles.createButtonText}>作成</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setCreating(false)}
+        onCreated={(project) => {
+          setCreating(false);
+          void loadProject(project);
+        }}
+      />
     </View>
   );
 };

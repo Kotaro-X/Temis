@@ -85,7 +85,9 @@ export const useAI = (messages: {
         if (requestIdRef.current !== requestId) {
           return;
         }
-        if (!normalizedAnswer.answerText) {
+        if (normalizedAnswer.errorText) {
+          setError(normalizedAnswer.errorText);
+        } else if (!normalizedAnswer.answerText) {
           setError(messages.answerError);
         } else {
           setAnswerText(normalizedAnswer.answerText);

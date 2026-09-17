@@ -1,5 +1,6 @@
 import { maybeRefreshWeeklyPrompts } from "../weeklyPromptsSync";
-import type { SyncResult } from "../../types";
+import type { SyncEntityType, SyncResult } from "../../types";
+import { runSyncEntityJobs } from "./syncEntityJobs";
 import { mapSyncError, mapSyncSuccess } from "./syncMapper";
 import { isFirebaseConfigured } from "./firebaseApp";
 import {
@@ -15,7 +16,9 @@ import { createSyncRunDiagnosticContext } from "./syncTelemetry";
 
 let inflightSync: Promise<SyncResult> | null = null;
 
-export const runCloudSync = async (): Promise<SyncResult> => {
+export const runCloudSync = async (
+  onEntitySynced?: (entity: SyncEntityType) => Promise<void> | void,
+): Promise<SyncResult> => {
   if (inflightSync) {
     return inflightSync;
   }
@@ -37,18 +40,10 @@ export const runCloudSync = async (): Promise<SyncResult> => {
         ["task", syncTaskRecords],
         ["memo", syncMemoRecords],
       ] as const;
-      const summaries: string[] = [];
-      const errors: unknown[] = [];
-      for (const [entityType, syncEntity] of syncJobs) {
-        try {
-          const result = await syncEntity(identity, diagnosticContext);
-          summaries.push(
-            `${entityType} pushed=${result.pushed} pulled=${result.pulled}`,
-          );
-        } catch (error) {
-          errors.push(error);
-        }
-      }
+      const { summaries, errors } = await runSyncEntityJobs(
+        syncJobs.map(([entity, syncEntity]) => [entity, () => syncEntity(identity, diagnosticContext)] as const),
+        onEntitySynced,
+      );
       if (errors.length > 0) {
         return mapSyncError(errors[0]);
       }

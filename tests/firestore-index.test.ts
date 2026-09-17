@@ -11,10 +11,10 @@ const firebasePath = decodeURIComponent(
 
 test("Firestore indexes support entity delta pagination by updatedAt and document id", () => {
   const config = JSON.parse(readFileSync(indexPath, "utf8")) as {
-    indexes: Array<{
+    indexes: {
       collectionGroup: string;
-      fields: Array<{ fieldPath: string; order: string }>;
-    }>;
+      fields: { fieldPath: string; order: string }[];
+    }[];
   };
   const firebase = JSON.parse(readFileSync(firebasePath, "utf8")) as {
     firestore: { indexes?: string };
@@ -31,4 +31,46 @@ test("Firestore indexes support entity delta pagination by updatedAt and documen
       { fieldPath: "__name__", order: "ASCENDING" },
     ]);
   }
+});
+
+test("Firestore indexes support an owner's Guild history including unpublished posts", () => {
+  const config = JSON.parse(readFileSync(indexPath, "utf8")) as {
+    indexes: {
+      collectionGroup: string;
+      fields: { fieldPath: string; order: string }[];
+    }[];
+  };
+  const ownerHistory = config.indexes.find(
+    (entry) => entry.collectionGroup === "guildPosts"
+      && entry.fields[0]?.fieldPath === "authorUserId",
+  );
+
+  assert.ok(ownerHistory, "missing Guild owner-history index");
+  assert.deepEqual(ownerHistory.fields, [
+    { fieldPath: "authorUserId", order: "ASCENDING" },
+    { fieldPath: "updatedAt", order: "DESCENDING" },
+    { fieldPath: "__name__", order: "DESCENDING" },
+  ]);
+});
+
+test("Firestore indexes support filtered Guild vector search", () => {
+  const config = JSON.parse(readFileSync(indexPath, "utf8")) as {
+    indexes: {
+      collectionGroup: string;
+      fields: {
+        fieldPath: string;
+        order?: string;
+        vectorConfig?: { dimension: number; flat: Record<string, never> };
+      }[];
+    }[];
+  };
+  const vectorIndex = config.indexes.find(
+    (entry) => entry.collectionGroup === "guildPostAIIndex",
+  );
+  assert.ok(vectorIndex, "missing Guild AI vector index");
+  assert.deepEqual(vectorIndex.fields, [
+    { fieldPath: "status", order: "ASCENDING" },
+    { fieldPath: "moderationVisibility", order: "ASCENDING" },
+    { fieldPath: "embedding", vectorConfig: { dimension: 1536, flat: {} } },
+  ]);
 });

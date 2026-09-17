@@ -93,7 +93,7 @@ const PrivateProjectTaskItem = ({
     }
     try {
       setSaving(true);
-      if (!profile) throw new Error("Googleでログインしてからタスクを保存してください。");
+      if (!profile) throw new Error("アカウントにログインしてからタスクを保存してください。");
       const savedTask = await updateProjectTask(item.task.id, {
         title: trimmedTitle,
         description: description.trim() || null,

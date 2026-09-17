@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Alert } from "react-native";
 
 import { useAppRefresh } from "../../context/AppRefreshContext";
+import { useAppReset } from "../../context/AppResetContext";
 import { useAppSettings } from "../../context/AppSettingsContext";
 import { useAppUI } from "../../context/AppUIContext";
 import { useCloudSyncContext } from "../../context/CloudSyncContext";
@@ -167,8 +169,9 @@ const SettingsShell = ({
     archiveTag,
     restoreTag,
   } = useAppSettings();
-  const { openMenu, settingsScreen, setSettingsScreen } = useAppUI();
-  const { profile, saveDisplayName, saveUsername } = useCollaboration();
+  const { openGuild, openMenu, openProjects, settingsScreen, setSettingsScreen } = useAppUI();
+  const { profile, saveDisplayName, saveUsername, refresh: refreshCollaboration } = useCollaboration();
+  const { resetApp } = useAppReset();
   const { isRefreshing, refreshApp } = useAppRefresh();
   const {
     status: subscriptionStatus,
@@ -177,6 +180,7 @@ const SettingsShell = ({
     cloudSyncAccessSource,
     error: subscriptionError,
     inviteError,
+    planDetails,
     purchase: purchaseCloudSync,
     restore: restoreCloudSync,
     redeemInviteCode: redeemCloudSyncInviteCode,
@@ -192,6 +196,11 @@ const SettingsShell = ({
     signIn: signInToSync,
     signInWithApple: signInWithAppleToSync,
     signOut: signOutFromSync,
+    deleteAccount: deleteCloudAccount,
+    accountDeletionBlockers,
+    accountDeletionBlockersStatus,
+    loadAccountDeletionBlockers,
+    resolveDeletionBlocker,
   } = useCloudSyncContext();
   const dataConfig: SettingsDataConfig = {
     language: appLanguage,
@@ -409,6 +418,10 @@ const SettingsShell = ({
           cloudSyncEnabled={cloudSyncEnabled}
           subscriptionStatus={subscriptionStatus}
           subscriptionError={subscriptionError}
+          subscriptionProductTitle={planDetails?.productTitle ?? null}
+          subscriptionPrice={planDetails?.priceString ?? null}
+          subscriptionPeriod={planDetails?.subscriptionPeriod ?? null}
+          subscriptionMonthlyPrice={planDetails?.pricePerMonthString ?? null}
           subscriptionAccessSource={cloudSyncAccessSource}
           subscriptionAccessCaption={cloudSyncAccessCaption}
           inviteStatus={inviteStatus}
@@ -445,13 +458,32 @@ const SettingsShell = ({
           onSignOutGoogle={() => {
             void signOutFromSync();
           }}
+          accountDeletionBlockers={accountDeletionBlockers}
+          accountDeletionBlockersStatus={accountDeletionBlockersStatus}
+          onLoadAccountDeletionBlockers={loadAccountDeletionBlockers}
+          onResolveAccountDeletionBlocker={async (input) => {
+            const blockers = await resolveDeletionBlocker(input);
+            await refreshCollaboration();
+            return blockers;
+          }}
+          onOpenProjects={openProjects}
+          onOpenGuild={openGuild}
+          onDeleteAccount={({ deleteLocalData }) => {
+            void deleteCloudAccount({ deleteLocalData })
+              .then((result) => {
+                const warnings = [
+                  result.localCleanupPending ? "端末データの消去に失敗しました。端末データを残したくない場合は、アプリを削除して再インストールしてください。" : "",
+                  result.signOutPending ? "端末のログアウト処理が完了していません。アプリを再起動してください。" : "",
+                  result.externalCleanupPending.length ? "外部サービスの削除連携に未完了の項目があります。運営側で確認が必要です。" : "",
+                ].filter(Boolean).join("\n");
+                Alert.alert("アカウント削除", `Firebaseアカウントとクラウドデータを削除しました。${warnings ? `\n${warnings}` : ""}\n定期購入はAppleのサブスクリプション管理画面から別途解約してください。`, [{ text: "OK", onPress: resetApp }]);
+              })
+              .catch(() => {
+                // useCloudSync retains a user-visible error while the account stays signed in.
+              });
+          }}
           onSyncNow={() => {
-            void syncNow().then((result) => {
-              if (!result) {
-                return;
-              }
-              return refreshApp({ includeSettings: false });
-            });
+            void syncNow();
           }}
           initialSection={
             settingsScreen === "sync"

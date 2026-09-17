@@ -8,6 +8,7 @@ import React, {
 } from "react";
 
 import { useAppSettings } from "./AppSettingsContext";
+import type { SyncEntityType } from "../types";
 
 export type AppRefreshDomain = "settings" | "tasks" | "todos" | "memos";
 
@@ -16,6 +17,7 @@ type RefreshHandler = () => Promise<void> | void;
 
 type AppRefreshContextValue = {
   isRefreshing: boolean;
+  refreshSyncedEntity: (entity: SyncEntityType) => Promise<void>;
   refreshVersions: Record<AppRefreshDomain, number>;
   refreshApp: (options?: {
     includeSettings?: boolean;
@@ -48,7 +50,7 @@ export const AppRefreshProvider = ({
 }: {
   children: React.ReactNode;
 }) => {
-  const { refreshSettings } = useAppSettings();
+  const { refreshSettings, refreshSyncedTags } = useAppSettings();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshVersions, setRefreshVersions] = useState(createRefreshVersions);
   const handlersRef = useRef<Record<AppRefreshHandlerDomain, Set<RefreshHandler>>>({
@@ -89,6 +91,17 @@ export const AppRefreshProvider = ({
     },
     [],
   );
+
+  // Background updates must not activate RefreshControl or reload entitlement.
+  const refreshSyncedEntity = useCallback(async (entity: SyncEntityType) => {
+    if (entity === "tag") {
+      await refreshSyncedTags();
+      return;
+    }
+    const domain = { task: "tasks", todo: "todos", memo: "memos" }[entity] as AppRefreshHandlerDomain;
+    await runRefreshHandlers([domain]);
+    touchDomains([domain]);
+  }, [refreshSyncedTags, runRefreshHandlers, touchDomains]);
 
   const refreshAppImpl = useCallback(
     async (options?: {
@@ -131,6 +144,7 @@ export const AppRefreshProvider = ({
   const value = useMemo<AppRefreshContextValue>(
     () => ({
       isRefreshing,
+      refreshSyncedEntity,
       refreshVersions,
       refreshApp: stableRefreshApp,
       registerRefreshHandler,
@@ -138,6 +152,7 @@ export const AppRefreshProvider = ({
     }),
     [
       isRefreshing,
+      refreshSyncedEntity,
       refreshVersions,
       registerRefreshHandler,
       stableRefreshApp,

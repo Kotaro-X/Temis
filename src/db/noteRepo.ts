@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid/non-secure";
+import { withLocalEntityMutation } from "../services/sync/localMutationLock";
 
 import { loadSyncDeviceId } from "../../storage";
 import { getEmbeddingProvider } from "../services/EmbeddingProvider";
@@ -142,7 +143,9 @@ export const getDailyNoteByDate = async (
   return toNoteRecord(result.rows.item(0) as NoteRow);
 };
 
-export const upsertDailyNote = async (
+export const upsertDailyNote = (...args: Parameters<typeof upsertDailyNoteImpl>) => args[2]?.enqueueSync === false ? upsertDailyNoteImpl(...args) : withLocalEntityMutation("memo", () => upsertDailyNoteImpl(...args));
+
+const upsertDailyNoteImpl = async (
   date: string,
   body: string,
   options?: { enqueueSync?: boolean },
@@ -276,7 +279,9 @@ export const listAllNotes = async (): Promise<NoteRecord[]> => {
   return (result.rows._array as NoteRow[]).map((row) => toNoteRecord(row));
 };
 
-export const upsertFreeNote = async (input: {
+export const upsertFreeNote = (...args: Parameters<typeof upsertFreeNoteImpl>) => args[0].enqueueSync === false ? upsertFreeNoteImpl(...args) : withLocalEntityMutation("memo", () => upsertFreeNoteImpl(...args));
+
+const upsertFreeNoteImpl = async (input: {
   id?: string | null;
   title?: string | null;
   body: string;
@@ -385,7 +390,9 @@ export const upsertNoteRecord = async (
   return record;
 };
 
-export const setNoteScope = async (
+export const setNoteScope = (...args: Parameters<typeof setNoteScopeImpl>) => withLocalEntityMutation("memo", () => setNoteScopeImpl(...args));
+
+const setNoteScopeImpl = async (
   noteId: string,
   scope: ContentScope,
 ): Promise<NoteRecord> => {
@@ -406,7 +413,9 @@ export const setNoteScope = async (
   return updated;
 };
 
-export const deleteNoteById = async (
+export const deleteNoteById = (...args: Parameters<typeof deleteNoteByIdImpl>) => args[1]?.enqueueSync === false ? deleteNoteByIdImpl(...args) : withLocalEntityMutation("memo", () => deleteNoteByIdImpl(...args));
+
+const deleteNoteByIdImpl = async (
   noteId: string,
   options?: { enqueueSync?: boolean },
 ): Promise<void> => {

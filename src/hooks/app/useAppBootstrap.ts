@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { AppState } from "react-native";
 
 import { backfillNoteIndexes } from "../../db/noteRepo";
@@ -18,16 +18,20 @@ import { classifySyncError } from "../../services/sync/syncDiagnostics";
 
 type Args = {
   syncNow: () => Promise<unknown>;
-  onSynced?: () => Promise<void> | void;
 };
 
-export const useAppBootstrap = ({ syncNow, onSynced }: Args) => {
+export const useAppBootstrap = ({ syncNow }: Args) => {
+  // Refreshing app data can update context values and therefore callback
+  // identities. Keep the latest callbacks without treating that refresh as a
+  // new app launch; otherwise a completed sync immediately starts another one.
+  const syncNowRef = useRef(syncNow);
+  syncNowRef.current = syncNow;
+
   const runSyncCycle = useCallback(
     () =>
       cleanupExpiredLocalDeletedState()
-        .then(() => syncNow())
-        .then(() => onSynced?.()),
-    [onSynced, syncNow],
+        .then(() => syncNowRef.current()),
+    [],
   );
 
   useEffect(() => {
@@ -38,10 +42,15 @@ export const useAppBootstrap = ({ syncNow, onSynced }: Args) => {
   }, [runSyncCycle]);
 
   useEffect(() => {
+    let wasBackground = AppState.currentState === "background";
     const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "background") wasBackground = true;
       if (state !== "active") {
         return;
       }
+      // Native authentication sheets use inactive -> active, not a resume.
+      if (!wasBackground) return;
+      wasBackground = false;
       runSyncCycle().catch((error) => {
         const { errorCode } = classifySyncError(error, "load_local_changes");
         console.warn(`[cloudSync] resume failed code=${errorCode}`);

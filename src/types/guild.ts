@@ -10,6 +10,8 @@ export type GuildPost = {
   authorUserId: string;
   authorDisplayName: string;
   authorPhotoUrl: string | null;
+  /** Optional for backwards compatibility with posts created before titles. */
+  title?: string | null;
   body: string;
   tags: string[];
   type: GuildPostType;
@@ -32,6 +34,7 @@ export type GuildPost = {
 export type GuildFeedPost = Omit<GuildPost, "source">;
 
 export type GuildPostInput = {
+  title: string | null;
   body: string;
   type: GuildPostType;
   projectId: string | null;
@@ -41,6 +44,16 @@ export type GuildPostInput = {
 export type GuildFeedPage = {
   posts: GuildFeedPost[];
   cursor: GuildFeedCursor | null;
+};
+
+export type OwnedGuildFeedPage = {
+  posts: GuildPost[];
+  cursor: OwnedGuildFeedCursor | null;
+};
+
+export type OwnedGuildFeedCursor = {
+  updatedAt: number;
+  id: string;
 };
 
 export type GuildFeedCursor = {
@@ -97,6 +110,7 @@ export const extractGuildTags = (body: string): string[] =>
   normalizeGuildTags(extractHashtags(body));
 
 export const validateGuildPostInput = (input: GuildPostInput): string | null => {
+  if ((input.title?.trim().length ?? 0) > 200) return "タイトルは200文字以内で入力してください。";
   if (!input.body.trim()) return "投稿本文を入力してください。";
   if (input.type !== "personal" && !input.projectId) return "プロジェクトを選択してください。";
   return null;

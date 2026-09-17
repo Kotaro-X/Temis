@@ -91,8 +91,16 @@ export const signInGoogleSyncUser = async (): Promise<GoogleSyncUser | null> => 
   return signInFirebaseWithGoogleIdToken(idToken);
 };
 
-export const signOutGoogleSyncUser = async (): Promise<void> => {
-  configureGoogleSignin();
-  await firebaseSignOut(getFirebaseAuth());
-  await GoogleSignin.signOut();
+export const signOutSyncUser = async (): Promise<void> => {
+  const auth = getFirebaseAuth();
+  const shouldSignOutGoogle = isGoogleFirebaseUser(auth.currentUser);
+  await firebaseSignOut(auth);
+  if (shouldSignOutGoogle) {
+    configureGoogleSignin();
+    await GoogleSignin.signOut();
+  }
 };
+
+// Kept as a compatibility alias for call sites not yet migrated to the
+// provider-neutral name.
+export const signOutGoogleSyncUser = signOutSyncUser;

@@ -10,17 +10,7 @@ import type { SyncEntityEnvelope, SyncEntityType, SyncQueueItem } from "../../ty
 import { upsertSyncEnvelope } from "./syncCore";
 import { notifySyncQueueChanged } from "./syncQueueEvents";
 import { assertValidSyncEnvelopeForWrite } from "./syncEnvelopeValidator";
-
-let storeMutation: Promise<void> = Promise.resolve();
-
-const serializeStoreMutation = <T>(operation: () => Promise<T>): Promise<T> => {
-  const result = storeMutation.then(operation, operation);
-  storeMutation = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-};
+import { withSyncStoreMutation as serializeStoreMutation } from "./localMutationLock";
 
 export {
   compareSyncEnvelopes,

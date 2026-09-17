@@ -11,6 +11,7 @@ export type AIEvidence = {
 export type AIResponse = {
   answerText: string;
   citedEvidenceKeys: string[];
+  errorText?: string;
 };
 
 export type AIState = {

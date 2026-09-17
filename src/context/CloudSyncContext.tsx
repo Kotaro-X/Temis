@@ -2,6 +2,7 @@ import React, { createContext, useContext } from "react";
 
 import { useAppSettings } from "./AppSettingsContext";
 import { useCloudSync } from "../hooks/useCloudSync";
+import { useAppRefresh } from "./AppRefreshContext";
 
 type CloudSyncContextValue = ReturnType<typeof useCloudSync>;
 
@@ -13,9 +14,11 @@ export const CloudSyncProvider = ({
   children: React.ReactNode;
 }) => {
   const { cloudSyncEnabled, cloudSyncEntitled } = useAppSettings();
+  const { refreshSyncedEntity } = useAppRefresh();
   const value = useCloudSync({
     enabled: cloudSyncEnabled,
     entitled: cloudSyncEntitled,
+    onEntitySynced: refreshSyncedEntity,
   });
   return (
     <CloudSyncContext.Provider value={value}>{children}</CloudSyncContext.Provider>

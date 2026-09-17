@@ -60,7 +60,7 @@ const sortedUserIds = (leftUserId: string, rightUserId: string): [string, string
 
 const requireCurrentUserId = (): string => {
   const userId = getFirebaseAuth().currentUser?.uid;
-  if (!userId) throw new Error("Googleでログインしてから連携機能を利用してください。");
+  if (!userId) throw new Error("アカウントにログインしてから連携機能を利用してください。");
   return userId;
 };
 
@@ -256,22 +256,49 @@ export const listProjectCreatorProfiles = async (
 export const sendConnectionRequest = async (recipientUserId: string): Promise<void> => {
   const requesterUserId = requireCurrentUserId();
   if (recipientUserId === requesterUserId) throw new Error("自分自身にはつながり申請できません。");
+  const ref = connectionRef(requesterUserId, recipientUserId);
+
+  const settleExisting = async (connection: Connection): Promise<void> => {
+    if (connection.status === "blocked") throw new Error("このユーザーには申請できません。");
+    if (connection.status === "connected" || connection.requesterUserId === requesterUserId) return;
+    await setDoc(ref, { ...connection, status: "connected", updatedAt: now() });
+  };
+
+  const existing = await getConnectionWithUser(recipientUserId);
+  if (existing) {
+    await settleExisting(existing);
+    return;
+  }
+
   const timestamp = now();
-  await runTransaction(db(), async (transaction) => {
-    const ref = connectionRef(requesterUserId, recipientUserId);
-    const existing = await transaction.get(ref);
-    if (existing.exists()) {
-      const connection = existing.data() as Connection;
-      if (connection.status === "blocked") throw new Error("このユーザーには申請できません。");
-      if (connection.status === "connected" || connection.requesterUserId === requesterUserId) return;
-      transaction.set(ref, { ...connection, status: "connected", updatedAt: timestamp });
-      return;
-    }
-    transaction.set(ref, {
+  try {
+    await setDoc(ref, {
       id: ref.id, userIds: sortedUserIds(requesterUserId, recipientUserId), requesterUserId,
       recipientUserId, status: "pending", createdAt: timestamp, updatedAt: timestamp,
     } satisfies Connection);
+  } catch (cause) {
+    // Two devices can both observe an empty query. If the other write won,
+    // converge on the newly-created relationship instead of surfacing the
+    // update-denied error from our create attempt.
+    const raced = await getConnectionWithUser(recipientUserId);
+    if (!raced) throw cause;
+    await settleExisting(raced);
+  }
+};
+
+/** Reads a single relationship without requiring permission to get a missing document. */
+export const getConnectionWithUser = async (otherUserId: string): Promise<Connection | null> => {
+  const userId = requireCurrentUserId();
+  if (otherUserId === userId) return null;
+  const result = await getDocs(query(
+    collection(db(), "connections"),
+    where("userIds", "array-contains", userId),
+  ));
+  const snapshot = result.docs.find((item) => {
+    const connection = item.data() as Connection;
+    return connection.userIds.includes(otherUserId);
   });
+  return snapshot ? snapshot.data() as Connection : null;
 };
 
 export const respondToConnectionRequest = async (
@@ -335,17 +362,28 @@ export const createProject = async (input: Pick<Project, "name" | "description" 
 };
 
 export const listMyProjects = async (): Promise<Project[]> => {
+  const accesses = await listMyProjectAccess();
+  return accesses.map(({ project }) => project);
+};
+
+export type ProjectAccess = {
+  project: Project;
+  role: ProjectRole;
+};
+
+export const listMyProjectAccess = async (): Promise<ProjectAccess[]> => {
   const userId = requireCurrentUserId();
   const memberships = await getDocs(query(collection(db(), "projectMemberships"), where("userId", "==", userId)));
   const results = await Promise.all(memberships.docs.map(async (membership) => {
-    const projectId = (membership.data() as ProjectMembership).projectId;
+    const access = membership.data() as ProjectMembership;
+    const projectId = access.projectId;
     const project = await getDoc(projectRef(projectId));
     return project.exists() && !(project.data() as Project).deletedAt
-      ? (project.data() as Project)
+      ? { project: project.data() as Project, role: access.role } satisfies ProjectAccess
       : null;
   }));
-  return results.filter((project): project is Project => project !== null)
-    .sort((left, right) => right.updatedAt - left.updatedAt);
+  return results.filter((access): access is ProjectAccess => access !== null)
+    .sort((left, right) => right.project.updatedAt - left.project.updatedAt);
 };
 
 export const getProjectMember = async (projectId: string, userId: string): Promise<ProjectMember | null> => {

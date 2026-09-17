@@ -1,7 +1,21 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
+import { FieldPath, FieldValue, getFirestore } from "firebase-admin/firestore";
+import accountDeletion from "./accountDeletion.cjs";
+import groundedAnswerCore from "./groundedAnswerCore.cjs";
+import guildAICore from "./guildAICore.cjs";
+
+export const deleteAccount = accountDeletion.deleteAccount;
+export const getAccountDeletionBlockers = accountDeletion.getAccountDeletionBlockers;
+export const resolveAccountDeletionBlocker = accountDeletion.resolveAccountDeletionBlocker;
 
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
+const revenueCatProjectId = defineSecret("REVENUECAT_PROJECT_ID");
+const revenueCatV2SecretApiKey = defineSecret("REVENUECAT_V2_SECRET_API_KEY");
+const revenueCatCloudSyncEntitlementId = defineSecret(
+  "REVENUECAT_CLOUD_SYNC_ENTITLEMENT_ID",
+);
 // The project has no Compute Engine default service account. Use a dedicated,
 // least-privilege runtime identity instead of enabling a broad default account.
 const EMBEDDING_RUNTIME_SERVICE_ACCOUNT =
@@ -10,6 +24,19 @@ const EMBEDDING_MODEL = "text-embedding-3-small";
 const MAX_INPUTS = 20;
 const MAX_INPUT_CHARS = 4_000;
 const MAX_TOTAL_CHARS = 40_000;
+const REGION = "asia-northeast1";
+const db = getFirestore();
+
+const {
+  GUILD_INDEX_COLLECTION,
+  MAX_GUILD_EVIDENCE,
+  buildGuildIndexText,
+  isActiveFreeGrant,
+  isPublicVisibleGuildPost,
+  readGuildQuestion,
+  toMillis,
+  toSafeGuildEvidencePost,
+} = guildAICore;
 
 const invalidArgument = (message) =>
   new HttpsError("invalid-argument", message);
@@ -70,9 +97,46 @@ const readEmbeddingResponse = (body, expectedCount) => {
   return embeddings;
 };
 
+const mapOpenAIError = (error, operation) => {
+  if (error instanceof HttpsError) return error;
+  if (error?.status === 429) {
+    return new HttpsError("resource-exhausted", `${operation} is temporarily busy. Please try again shortly.`);
+  }
+  if (typeof error?.status === "number" && error.status >= 500) {
+    return new HttpsError("unavailable", `${operation} is temporarily unavailable.`);
+  }
+  if (error?.code === "invalid-argument") {
+    return new HttpsError("invalid-argument", error.message);
+  }
+  if (error?.code === "invalid-response") {
+    return new HttpsError("unavailable", `${operation} returned an invalid response. Please retry.`);
+  }
+  if (error instanceof TypeError) {
+    return new HttpsError("unavailable", `${operation} is temporarily unavailable.`);
+  }
+  return new HttpsError("failed-precondition", `${operation} is not configured correctly.`);
+};
+
+const requestEmbeddings = async (inputs) => {
+  const response = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openAiApiKey.value()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: EMBEDDING_MODEL, input: inputs }),
+  });
+  if (!response.ok) {
+    const error = new Error("OpenAI embedding request failed.");
+    error.status = response.status;
+    throw error;
+  }
+  return readEmbeddingResponse(await response.json(), inputs.length);
+};
+
 export const createEmbeddings = onCall(
   {
-    region: "asia-northeast1",
+    region: REGION,
     timeoutSeconds: 60,
     maxInstances: 3,
     serviceAccount: EMBEDDING_RUNTIME_SERVICE_ACCOUNT,
@@ -86,35 +150,212 @@ export const createEmbeddings = onCall(
       );
     }
     const input = readInputs(request.data);
-    const response = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openAiApiKey.value()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ model: EMBEDDING_MODEL, input }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        throw new HttpsError(
-          "resource-exhausted",
-          "AI memo search is temporarily busy. Please try again shortly.",
-        );
-      }
-      if (response.status >= 500) {
-        throw new HttpsError(
-          "unavailable",
-          "AI memo search is temporarily unavailable.",
-        );
-      }
-      throw new HttpsError(
-        "failed-precondition",
-        "AI memo search is not configured correctly.",
-      );
+    try {
+      return { model: EMBEDDING_MODEL, embeddings: await requestEmbeddings(input) };
+    } catch (error) {
+      throw mapOpenAIError(error, "AI memo search");
     }
+  },
+);
 
-    const embeddings = readEmbeddingResponse(await response.json(), input.length);
-    return { model: EMBEDDING_MODEL, embeddings };
+export const generateGroundedAnswer = onCall(
+  {
+    region: REGION,
+    timeoutSeconds: 60,
+    maxInstances: 3,
+    serviceAccount: EMBEDDING_RUNTIME_SERVICE_ACCOUNT,
+    secrets: [openAiApiKey],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign in is required to generate an AI answer.");
+    }
+    try {
+      return await groundedAnswerCore.generateGroundedAnswer({
+        apiKey: openAiApiKey.value(),
+        data: request.data,
+      });
+    } catch (error) {
+      throw mapOpenAIError(error, "AI answer generation");
+    }
+  },
+);
+
+const connectionIdFor = (left, right) => [left, right].sort().join("__");
+
+const hasBlockedConnection = async (userId, authorUserId) => {
+  if (userId === authorUserId) return false;
+  const snapshot = await db.doc(`connections/${connectionIdFor(userId, authorUserId)}`).get();
+  return snapshot.exists && snapshot.data()?.status === "blocked";
+};
+
+const hasRevenueCatEntitlement = async (uid) => {
+  const projectId = revenueCatProjectId.value().trim();
+  const apiKey = revenueCatV2SecretApiKey.value().trim();
+  const entitlementId = revenueCatCloudSyncEntitlementId.value().trim();
+  if (!projectId || !apiKey || !entitlementId) return false;
+  const url = `https://api.revenuecat.com/v2/projects/${encodeURIComponent(projectId)}/customers/${encodeURIComponent(uid)}/active_entitlements`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) return false;
+  const body = await response.json().catch(() => null);
+  return Array.isArray(body?.items) && body.items.some((item) => item?.entitlement_id === entitlementId);
+};
+
+const requirePlusAccess = async (uid) => {
+  const grantSnapshot = await db.doc(`subscriptionAccess/${uid}`).get();
+  if (grantSnapshot.exists && isActiveFreeGrant(grantSnapshot.data())) return;
+  try {
+    if (await hasRevenueCatEntitlement(uid)) return;
+  } catch {
+    // Access is deliberately fail-closed when RevenueCat cannot be verified.
+  }
+  throw new HttpsError("permission-denied", "Temis Plus is required for Guild AI search.");
+};
+
+const writeGuildPostIndex = async (postId, post) => {
+  const indexRef = db.collection(GUILD_INDEX_COLLECTION).doc(postId);
+  if (!isPublicVisibleGuildPost(post)) {
+    await indexRef.delete().catch((error) => {
+      if (error?.code !== 5) throw error;
+    });
+    return false;
+  }
+  const indexText = buildGuildIndexText(post);
+  if (!indexText) {
+    await indexRef.delete();
+    return false;
+  }
+  const [embedding] = await requestEmbeddings([indexText]);
+  await indexRef.set({
+    postId,
+    status: "published",
+    moderationVisibility: "visible",
+    embeddingModel: EMBEDDING_MODEL,
+    sourceUpdatedAt: toMillis(post.updatedAt) ?? Date.now(),
+    publishedAt: toMillis(post.publishedAt) ?? Date.now(),
+    embedding: FieldValue.vector(embedding),
+  });
+  return true;
+};
+
+export const indexGuildPostForAISearch = onDocumentWritten(
+  {
+    document: "guildPosts/{postId}",
+    region: REGION,
+    timeoutSeconds: 60,
+    maxInstances: 3,
+    serviceAccount: EMBEDDING_RUNTIME_SERVICE_ACCOUNT,
+    secrets: [openAiApiKey],
+  },
+  async (event) => {
+    const postId = event.params.postId;
+    const post = event.data?.after.exists ? event.data.after.data() : null;
+    if (!post) {
+      await db.collection(GUILD_INDEX_COLLECTION).doc(postId).delete();
+      return;
+    }
+    try {
+      await writeGuildPostIndex(postId, post);
+    } catch (error) {
+      throw mapOpenAIError(error, "Guild AI indexing");
+    }
+  },
+);
+
+export const searchGuildPostsWithAI = onCall(
+  {
+    region: REGION,
+    timeoutSeconds: 60,
+    maxInstances: 3,
+    serviceAccount: EMBEDDING_RUNTIME_SERVICE_ACCOUNT,
+    secrets: [
+      openAiApiKey,
+      revenueCatProjectId,
+      revenueCatV2SecretApiKey,
+      revenueCatCloudSyncEntitlementId,
+    ],
+  },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Sign in is required for Guild AI search.");
+    const question = readGuildQuestion(request.data);
+    if (!question) throw invalidArgument("question must contain 1 to 1000 characters.");
+    await requirePlusAccess(uid);
+
+    try {
+      const [queryEmbedding] = await requestEmbeddings([question]);
+      const nearest = db.collection(GUILD_INDEX_COLLECTION)
+        .where("status", "==", "published")
+        .where("moderationVisibility", "==", "visible")
+        .findNearest({
+          vectorField: "embedding",
+          queryVector: FieldValue.vector(queryEmbedding),
+          limit: 20,
+          distanceMeasure: "COSINE",
+        });
+      const indexSnapshot = await nearest.get();
+      const candidates = [];
+      for (const indexDoc of indexSnapshot.docs) {
+        const postId = indexDoc.data()?.postId;
+        if (typeof postId !== "string") continue;
+        const postSnapshot = await db.collection("guildPosts").doc(postId).get();
+        const post = postSnapshot.data();
+        if (!postSnapshot.exists || !isPublicVisibleGuildPost(post)) continue;
+        if (await hasBlockedConnection(uid, post.authorUserId)) continue;
+        candidates.push(toSafeGuildEvidencePost(postId, post));
+        if (candidates.length >= MAX_GUILD_EVIDENCE) break;
+      }
+      if (candidates.length === 0) {
+        return { answerText: "関連する公開投稿が見つかりませんでした。", citedPostIds: [], evidencePosts: [] };
+      }
+      const evidence = candidates.map((post, index) => ({
+        key: `G${index + 1}`,
+        text: [post.title, post.body].filter(Boolean).join("\n").slice(0, 1_200),
+      }));
+      const generated = await groundedAnswerCore.generateGroundedAnswer({
+        apiKey: openAiApiKey.value(),
+        data: { question, evidence },
+      });
+      const postIdByKey = new Map(evidence.map((item, index) => [item.key, candidates[index].id]));
+      return {
+        answerText: generated.answerText,
+        citedPostIds: generated.citedEvidenceKeys.map((key) => postIdByKey.get(key)).filter(Boolean),
+        evidencePosts: candidates,
+      };
+    } catch (error) {
+      throw mapOpenAIError(error, "Guild AI search");
+    }
+  },
+);
+
+export const backfillGuildPostAIIndex = onCall(
+  {
+    region: REGION,
+    timeoutSeconds: 540,
+    maxInstances: 1,
+    serviceAccount: EMBEDDING_RUNTIME_SERVICE_ACCOUNT,
+    secrets: [openAiApiKey],
+  },
+  async (request) => {
+    if (!request.auth?.token?.admin) {
+      throw new HttpsError("permission-denied", "Administrator access is required.");
+    }
+    const limit = Math.min(20, Math.max(1, Math.floor(Number(request.data?.limit) || 10)));
+    const cursor = typeof request.data?.cursor === "string" ? request.data.cursor : null;
+    let query = db.collection("guildPosts").orderBy(FieldPath.documentId()).limit(limit);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    let indexedCount = 0;
+    for (const document of snapshot.docs) {
+      if (await writeGuildPostIndex(document.id, document.data())) indexedCount += 1;
+    }
+    return {
+      processedCount: snapshot.size,
+      indexedCount,
+      nextCursor: snapshot.size === limit ? snapshot.docs[snapshot.docs.length - 1].id : null,
+    };
   },
 );

@@ -19,12 +19,24 @@ const RULES_PATH = decodeURIComponent(
   new URL("../firestore.rules", import.meta.url).pathname,
 );
 
-const createGoogleToken = (overrides?: Record<string, unknown>): TokenOptions => ({
+const createProviderToken = (
+  provider: "google.com" | "apple.com" | "password",
+  overrides?: Record<string, unknown>,
+): TokenOptions => ({
   firebase: {
-    sign_in_provider: "google.com",
+    sign_in_provider: provider,
   },
   ...overrides,
 });
+
+const createGoogleToken = (overrides?: Record<string, unknown>): TokenOptions =>
+  createProviderToken("google.com", overrides);
+
+const createAppleToken = (overrides?: Record<string, unknown>): TokenOptions =>
+  createProviderToken("apple.com", overrides);
+
+const createPasswordToken = (overrides?: Record<string, unknown>): TokenOptions =>
+  createProviderToken("password", overrides);
 
 const createTodoEnvelope = (id = "todo-1") => ({
   schemaVersion: 3,
@@ -216,8 +228,8 @@ if (!FIRESTORE_EMULATOR_HOST) {
     );
   });
 
-  test("profiles claim usernames atomically and project notes stay member-only", async () => {
-    const aliceDb = env.authenticatedContext("alice", createGoogleToken()).firestore();
+  test("Apple profiles claim usernames atomically and project notes stay member-only", async () => {
+    const aliceDb = env.authenticatedContext("alice", createAppleToken()).firestore();
     const bobDb = env.authenticatedContext("bob", createGoogleToken()).firestore();
     const profile = {
       userId: "alice", username: "alice", displayName: "Alice", photoUrl: null,
@@ -256,6 +268,37 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await assertSucceeds(
       aliceDb.collection("projectMemberships").where("userId", "==", "alice").get(),
     );
+  });
+
+  test("unsupported account providers cannot create collaboration profiles", async () => {
+    const passwordDb = env.authenticatedContext(
+      "password-user",
+      createPasswordToken({ email: "password@example.com" }),
+    ).firestore();
+    const profileBatch = writeBatch(passwordDb);
+    profileBatch.set(doc(passwordDb, "usernames", "password_user"), {
+      userId: "password-user",
+      username: "password_user",
+      reservedUntil: null,
+      updatedAt: 1,
+    });
+    profileBatch.set(doc(passwordDb, "profiles", "password-user"), {
+      userId: "password-user",
+      username: "password_user",
+      displayName: "Password User",
+      photoUrl: null,
+      bio: null,
+      interestTags: [],
+      skillTags: [],
+      affiliation: null,
+      profileVisibility: "public",
+      connectionRequestPolicy: "everyone",
+      createdAt: 1,
+      updatedAt: 1,
+      usernameChangedAt: null,
+    });
+
+    await assertFails(profileBatch.commit());
   });
 
   test("unknown user subcollections are denied to owners and admins", async () => {
@@ -401,7 +444,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
     );
   });
 
-  test("google users can redeem invite_free codes only through the expected transaction shape", async () => {
+  test("Apple users can redeem invite_free codes only through the expected transaction shape", async () => {
     const now = 1_783_292_400_000;
 
     await env.withSecurityRulesDisabled(async (context) => {
@@ -423,7 +466,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
 
     const aliceDb = env.authenticatedContext(
       "alice",
-      createGoogleToken({
+      createAppleToken({
         email: "alice@example.com",
         name: "Alice",
       }),
@@ -501,9 +544,48 @@ if (!FIRESTORE_EMULATOR_HOST) {
     );
   });
 
+  test("connection requests query before create and remain participant-only", async () => {
+    const aliceDb = env.authenticatedContext("alice", createGoogleToken()).firestore();
+    const bobDb = env.authenticatedContext("bob", createAppleToken()).firestore();
+    const carolDb = env.authenticatedContext("carol", createGoogleToken()).firestore();
+    const missingRef = aliceDb.collection("connections").doc("alice__bob");
+    const pending = {
+      id: "alice__bob",
+      userIds: ["alice", "bob"],
+      requesterUserId: "alice",
+      recipientUserId: "bob",
+      status: "pending",
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    await assertFails(aliceDb.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(missingRef);
+      if (!snapshot.exists) transaction.set(missingRef, pending);
+    }));
+
+    await assertSucceeds(
+      aliceDb.collection("connections")
+        .where("userIds", "array-contains", "alice")
+        .get(),
+    );
+    await assertSucceeds(missingRef.set(pending));
+    await assertSucceeds(
+      bobDb.collection("connections").where("userIds", "array-contains", "bob").get(),
+    );
+    await assertFails(carolDb.collection("connections").doc("alice__bob").get());
+    await assertSucceeds(
+      carolDb.collection("connections").where("userIds", "array-contains", "carol").get(),
+    );
+    await assertFails(missingRef.update({ status: "connected", updatedAt: 2 }));
+    await assertSucceeds(
+      bobDb.collection("connections").doc("alice__bob").update({ status: "connected", updatedAt: 2 }),
+    );
+  });
+
   test("Guild posts are public only while visible, owner-editable, and staff-moderated", async () => {
     const now = 1_783_292_400_000;
-    const aliceDb = env.authenticatedContext("guild-alice", createGoogleToken()).firestore();
+    const aliceDb = env.authenticatedContext("guild-alice", createAppleToken()).firestore();
     const bobDb = env.authenticatedContext("guild-bob", createGoogleToken()).firestore();
     const staffDb = env.authenticatedContext("guild-staff", createGoogleToken()).firestore();
     const post = {
@@ -524,6 +606,9 @@ if (!FIRESTORE_EMULATOR_HOST) {
     });
 
     await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).set(post));
+    await assertSucceeds(
+      bobDb.collection("connections").where("userIds", "array-contains", "guild-bob").get(),
+    );
     await assertSucceeds(bobDb.collection("guildPosts").doc(post.id).get());
     await assertSucceeds(bobDb.collection("guildPosts")
       .where("status", "==", "published")
@@ -532,10 +617,45 @@ if (!FIRESTORE_EMULATOR_HOST) {
       .orderBy("__name__", "desc")
       .get());
     await assertFails(bobDb.collection("guildPosts").doc(post.id).update({ body: "改ざん" }));
-    await assertSucceeds(staffDb.collection("guildPosts").doc(post.id).update({
-      moderation: { visibility: "hidden", hiddenByUserId: "guild-staff", hiddenAt: now + 1, reason: "確認中" },
+    await assertFails(bobDb.collection("guildPosts").doc(post.id).update({ status: "unpublished", publishedAt: null }));
+    await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).update({
+      status: "unpublished",
+      publishedAt: null,
       updatedAt: now + 1,
     }));
+    await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).get());
+    await assertSucceeds(
+      aliceDb.collection("guildPosts")
+        .where("authorUserId", "==", "guild-alice")
+        .orderBy("updatedAt", "desc")
+        .orderBy("__name__", "desc")
+        .get(),
+    );
     await assertFails(bobDb.collection("guildPosts").doc(post.id).get());
+    await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).update({
+      status: "published",
+      publishedAt: now + 2,
+      updatedAt: now + 2,
+    }));
+    await assertSucceeds(bobDb.collection("guildPosts").doc(post.id).get());
+    await assertSucceeds(staffDb.collection("guildPosts").doc(post.id).update({
+      moderation: { visibility: "hidden", hiddenByUserId: "guild-staff", hiddenAt: now + 1, reason: "確認中" },
+      updatedAt: now + 3,
+    }));
+    await assertFails(bobDb.collection("guildPosts").doc(post.id).get());
+  });
+
+  test("Guild AI index is inaccessible to every client", async () => {
+    const aliceDb = env.authenticatedContext("guild-ai-alice", createAppleToken()).firestore();
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection("guildPostAIIndex").doc("post-1").set({
+        postId: "post-1",
+        status: "published",
+        moderationVisibility: "visible",
+        embedding: [0.1, 0.2],
+      });
+    });
+    await assertFails(aliceDb.collection("guildPostAIIndex").doc("post-1").get());
+    await assertFails(aliceDb.collection("guildPostAIIndex").doc("post-2").set({ postId: "post-2" }));
   });
 }

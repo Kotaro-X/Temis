@@ -1,10 +1,21 @@
-import { openDatabaseSync } from "expo-sqlite";
+import {
+  deleteDatabaseAsync,
+  openDatabaseSync,
+  type SQLiteDatabase,
+} from "expo-sqlite";
 
 import { runMigrations } from "./migrations";
 
 const DB_NAME = "wememo.db";
 
-const db = openDatabaseSync(DB_NAME);
+let db: SQLiteDatabase | null = null;
+
+const getDatabase = (): SQLiteDatabase => {
+  if (!db) {
+    db = openDatabaseSync(DB_NAME);
+  }
+  return db;
+};
 
 type SqlParams = Array<string | number | null>;
 
@@ -30,7 +41,7 @@ export const executeSql = async (
   sql: string,
   params: SqlParams = [],
 ): Promise<SqlResultSet> => {
-  const rows = await db.getAllAsync<SqlRow>(sql, params);
+  const rows = await getDatabase().getAllAsync<SqlRow>(sql, params);
   return { rows: toRowList(rows) };
 };
 
@@ -41,4 +52,11 @@ export const ensureDbReady = async (): Promise<void> => {
     readyPromise = runMigrations(executeSql);
   }
   return readyPromise;
+};
+
+export const deleteLocalDatabase = async (): Promise<void> => {
+  db?.closeSync();
+  db = null;
+  readyPromise = null;
+  await deleteDatabaseAsync(DB_NAME);
 };

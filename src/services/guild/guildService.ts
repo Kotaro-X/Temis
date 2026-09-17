@@ -17,7 +17,7 @@ import {
 } from "firebase/firestore";
 
 import { getFirebaseAuth, getFirebaseFirestore } from "../sync/firebaseApp";
-import { connectionIdFor, type Connection, type Project, type ProjectMember } from "../../types/collaboration";
+import { type Connection, type Project, type ProjectMember, type ProjectMembership } from "../../types/collaboration";
 import {
   extractGuildTags,
   normalizeGuildTags,
@@ -27,6 +27,8 @@ import {
   type GuildFeedPage,
   type GuildFeedPost,
   type GuildModerationReport,
+  type OwnedGuildFeedCursor,
+  type OwnedGuildFeedPage,
   type GuildPost,
   type GuildPostInput,
   type GuildReport,
@@ -41,11 +43,9 @@ const memberRef = (projectId: string, userId: string) => doc(db(), "projects", p
 const membershipRef = (projectId: string, userId: string) => doc(db(), "projectMemberships", `${projectId}__${userId}`);
 const joinRequestRef = (id: string) => doc(db(), "projectJoinRequests", id);
 const reportRef = (id: string) => doc(db(), "guildReports", id);
-const connectionRef = (a: string, b: string) => doc(db(), "connections", connectionIdFor(a, b));
-
 const requireUserId = () => {
   const userId = getFirebaseAuth().currentUser?.uid;
-  if (!userId) throw new Error("Googleでログインしてからギルドを利用してください。");
+  if (!userId) throw new Error("アカウントにログインしてからギルドを利用してください。");
   return userId;
 };
 
@@ -61,10 +61,24 @@ const assertPostBytes = (input: GuildPostInput) => {
   if (approximateBytes > 900_000) throw new Error("投稿データが保存可能な上限を超えています。");
 };
 
-const isBlockedBetween = async (leftUserId: string, rightUserId: string): Promise<boolean> => {
-  if (leftUserId === rightUserId) return false;
-  const connection = await getDoc(connectionRef(leftUserId, rightUserId));
-  return connection.exists() && (connection.data() as Connection).status === "blocked";
+const loadViewerRelationships = async (userId: string) => {
+  const [connections, memberships] = await Promise.all([
+    getDocs(query(collection(db(), "connections"), where("userIds", "array-contains", userId))),
+    getDocs(query(collection(db(), "projectMemberships"), where("userId", "==", userId))),
+  ]);
+  const blockedUserIds = new Set<string>();
+  const connectedUserIds = new Set<string>();
+  for (const snapshot of connections.docs) {
+    const connection = snapshot.data() as Connection;
+    const otherUserId = connection.userIds.find((id) => id !== userId);
+    if (!otherUserId) continue;
+    if (connection.status === "blocked") blockedUserIds.add(otherUserId);
+    if (connection.status === "connected") connectedUserIds.add(otherUserId);
+  }
+  const projectIds = new Set(
+    memberships.docs.map((snapshot) => (snapshot.data() as ProjectMembership).projectId),
+  );
+  return { blockedUserIds, connectedUserIds, projectIds };
 };
 
 const pageQuery = (tags: string[], cursor: GuildFeedCursor | null) => {
@@ -90,23 +104,17 @@ export const listGuildPosts = async ({
 }): Promise<GuildFeedPage> => {
   const userId = requireUserId();
   const normalizedTags = normalizeGuildTags(tags);
-  const snapshot = await getDocs(pageQuery(normalizedTags, cursor));
+  const [snapshot, relationships] = await Promise.all([
+    getDocs(pageQuery(normalizedTags, cursor)),
+    loadViewerRelationships(userId),
+  ]);
   let posts = snapshot.docs.map((item) => item.data() as GuildPost);
-  posts = (await Promise.all(posts.map(async (post) => (
-    await isBlockedBetween(userId, post.authorUserId) ? null : post
-  )))).filter((post): post is GuildPost => post !== null);
+  posts = posts.filter((post) => !relationships.blockedUserIds.has(post.authorUserId));
 
   if (feed === "connected") {
-    const visible = await Promise.all(posts.map(async (post) => {
-      if (post.authorUserId === userId) return true;
-      const [connection, membership] = await Promise.all([
-        getDoc(connectionRef(userId, post.authorUserId)),
-        post.projectId ? getDoc(memberRef(post.projectId, userId)) : Promise.resolve(null),
-      ]);
-      return (connection?.exists() && (connection.data() as Connection).status === "connected")
-        || Boolean(membership?.exists());
-    }));
-    posts = posts.filter((_, index) => visible[index]);
+    posts = posts.filter((post) => post.authorUserId === userId
+      || relationships.connectedUserIds.has(post.authorUserId)
+      || Boolean(post.projectId && relationships.projectIds.has(post.projectId)));
   }
 
   const tail = snapshot.docs.at(-1)?.data() as GuildPost | undefined;
@@ -122,8 +130,37 @@ export const getGuildPost = async (postId: string): Promise<GuildFeedPost | null
   if (!snapshot.exists()) return null;
   const post = snapshot.data() as GuildPost;
   if (post.status !== "published" || post.moderation.visibility !== "visible") return null;
-  if (await isBlockedBetween(userId, post.authorUserId)) return null;
+  const relationships = await loadViewerRelationships(userId);
+  if (relationships.blockedUserIds.has(post.authorUserId)) return null;
   return omitSource(post);
+};
+
+export const listMyGuildPosts = async (
+  cursor: OwnedGuildFeedCursor | null = null,
+): Promise<OwnedGuildFeedPage> => {
+  const userId = requireUserId();
+  const constraints: QueryConstraint[] = [
+    where("authorUserId", "==", userId),
+    orderBy("updatedAt", "desc"),
+    orderBy(documentId(), "desc"),
+  ];
+  if (cursor) constraints.push(startAfter(cursor.updatedAt, cursor.id));
+  constraints.push(limit(24));
+  const snapshot = await getDocs(query(collection(db(), "guildPosts"), ...constraints));
+  const posts = snapshot.docs.map((item) => item.data() as GuildPost);
+  const tail = posts.at(-1);
+  return {
+    posts,
+    cursor: tail ? { updatedAt: tail.updatedAt, id: tail.id } : null,
+  };
+};
+
+export const getOwnedGuildPost = async (postId: string): Promise<GuildPost | null> => {
+  const userId = requireUserId();
+  const snapshot = await getDoc(postRef(postId));
+  if (!snapshot.exists()) return null;
+  const post = snapshot.data() as GuildPost;
+  return post.authorUserId === userId ? post : null;
 };
 
 export const createGuildPost = async (
@@ -140,6 +177,7 @@ export const createGuildPost = async (
     id: nanoid(), authorUserId: userId,
     authorDisplayName: author.authorDisplayName.trim() || "Temisユーザー",
     authorPhotoUrl: author.authorPhotoUrl ?? null,
+    title: input.title?.trim() || null,
     body: input.body.trim(), tags: extractGuildTags(input.body), type: input.type,
     projectId: input.projectId, source: input.source, status: "published",
     moderation: { visibility: "visible", hiddenByUserId: null, hiddenAt: null, reason: null },
@@ -159,14 +197,14 @@ export const createGuildPost = async (
   return post;
 };
 
-export const updateGuildPost = async (postId: string, input: Pick<GuildPostInput, "body" | "type" | "projectId">): Promise<void> => {
+export const updateGuildPost = async (postId: string, input: Pick<GuildPostInput, "title" | "body" | "type" | "projectId">): Promise<void> => {
   const userId = requireUserId();
   const tags = extractGuildTags(input.body);
-  if (!input.body.trim() || !tags.length || (input.type !== "personal" && !input.projectId)) throw new Error("投稿内容を確認してください。");
+  if (!input.body.trim() || (input.type !== "personal" && !input.projectId)) throw new Error("投稿内容を確認してください。");
   await runTransaction(db(), async (transaction) => {
     const snapshot = await transaction.get(postRef(postId));
     if (!snapshot.exists() || snapshot.data()?.authorUserId !== userId) throw new Error("この投稿は編集できません。");
-    transaction.update(postRef(postId), { body: input.body.trim(), tags, type: input.type, projectId: input.projectId, updatedAt: now() });
+    transaction.update(postRef(postId), { title: input.title?.trim() || null, body: input.body.trim(), tags, type: input.type, projectId: input.projectId, updatedAt: now() });
   });
 };
 

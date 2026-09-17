@@ -28,6 +28,7 @@ expo-env.d.ts
 
 # Native
 .kotlin/
+/build/
 *.orig.*
 *.jks
 *.p8
@@ -58,6 +59,3 @@ yarn-error.*
 # generated native folders
 /ios
 /android
-
-# local bundled model
-assets/models/local-llm.gguf

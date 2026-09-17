@@ -24,6 +24,7 @@ import {
   type SyncRunDiagnosticContext,
 } from "./syncDiagnosticObserver";
 import { syncDiagnosticReporter } from "./syncTelemetry";
+import { withLocalEntityMutation } from "./localMutationLock";
 
 type EnvelopeEntityType = Exclude<SyncEntityType, "tag">;
 
@@ -56,7 +57,7 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
       metadata.lastPulledAt === null &&
       metadata.lastPulledId === null;
     await saveSyncEntityMetadata(identity.userId, entityType, metadata);
-    let localRecords = await loadLocalRecords();
+    const localRecords = await withLocalEntityMutation(entityType, loadLocalRecords);
     if (isFreshInitialSync) {
       await enqueueMissingSyncEnvelopes(localRecords);
     }
@@ -94,11 +95,13 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
       },
       applyPage: async (remotePage) => {
         await diagnostics.phase("resolve_conflicts", { retryCount });
-        const merged = mergeSyncEnvelopes(localRecords, remotePage);
         await diagnostics.phase("write_local_db", { retryCount });
-        await applyMergedRecords(merged);
-        await saveSyncEntityRecords(entityType, merged);
-        localRecords = merged;
+        await withLocalEntityMutation(entityType, async () => {
+          // Include edits made while the remote request was in flight.
+          const merged = mergeSyncEnvelopes(await loadLocalRecords(), remotePage);
+          await applyMergedRecords(merged);
+          await saveSyncEntityRecords(entityType, merged);
+        });
       },
       saveProgress: async (progress) => {
         metadata = progress;

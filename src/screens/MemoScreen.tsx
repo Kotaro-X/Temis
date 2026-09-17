@@ -37,6 +37,7 @@ import {
   buildTankyuDocumentId,
 } from "../services/indexTextBuilder";
 import BracketToolbar from "../components/BracketToolbar";
+import AIAnswerEvidencePanel from "../components/ai/AIAnswerEvidencePanel";
 import { AppLanguage, t } from "../i18n";
 import { useAI } from "../hooks/useAI";
 import type { MemoWorkspaceTabKey } from "../types/appNavigation";
@@ -92,18 +93,11 @@ type Selection = {
   end: number;
 };
 
-type AnswerPanelProps = {
-  answerText: string;
-  errorText: string | null;
-  title: string;
-};
-
-type CitationListProps = {
-  title: string;
-  evidence: LabeledEvidence[];
+type MemoEvidenceCardProps = {
+  result: LabeledEvidence;
   memoItemByMemoId: Map<string, MemoItem>;
   onOpenMemoId: (memoId: string) => void;
-  highlightedEvidenceIds?: Set<string>;
+  highlighted: boolean;
   showTokens?: boolean;
   keyPrefix: string;
   formatLabel?: (value: string) => string;
@@ -237,61 +231,22 @@ const extractLinkQuery = (input: string) => {
   return { isActive: true, query: after };
 };
 
-const AnswerPanel = ({ answerText, errorText, title }: AnswerPanelProps) => {
-  if (!answerText && !errorText) {
-    return null;
-  }
-  return (
-    <View
-      style={[
-        styles.qaAnswerPanel,
-        errorText ? styles.qaAnswerPanelError : null,
-      ]}
-    >
-      <Text style={styles.qaAnswerLabel}>{title}</Text>
-      <ScrollView
-        style={styles.qaAnswerScroll}
-        contentContainerStyle={styles.qaAnswerScrollContent}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator
-      >
-        <Text
-          style={[
-            styles.qaAnswerText,
-            errorText ? styles.qaAnswerErrorText : null,
-          ]}
-        >
-          {errorText || answerText}
-        </Text>
-      </ScrollView>
-    </View>
-  );
-};
-
-const CitationList = ({
-  title,
-  evidence,
+const MemoEvidenceCard = ({
+  result,
   memoItemByMemoId,
   onOpenMemoId,
-  highlightedEvidenceIds,
+  highlighted,
   showTokens = false,
   keyPrefix,
   formatLabel,
-}: CitationListProps) => (
-  <View style={styles.qaCitedSection}>
-    <Text style={styles.qaCitedTitle}>{title}</Text>
-    {evidence.map((result) => {
-      const memo = memoItemByMemoId.get(result.memoId);
-      const isHighlighted = !!highlightedEvidenceIds?.has(result.evidenceId);
-      return (
-        <Pressable
-          key={`${keyPrefix}:${result.chunkId}:${result.evidenceId}`}
-          style={[
-            styles.qaResultItem,
-            isHighlighted ? styles.qaCitedItem : null,
-          ]}
-          onPress={() => onOpenMemoId(result.memoId)}
-        >
+}: MemoEvidenceCardProps) => {
+  const memo = memoItemByMemoId.get(result.memoId);
+  return (
+    <Pressable
+      key={`${keyPrefix}:${result.chunkId}:${result.evidenceId}`}
+      style={[styles.qaResultItem, highlighted ? styles.qaCitedItem : null]}
+      onPress={() => onOpenMemoId(result.memoId)}
+    >
           <Text style={styles.qaEvidenceId}>[{result.evidenceId}]</Text>
           <Text style={styles.qaResultSnippet}>{result.snippetText}</Text>
           <Text style={styles.qaResultMeta}>
@@ -314,11 +269,9 @@ const CitationList = ({
               {result.tokensHit?.map((token) => `((` + token + `))`).join(" ")}
             </Text>
           ) : null}
-        </Pressable>
-      );
-    })}
-  </View>
-);
+    </Pressable>
+  );
+};
 
 const MemoScreen = ({
   visible,
@@ -759,11 +712,6 @@ const MemoScreen = ({
     return labeledEvidence.filter((item) => citedSet.has(item.evidenceId));
   }, [labeledEvidence, qaCitedEvidenceIds]);
 
-  const citedEvidenceIdSet = useMemo(
-    () => new Set(qaCitedEvidenceIds),
-    [qaCitedEvidenceIds],
-  );
-
   const handleSearchEvidence = async () => {
     await runQaSearch();
   };
@@ -1074,46 +1022,31 @@ const MemoScreen = ({
                 showsVerticalScrollIndicator
                 nestedScrollEnabled
               >
-                <AnswerPanel
+                <AIAnswerEvidencePanel
                   answerText={qaAnswerText}
                   errorText={qaAnswerError}
-                  title={tr("memo.aiAnswer")}
+                  answerTitle={tr("memo.aiAnswer")}
+                  citedTitle={tr("memo.aiCitedEvidence")}
+                  allTitle={tr("memo.aiAllEvidence")}
+                  showAllLabel={tr("memo.aiShowAllEvidence")}
+                  hideAllLabel={tr("memo.aiHideAllEvidence")}
+                  citedEvidence={citedEvidence}
+                  allEvidence={labeledEvidence}
+                  showAll={qaShowAllEvidence}
+                  onToggleAll={() => setQaShowAllEvidence((prev) => !prev)}
+                  getEvidenceKey={(result) => result.evidenceId}
+                  renderEvidence={(result, options) => (
+                    <MemoEvidenceCard
+                      result={result}
+                      memoItemByMemoId={memoItemByMemoId}
+                      onOpenMemoId={openMemoDetail}
+                      highlighted={options.cited}
+                      showTokens={options.allSection}
+                      keyPrefix={options.allSection ? "all" : "cited"}
+                      formatLabel={normalizeUiText}
+                    />
+                  )}
                 />
-                {citedEvidence.length > 0 ? (
-                  <CitationList
-                    title={tr("memo.aiCitedEvidence")}
-                    evidence={citedEvidence}
-                    memoItemByMemoId={memoItemByMemoId}
-                    onOpenMemoId={openMemoDetail}
-                    highlightedEvidenceIds={citedEvidenceIdSet}
-                    keyPrefix="cited"
-                    formatLabel={normalizeUiText}
-                  />
-                ) : null}
-                {labeledEvidence.length > 0 ? (
-                  <Pressable
-                    style={styles.qaAllToggle}
-                    onPress={() => setQaShowAllEvidence((prev) => !prev)}
-                  >
-                    <Text style={styles.qaAllToggleText}>
-                      {qaShowAllEvidence
-                        ? tr("memo.aiHideAllEvidence")
-                        : `${tr("memo.aiShowAllEvidence")} (${labeledEvidence.length})`}
-                    </Text>
-                  </Pressable>
-                ) : null}
-                {qaShowAllEvidence ? (
-                  <CitationList
-                    title={tr("memo.aiAllEvidence")}
-                    evidence={labeledEvidence}
-                    memoItemByMemoId={memoItemByMemoId}
-                    onOpenMemoId={openMemoDetail}
-                    highlightedEvidenceIds={citedEvidenceIdSet}
-                    showTokens
-                    keyPrefix="all"
-                    formatLabel={normalizeUiText}
-                  />
-                ) : null}
               </ScrollView>
             )}
           </View>
@@ -1467,59 +1400,6 @@ const styles = StyleSheet.create({
   },
   qaResultListContent: {
     flexGrow: 1,
-  },
-  qaAnswerPanel: {
-    borderWidth: 1,
-    borderColor: "#111827",
-    borderRadius: 10,
-    backgroundColor: "#ffffff",
-    padding: 10,
-    marginBottom: 8,
-  },
-  qaAnswerPanelError: {
-    borderColor: "#111827",
-    backgroundColor: "#ffffff",
-  },
-  qaAnswerLabel: {
-    alignSelf: "flex-start",
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#ffffff",
-    backgroundColor: "#111827",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    marginBottom: 6,
-  },
-  qaAnswerText: {
-    fontSize: 13,
-    color: "#111827",
-    lineHeight: 19,
-  },
-  qaAnswerScroll: {
-    maxHeight: 220,
-  },
-  qaAnswerScrollContent: {
-    paddingBottom: 2,
-  },
-  qaAnswerErrorText: {
-    color: "#b91c1c",
-  },
-  qaCitedSection: {
-    marginBottom: 8,
-  },
-  qaCitedTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 6,
-  },
-  qaAllToggle: {
-    marginBottom: 8,
-  },
-  qaAllToggleText: {
-    fontSize: 12,
-    color: "#2563eb",
   },
   qaResultItem: {
     borderWidth: 1,
