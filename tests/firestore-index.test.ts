@@ -9,7 +9,7 @@ const firebasePath = decodeURIComponent(
   new URL("../firebase.json", import.meta.url).pathname,
 );
 
-test("Firestore indexes support entity delta pagination by updatedAt and document id", () => {
+test("Firestore delta pagination relies on automatic updatedAt indexes", () => {
   const config = JSON.parse(readFileSync(indexPath, "utf8")) as {
     indexes: {
       collectionGroup: string;
@@ -25,11 +25,11 @@ test("Firestore indexes support entity delta pagination by updatedAt and documen
     const index = config.indexes.find(
       (entry) => entry.collectionGroup === entityCollection,
     );
-    assert.ok(index, `missing ${entityCollection} delta index`);
-    assert.deepEqual(index.fields, [
-      { fieldPath: "updatedAt", order: "ASCENDING" },
-      { fieldPath: "__name__", order: "ASCENDING" },
-    ]);
+    assert.equal(
+      index,
+      undefined,
+      `${entityCollection} must use Firestore's automatic single-field index`,
+    );
   }
 });
 
@@ -49,7 +49,6 @@ test("Firestore indexes support an owner's Guild history including unpublished p
   assert.deepEqual(ownerHistory.fields, [
     { fieldPath: "authorUserId", order: "ASCENDING" },
     { fieldPath: "updatedAt", order: "DESCENDING" },
-    { fieldPath: "__name__", order: "DESCENDING" },
   ]);
 });
 
