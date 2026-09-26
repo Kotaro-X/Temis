@@ -93,6 +93,7 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
   const exports: Record<string, any> = {};
   const sdk: Record<string, unknown> = {
     "node:crypto": require("node:crypto"),
+    "./directMessagesCore.cjs": { createDMService: () => ({ deleteAccountMessages: () => step("direct_messages") }) },
     "./accountDeletionCore.cjs": require("../functions/accountDeletionCore.cjs"),
     "firebase-admin/app": { initializeApp() {}, getApp: () => ({ options: { projectId: "test", credential: { getAccessToken: async () => ({ access_token: "NOT_REAL" }) } } }) },
     "firebase-admin/auth": { getAuth: () => auth },
@@ -149,7 +150,7 @@ test("actual callable: external outages leave Firebase success intact", async ()
   const result = await fixture.call(request);
   assert.equal(result.deleted, true);
   assert.deepEqual(Array.from(result.externalCleanupPending), ["revenuecat", "crashlytics"]);
-  assert.deepEqual(fixture.events.slice(0, 6), ["query", "invitations", "profile", "cloud_data", "subscription_access", "firebase_auth"]);
+  assert.deepEqual(fixture.events.slice(0, 7), ["query", "invitations", "direct_messages", "profile", "cloud_data", "subscription_access", "firebase_auth"]);
   assert.doesNotMatch(JSON.stringify(fixture.logs), /NOT_REAL|FAKE_DISPOSABLE_UID/);
 });
 
@@ -322,4 +323,12 @@ test("Guild cleanup handles own moderated posts without updating deleted documen
   assert.equal(store.records.get("guildPosts/theirs").moderation.hiddenByUserId, null);
   assert.equal(store.records.get("guildPosts/theirs").moderation.visibility, "hidden");
   assert.equal(store.records.get("guildPosts/untouched").moderation.hiddenByUserId, "other");
+});
+
+test("DM cleanup failure prevents profile and Auth deletion and reports a retryable stage", async () => {
+  const fixture = callableFixture({ failStage: "direct_messages" });
+  await assert.rejects(fixture.call(request), (error: any) => error.details.stage === "direct_messages");
+  assert.equal(fixture.events.includes("profile"), false);
+  assert.equal(fixture.events.includes("firebase_auth"), false);
+  assert.match(accountDeletionErrorMessage({ details: { stage: "direct_messages" } }), /DM履歴/);
 });

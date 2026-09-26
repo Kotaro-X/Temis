@@ -1,4 +1,4 @@
-export type AppRootScreen = "tasks" | "todo" | "settings" | "memos" | "projects" | "guild" | "guildAdmin";
+export type AppRootScreen = "tasks" | "todo" | "settings" | "memos" | "projects" | "guild" | "guildAdmin" | "dm";
 
 export type TaskWorkspaceScreenKey =
   | "today"

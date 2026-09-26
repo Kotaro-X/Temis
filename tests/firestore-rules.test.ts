@@ -444,6 +444,155 @@ if (!FIRESTORE_EMULATOR_HOST) {
     );
   });
 
+  const seedStaffCode = async (
+    code: string,
+    overrides: Record<string, unknown> = {},
+  ) => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection("inviteCodes").doc(code).set({
+        code,
+        active: true,
+        grantType: "staff_free",
+        offeringId: null,
+        packageId: null,
+        expiresAt: null,
+        maxRedemptions: 2,
+        redeemedCount: 0,
+        createdBy: "admin-user",
+        note: "staff invite",
+        updatedAt: Date.now(),
+        ...overrides,
+      });
+    });
+  };
+
+  const redeemStaffCode = (db: any, userId: string, code: string) =>
+    db.runTransaction(async (transaction: any) => {
+      const inviteRef = db.collection("inviteCodes").doc(code);
+      const accessRef = db.collection("subscriptionAccess").doc(userId);
+      const redemptionRef = inviteRef.collection("redemptions").doc(userId);
+      const [inviteSnapshot, accessSnapshot, redemptionSnapshot] = await Promise.all([
+        transaction.get(inviteRef),
+        transaction.get(accessRef),
+        transaction.get(redemptionRef),
+      ]);
+      const invite = inviteSnapshot.data();
+      const now = Date.now();
+      transaction.set(accessRef, {
+        userId,
+        active: true,
+        grantType: invite.grantType,
+        inviteCode: code,
+        offeringId: invite.offeringId,
+        packageId: invite.packageId,
+        expiresAt: invite.expiresAt,
+        grantedBy: invite.createdBy,
+        note: invite.note,
+        redeemedAt: accessSnapshot.exists && accessSnapshot.data().inviteCode === code
+          ? accessSnapshot.data().redeemedAt : now,
+        updatedAt: now,
+      }, { merge: true });
+      if (!redemptionSnapshot.exists) {
+        transaction.set(redemptionRef, {
+          userId,
+          inviteCode: code,
+          grantType: invite.grantType,
+          email: null,
+          name: null,
+          redeemedAt: now,
+        });
+        transaction.update(inviteRef, {
+          redeemedCount: invite.redeemedCount + 1,
+          updatedAt: now,
+        });
+      }
+    });
+
+  test("Google and Apple users redeem staff codes, including an idempotent repeat", async () => {
+    await seedStaffCode("STAFF-TWO");
+    const googleDb = env.authenticatedContext("google-staff", createGoogleToken()).firestore();
+    const appleDb = env.authenticatedContext("apple-staff", createAppleToken()).firestore();
+
+    await assertSucceeds(redeemStaffCode(googleDb, "google-staff", "STAFF-TWO"));
+    await assertSucceeds(redeemStaffCode(appleDb, "apple-staff", "STAFF-TWO"));
+    await assertSucceeds(redeemStaffCode(googleDb, "google-staff", "STAFF-TWO"));
+
+    const code = await assertSucceeds(googleDb.collection("inviteCodes").doc("STAFF-TWO").get());
+    assert.equal(code.data()?.redeemedCount, 2);
+    for (const [db, userId] of [[googleDb, "google-staff"], [appleDb, "apple-staff"]] as const) {
+      const grant = await assertSucceeds(db.collection("subscriptionAccess").doc(userId).get());
+      assert.equal(grant.data()?.grantType, "staff_free");
+      assert.equal(grant.data()?.inviteCode, "STAFF-TWO");
+    }
+  });
+
+  test("staff codes reject partial writes, exhausted or expired codes, and unsupported accounts", async () => {
+    await seedStaffCode("STAFF-LIMIT", { maxRedemptions: 1 });
+    await seedStaffCode("STAFF-EXPIRED", { expiresAt: Date.now() - 60_000 });
+    await seedStaffCode("STAFF-INACTIVE", { active: false });
+    await seedStaffCode("STAFF-PROVIDER");
+    const googleDb = env.authenticatedContext("google-staff", createGoogleToken()).firestore();
+    const appleDb = env.authenticatedContext("apple-staff", createAppleToken()).firestore();
+    const passwordDb = env.authenticatedContext("password-staff", createPasswordToken()).firestore();
+
+    await assertFails(googleDb.collection("subscriptionAccess").doc("google-staff").set({
+      userId: "google-staff", active: true, grantType: "staff_free", inviteCode: "STAFF-LIMIT",
+      offeringId: null, packageId: null, expiresAt: null, grantedBy: "admin-user",
+      note: "staff invite", redeemedAt: Date.now(), updatedAt: Date.now(),
+    }));
+    await assertFails(googleDb.collection("subscriptionAccess").doc("google-staff").set({
+      userId: "google-staff", active: true, grantType: "staff_free", inviteCode: "STAFF-UNKNOWN",
+      offeringId: null, packageId: null, expiresAt: null, grantedBy: "admin-user",
+      note: "staff invite", redeemedAt: Date.now(), updatedAt: Date.now(),
+    }));
+    await assertSucceeds(redeemStaffCode(googleDb, "google-staff", "STAFF-LIMIT"));
+    await assertFails(redeemStaffCode(appleDb, "apple-staff", "STAFF-LIMIT"));
+    await assertFails(redeemStaffCode(appleDb, "apple-staff", "STAFF-EXPIRED"));
+    await assertFails(redeemStaffCode(appleDb, "apple-staff", "STAFF-INACTIVE"));
+    await assertFails(redeemStaffCode(passwordDb, "password-staff", "STAFF-PROVIDER"));
+  });
+
+  test("a direct or revoked staff grant cannot be replaced by a staff code", async () => {
+    await seedStaffCode("STAFF-KEEP");
+    const aliceDb = env.authenticatedContext("alice", createAppleToken()).firestore();
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection("subscriptionAccess").doc("alice").set({
+        userId: "alice", active: true, grantType: "staff_free", inviteCode: null,
+        offeringId: null, packageId: null, expiresAt: null, grantedBy: "admin-user",
+        note: "direct grant", redeemedAt: null, updatedAt: Date.now(),
+      });
+    });
+    await assertFails(redeemStaffCode(aliceDb, "alice", "STAFF-KEEP"));
+    const original = await assertSucceeds(aliceDb.collection("subscriptionAccess").doc("alice").get());
+    assert.equal(original.data()?.inviteCode, null);
+
+    const bobDb = env.authenticatedContext("bob", createGoogleToken()).firestore();
+    await assertSucceeds(redeemStaffCode(bobDb, "bob", "STAFF-KEEP"));
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection("subscriptionAccess").doc("bob").update({ active: false });
+    });
+    await assertFails(redeemStaffCode(bobDb, "bob", "STAFF-KEEP"));
+  });
+
+  test("expired staff grants cannot read Commons moderation reports", async () => {
+    const staffDb = env.authenticatedContext("staff", createGoogleToken()).firestore();
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.collection("subscriptionAccess").doc("staff").set({
+        userId: "staff", active: true, grantType: "staff_free", inviteCode: null,
+        offeringId: null, packageId: null, expiresAt: Date.now() + 60_000,
+        grantedBy: "admin-user", note: null, redeemedAt: null, updatedAt: Date.now(),
+      });
+      await db.collection("guildReports").doc("report-1").set({ reporterUserId: "reporter" });
+    });
+    await assertSucceeds(staffDb.collection("guildReports").doc("report-1").get());
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection("subscriptionAccess").doc("staff")
+        .update({ expiresAt: Date.now() - 60_000 });
+    });
+    await assertFails(staffDb.collection("guildReports").doc("report-1").get());
+  });
+
   test("Apple users can redeem invite_free codes only through the expected transaction shape", async () => {
     const now = 1_783_292_400_000;
 
@@ -583,6 +732,45 @@ if (!FIRESTORE_EMULATOR_HOST) {
     );
   });
 
+  test("Commons inbox scopes invitations to the recipient and accepts membership atomically", async () => {
+    const aliceDb = env.authenticatedContext("alice", createGoogleToken()).firestore();
+    const bobDb = env.authenticatedContext("bob", createAppleToken()).firestore();
+    const carolDb = env.authenticatedContext("carol", createGoogleToken()).firestore();
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.collection("projects").doc("commons-project").set({
+        id: "commons-project", name: "Commons project", ownerUserId: "alice", visibility: "private", invitationPolicy: "owner_only",
+      });
+      await db.collection("projects").doc("commons-project").collection("members").doc("alice").set({ userId: "alice", role: "owner" });
+    });
+    const invitation = {
+      id: "scout-1", projectId: "commons-project", projectName: "Commons project",
+      inviterUserId: "alice", inviteeUserId: "bob", role: "member", status: "pending",
+      createdAt: 1, updatedAt: 1, expiresAt: null,
+    };
+    await assertSucceeds(aliceDb.collection("projectInvitations").doc(invitation.id).set(invitation));
+    const inbox = await assertSucceeds(bobDb.collection("projectInvitations").where("inviteeUserId", "==", "bob").get());
+    assert.equal(inbox.docs.length, 1);
+    assert.equal(inbox.docs[0].data().projectName, "Commons project");
+    await assertFails(carolDb.collection("projectInvitations").where("inviteeUserId", "==", "bob").get());
+    await assertFails(bobDb.collection("projects").doc("commons-project").get());
+    await assertSucceeds(bobDb.runTransaction(async (transaction) => {
+      const ref = bobDb.collection("projectInvitations").doc(invitation.id);
+      const snapshot = await transaction.get(ref);
+      transaction.set(ref, { ...snapshot.data(), status: "accepted", updatedAt: 2 });
+      transaction.set(bobDb.collection("projects").doc("commons-project").collection("members").doc("bob"), {
+        userId: "bob", role: "member", invitationId: invitation.id, joinedAt: 2, updatedAt: 2,
+      });
+      transaction.set(bobDb.collection("projectMemberships").doc("commons-project__bob"), {
+        id: "commons-project__bob", projectId: "commons-project", userId: "bob", role: "member", updatedAt: 2,
+      });
+    }));
+    await assertSucceeds(bobDb.collection("projects").doc("commons-project").get());
+    await assertSucceeds(bobDb.collection("projectMemberships").doc("commons-project__bob").get());
+    await assertSucceeds(aliceDb.collection("projectInvitations").doc("scout-2").set({ ...invitation, id: "scout-2" }));
+    await assertSucceeds(bobDb.collection("projectInvitations").doc("scout-2").update({ status: "declined", updatedAt: 2 }));
+  });
+
   test("Guild posts are public only while visible, owner-editable, and staff-moderated", async () => {
     const now = 1_783_292_400_000;
     const aliceDb = env.authenticatedContext("guild-alice", createAppleToken()).firestore();
@@ -610,12 +798,13 @@ if (!FIRESTORE_EMULATOR_HOST) {
       bobDb.collection("connections").where("userIds", "array-contains", "guild-bob").get(),
     );
     await assertSucceeds(bobDb.collection("guildPosts").doc(post.id).get());
-    await assertSucceeds(bobDb.collection("guildPosts")
+    const visibleFeed = await assertSucceeds(bobDb.collection("guildPosts")
       .where("status", "==", "published")
       .where("moderation.visibility", "==", "visible")
       .orderBy("publishedAt", "desc")
       .orderBy("__name__", "desc")
       .get());
+    assert.equal(visibleFeed.docs.length, 1);
     await assertFails(bobDb.collection("guildPosts").doc(post.id).update({ body: "改ざん" }));
     await assertFails(bobDb.collection("guildPosts").doc(post.id).update({ status: "unpublished", publishedAt: null }));
     await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).update({
@@ -632,6 +821,13 @@ if (!FIRESTORE_EMULATOR_HOST) {
         .get(),
     );
     await assertFails(bobDb.collection("guildPosts").doc(post.id).get());
+    const feedAfterUnpublish = await assertSucceeds(bobDb.collection("guildPosts")
+      .where("status", "==", "published")
+      .where("moderation.visibility", "==", "visible")
+      .orderBy("publishedAt", "desc")
+      .orderBy("__name__", "desc")
+      .get());
+    assert.equal(feedAfterUnpublish.docs.length, 0);
     await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).update({
       status: "published",
       publishedAt: now + 2,
@@ -658,4 +854,133 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await assertFails(aliceDb.collection("guildPostAIIndex").doc("post-1").get());
     await assertFails(aliceDb.collection("guildPostAIIndex").doc("post-2").set({ postId: "post-2" }));
   });
+  test("DM connection rules reject self-approval, forged membership and unblock by the blocked user", async () => {
+    const a = env.authenticatedContext('dm-a', createAppleToken()).firestore();
+    const b = env.authenticatedContext('dm-b', createGoogleToken()).firestore();
+    const ref = a.collection('connections').doc('dm-a__dm-b');
+    const data = { id: 'dm-a__dm-b', userIds: ['dm-a', 'dm-b'], requesterUserId: 'dm-a', recipientUserId: 'dm-b', status: 'pending', createdAt: 1, updatedAt: 1 };
+    await assertFails(ref.set({ ...data, recipientUserId: 'dm-a' }));
+    await assertFails(ref.set({ ...data, userIds: ['dm-a', 'dm-b', 'dm-c'] }));
+    await assertSucceeds(ref.set(data));
+    await assertFails(ref.update({ status: 'connected', recipientUserId: 'dm-a' }));
+    await assertSucceeds(b.collection('connections').doc(ref.id).update({ status: 'connected' }));
+    await assertSucceeds(ref.update({ status: 'blocked', blockedByUserId: 'dm-a' }));
+    await assertFails(b.collection('connections').doc(ref.id).delete());
+    await assertFails(b.collection('connections').doc(ref.id).update({ status: 'blocked', blockedByUserId: 'dm-b' }));
+    await assertSucceeds(ref.delete());
+    // Older installed clients replace request metadata when blocking. Preserve
+    // this operation without allowing changed participants or forged acceptance.
+    await assertSucceeds(ref.set(data));
+    const bobRef = b.collection('connections').doc(ref.id);
+    await assertSucceeds(bobRef.set({ ...data, requesterUserId: 'dm-b', recipientUserId: 'dm-a', status: 'blocked', blockedByUserId: 'dm-b', createdAt: 2, updatedAt: 2 }));
+    await assertFails(ref.delete());
+    await assertSucceeds(bobRef.delete());
+  });
+
+  test("DM Rules allow free participants to read history but reject all client writes and third parties", async () => {
+    const a = env.authenticatedContext('dm-a', createAppleToken()).firestore();
+    const b = env.authenticatedContext('dm-b', createGoogleToken()).firestore();
+    const c = env.authenticatedContext('dm-c', createGoogleToken()).firestore();
+    const anonymous = env.unauthenticatedContext().firestore();
+    const threadId = 'a'.repeat(64);
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.collection('dmConversations').doc(threadId).set({ userIds: ['dm-a', 'dm-b'], updatedAt: 1 });
+      await db.collection('dmConversations').doc(threadId).collection('messages').doc('message').set({ text: 'private', sequence: 1 });
+      await db.collection('dmAccounts').doc('dm-a').set({ lastSentAt: 1 });
+    });
+    for (const db of [a, b]) {
+      await assertSucceeds(db.collection('dmConversations').where('userIds', 'array-contains', db === a ? 'dm-a' : 'dm-b').orderBy('updatedAt', 'desc').get());
+      // No connection exists: retained history is still readable.
+      await assertSucceeds(db.collection('dmConversations').doc(threadId).collection('messages').orderBy('sequence', 'desc').limit(50).get());
+      await assertFails(db.collection('dmConversations').doc(threadId).update({ userIds: ['dm-c'] }));
+      await assertFails(db.collection('dmConversations').doc(threadId).collection('messages').doc('new').set({ text: 'forged' }));
+      await assertFails(db.collection('dmDevices').doc('token').get());
+      await assertFails(db.collection('dmNotificationJobs').doc('job').set({}));
+    }
+    await assertFails(c.collection('dmConversations').doc(threadId).get());
+    await assertFails(c.collection('dmConversations').doc(threadId).collection('messages').get());
+    await assertFails(anonymous.collection('dmConversations').doc(threadId).get());
+    await env.withSecurityRulesDisabled(async (context) => { await context.firestore().collection('dmAccounts').doc('dm-a').set({ deleting: true }); });
+    await assertFails(a.collection('dmConversations').doc(threadId).get());
+    await assertSucceeds(b.collection('dmConversations').doc(threadId).get());
+  });
+
+  test("DM server transactions, push jobs, read races and account deletion run against Firestore", async () => {
+    const { createRequire } = await import('node:module');
+    const require = createRequire(new URL('../functions/directMessagesCore.cjs', import.meta.url).href);
+    const { initializeApp, deleteApp } = require('firebase-admin/app');
+    const { getFirestore } = require('firebase-admin/firestore');
+    const { createDMService, hash } = require('../functions/directMessagesCore.cjs');
+    const { processNotificationJob } = require('../functions/directMessagesNotifications.cjs');
+    const app = initializeApp({ projectId: 'demo-wememo' }, 'dm-integration');
+    const db = getFirestore(app);
+    const service = createDMService(db);
+    const a = 'dm-a', b = 'dm-b';
+    try {
+      for (const uid of [a, b]) await db.doc(`profiles/${uid}`).set({ displayName: uid, profileVisibility: 'public' });
+      const conn = db.doc(`connections/${a}__${b}`);
+      const input = { recipientUserId: b, clientMessageId: 'one', text: 'Alice private text' };
+      await assert.rejects(service.send(a, input), { code: 'permission-denied' });
+      await conn.set({ userIds: [a, b], requesterUserId: a, recipientUserId: b, status: 'connected' });
+      const results = await Promise.all([service.send(a, input), service.send(a, input), service.send(b, { recipientUserId: a, clientMessageId: 'reply', text: 'Bob retained text' })]);
+      assert.equal(results[0].messageId, results[1].messageId);
+      assert.equal(results[0].conversationId, results[2].conversationId);
+      const thread = db.doc(`dmConversations/${results[0].conversationId}`);
+      assert.equal((await thread.collection('messages').get()).size, 2);
+      assert.equal((await thread.get()).data().sequence, 2);
+      await assert.rejects(service.send(a, { ...input, text: 'changed' }), { code: 'already-exists' });
+      await assert.rejects(service.markRead('dm-outsider', { conversationId: thread.id, sequence: 2 }), { code: 'permission-denied' });
+      await service.markRead(b, { conversationId: thread.id, sequence: results[0].sequence });
+      await db.doc(`dmAccounts/${a}`).set({ lastSentAt: 0 });
+      const third = await service.send(a, { ...input, clientMessageId: 'two', text: 'unread message' });
+      await service.markRead(b, { conversationId: thread.id, sequence: results[0].sequence });
+      const unreadThread = (await thread.get()).data();
+      assert.equal(unreadThread.receivedCounts[b] - unreadThread.readCounts[b], 1);
+      const token = 'ExpoPushToken[test_device]';
+      await service.setDevice(b, { installationId: 'install-one', platform: 'ios', enabled: true, token });
+      const job = db.doc(`dmNotificationJobs/${third.messageId}`);
+      let sends = 0;
+      const expo = async (endpoint: string, payload: any) => {
+        if (endpoint === 'send') {
+          sends += 1;
+          assert.equal(payload[0].title, a);
+          assert.equal(payload[0].body, 'unread message');
+          assert.equal(payload[0].data.recipientUserId, b);
+          return [{ status: 'ok', id: 'receipt-one' }];
+        }
+        return { 'receipt-one': { status: 'error', details: { error: 'DeviceNotRegistered' } } };
+      };
+      await Promise.all([processNotificationJob(db, job, expo), processNotificationJob(db, job, expo)]);
+      assert.equal(sends, 1);
+      await job.update({ nextAttemptAt: 0 });
+      await processNotificationJob(db, job, expo);
+      assert.equal((await db.doc(`dmDevices/${hash('install-one')}`).get()).exists, false);
+      await conn.update({ status: 'blocked', blockedByUserId: b });
+      await assert.rejects(service.send(a, { ...input, clientMessageId: 'blocked' }), { code: 'permission-denied' });
+      await service.markRead(b, { conversationId: thread.id, sequence: third.sequence });
+      await service.setDevice(a, { installationId: 'install-two', platform: 'ios', enabled: true, token });
+      await service.setDevice(b, { installationId: 'install-two', platform: 'ios', enabled: true, token });
+      await service.setDevice(a, { installationId: 'install-two', platform: 'ios', enabled: false });
+      assert.equal((await db.doc(`dmDevices/${hash('install-two')}`).get()).data().userId, b);
+      await service.setDevice(a, { installationId: 'install-three', platform: 'ios', enabled: true, token });
+      assert.equal((await db.doc(`dmDevices/${hash('install-two')}`).get()).exists, false);
+      assert.equal((await db.collection('dmDevices').where('token', '==', token).get()).size, 1);
+      await service.setDevice(b, { installationId: 'install-three', platform: 'ios', enabled: false, resetInstallation: true });
+      assert.equal((await db.doc(`dmDevices/${hash('install-three')}`).get()).exists, false);
+      await service.deleteAccountMessages(a);
+      await service.deleteAccountMessages(a);
+      const messages = (await thread.collection('messages').get()).docs.map((doc: any) => doc.data());
+      assert.equal(messages.filter((message: any) => message.senderUserId === a).every((message: any) => message.deleted && message.text === ''), true);
+      assert.equal(messages.find((message: any) => message.senderUserId === b).text, 'Bob retained text');
+      const cleaned = (await thread.get()).data();
+      assert.equal(cleaned.memberProfiles[a].displayName, '削除されたユーザー');
+      assert.equal(cleaned.lastMessage.text, '削除されたメッセージ');
+      assert.equal(cleaned.closed, true);
+      assert.equal((await db.collection('dmNotificationJobs').where('senderUserId', '==', a).get()).size, 0);
+      await conn.update({ status: 'connected' });
+      await assert.rejects(service.send(b, { recipientUserId: a, clientMessageId: 'after-delete', text: 'no' }), { code: 'failed-precondition' });
+    } finally { await deleteApp(app); }
+  });
+
 }

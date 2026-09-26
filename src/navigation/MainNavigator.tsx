@@ -12,6 +12,7 @@ import TodoWorkspaceShell from "../components/todo-shell/TodoWorkspaceShell";
 import ProjectsScreen from "../screens/ProjectsScreen";
 import ProjectWorkspaceScreen from "../screens/ProjectWorkspaceScreen";
 import GuildScreen from "../screens/GuildScreen";
+import DirectMessagesScreen from "../screens/DirectMessagesScreen";
 import GuildAdminScreen from "../screens/GuildAdminScreen";
 import { useAppUI } from "../context/AppUIContext";
 import { useSubscription } from "../context/SubscriptionContext";
@@ -37,8 +38,8 @@ const AppContent = () => {
   } = useAppUI();
   const { isCloudSyncEntitled, accessGrant } = useSubscription();
   const hasGuildAdminAccess = hasStaffFreeAccess(accessGrant);
-  const activeTab: AppChromeTab =
-    rootScreen === "memos" ? "memos" : rootScreen === "todo" ? "todo" : rootScreen === "projects" ? "projects" : rootScreen === "guild" ? "guild" : "tasks";
+  const activeTab: AppChromeTab | null =
+    rootScreen === "dm" ? null : rootScreen === "memos" ? "memos" : rootScreen === "todo" ? "todo" : rootScreen === "projects" ? "projects" : rootScreen === "guild" ? "guild" : "tasks";
   const settingsContentPaddingTop = insets.top + 16;
   // Private workspace headers start at the safe-area edge. Keep project
   // workspace headers on the exact same baseline rather than using Settings'
@@ -158,6 +159,7 @@ const AppContent = () => {
                       contentPaddingTop={workspaceContentPaddingTop}
                       onOpenMenu={openMenu}
                     />
+                    {rootScreen === "dm" ? <DirectMessagesScreen contentPaddingTop={workspaceContentPaddingTop} /> : null}
                     <GuildAdminScreen
                       visible={hasGuildAdminAccess && workspaceScope === "private" && rootScreen === "guildAdmin"}
                       contentPaddingTop={workspaceContentPaddingTop}

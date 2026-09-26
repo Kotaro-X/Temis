@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,8 +17,11 @@ import {
   View,
 } from "react-native";
 
+import CommonsRequestsButton from "../components/guild/CommonsRequestsButton";
 import GuildPostComposerModal from "../components/guild/GuildPostComposerModal";
 import AIAnswerEvidencePanel from "../components/ai/AIAnswerEvidencePanel";
+import TemisAIDock from "../components/ai/TemisAIDock";
+import MemoTextEditor from "../components/inputs/MemoTextEditor";
 import TokenChips from "../components/TokenChips";
 import { useCollaboration } from "../context/CollaborationContext";
 import { useSubscription } from "../context/SubscriptionContext";
@@ -73,10 +76,22 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
   const [feed, setFeed] = useState<GuildView>("recommended");
   const [search, setSearch] = useState("");
   const [aiQuery, setAIQuery] = useState("");
+  const [aiOpen, setAIOpen] = useState(false);
+  const [headerBottomY, setHeaderBottomY] = useState(0);
   const [aiSearching, setAISearching] = useState(false);
   const [aiResult, setAIResult] = useState<GuildAISearchResult | null>(null);
   const [aiError, setAIError] = useState<string | null>(null);
   const [showAllAIEvidence, setShowAllAIEvidence] = useState(false);
+  const aiRequestRef = useRef(0);
+  useEffect(() => {
+    aiRequestRef.current += 1;
+    setAIResult(null);
+    setAIError(null);
+    setAISearching(false);
+    setShowAllAIEvidence(false);
+    setAIOpen(false);
+    return () => { aiRequestRef.current += 1; };
+  }, [profile?.userId, isCloudSyncEntitled]);
   const [posts, setPosts] = useState<GuildDisplayPost[]>([]);
   const [cursor, setCursor] = useState<{ publishedAt: number; id: string } | OwnedGuildFeedCursor | null>(null);
   const [loading, setLoading] = useState(false);
@@ -104,6 +119,12 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setLoadError(null);
+    if (feed !== "mine") {
+      // Public posts must not remain visible when a server refresh cannot
+      // confirm that they are still published.
+      setPosts([]);
+      setCursor(null);
+    }
     try {
       const page = feed === "mine"
         ? await listMyGuildPosts()
@@ -161,17 +182,30 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
   };
 
   const openDetail = async (post: GuildDisplayPost) => {
+    const isOwnedPost = post.authorUserId === profile?.userId;
     setSelectedPost(post);
     setDetailLoading(true);
     try {
-      const detail = post.authorUserId === profile?.userId
+      const detail = isOwnedPost
         ? await getOwnedGuildPost(post.id)
         : await getGuildPost(post.id);
+      if (!detail) throw new Error("この投稿は現在表示できません。");
       setSelectedPost(detail);
-      setTitleDraft(detail?.title ?? detail?.body.split("\n").find(Boolean) ?? "");
-      setBodyDraft(detail?.body ?? "");
+      setTitleDraft(detail.title ?? detail.body.split("\n").find(Boolean) ?? "");
+      setBodyDraft(detail.body);
       setEditing(false);
-    } catch { setSelectedPost(null); }
+    } catch (cause) {
+      if (!isOwnedPost) {
+        setPosts((current) => current.filter((item) => item.id !== post.id));
+      }
+      setSelectedPost(null);
+      Alert.alert(
+        "投稿を開けません",
+        isOwnedPost && cause instanceof Error
+          ? cause.message
+          : "この投稿は現在表示できません。",
+      );
+    }
     finally { setDetailLoading(false); }
   };
 
@@ -199,7 +233,7 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
   const handleVisibility = async () => {
     if (!selectedPost || !("source" in selectedPost) || !profile || saving) return;
     if (selectedPost.status === "unpublished") {
-      Alert.alert("再公開しますか？", "ギルド側のタイトルと本文で元メモを上書きしてから再公開します。", [
+      Alert.alert("再公開しますか？", "Commons側のタイトルと本文で元メモを上書きしてから再公開します。", [
         { text: "キャンセル", style: "cancel" },
         { text: "再公開する", onPress: () => {
           setSaving(true);
@@ -288,23 +322,26 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
     const question = aiQuery.trim();
     if (!question || aiSearching) return;
     if (!isCloudSyncEntitled) {
-      Alert.alert("Temis Plus限定", "ギルドAI検索はTemis Plusで利用できます。");
+      Alert.alert("Temis Plus限定", "CommonsのTemis AIはTemis Plusで利用できます。");
       return;
     }
+    const requestId = ++aiRequestRef.current;
     setAISearching(true);
     setAIError(null);
     setAIResult(null);
     setShowAllAIEvidence(false);
     try {
-      setAIResult(await searchGuildPostsWithAI(question));
+      const result = await searchGuildPostsWithAI(question);
+      if (requestId === aiRequestRef.current) setAIResult(result);
     } catch (cause) {
+      if (requestId !== aiRequestRef.current) return;
       setAIError(
         cause instanceof Error
           ? cause.message
-          : "AI検索を実行できませんでした。しばらくしてからもう一度お試しください。",
+          : "Temis AIの検索を実行できませんでした。しばらくしてからもう一度お試しください。",
       );
     } finally {
-      setAISearching(false);
+      if (requestId === aiRequestRef.current) setAISearching(false);
     }
   };
 
@@ -343,7 +380,7 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
     return <View style={[styles.screen, styles.center, { paddingTop: contentPaddingTop }]}><ActivityIndicator color="#2563eb" /></View>;
   }
   if (status === "signed_out") {
-    return <View style={[styles.screen, { paddingTop: contentPaddingTop }]}><Text style={styles.signIn}>ギルドを利用するにはアカウントにログインしてください。</Text></View>;
+    return <View style={[styles.screen, { paddingTop: contentPaddingTop }]}><Text style={styles.signIn}>Commonsを利用するにはアカウントにログインしてください。</Text></View>;
   }
   if (status === "error" || !profile) {
     return <View style={[styles.screen, styles.center, { paddingTop: contentPaddingTop }]}><Text style={styles.error}>{error ?? "プロフィールを読み込めませんでした。"}</Text><Pressable onPress={() => void refresh()}><Text style={styles.retry}>再試行</Text></Pressable></View>;
@@ -351,7 +388,10 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
 
   return (
     <View style={[styles.screen, { paddingTop: contentPaddingTop }]}> 
-      <View style={styles.header}>
+      <View style={styles.header} onLayout={(event) => {
+        const layout = event.nativeEvent.layout;
+        setHeaderBottomY(layout.y + layout.height);
+      }}>
         <View style={styles.headerSide}>
           <Pressable
             accessibilityRole="button"
@@ -362,8 +402,9 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
             <Ionicons name="menu" size={20} color="#111827" />
           </Pressable>
         </View>
-        <Text style={styles.headerTitle}>ギルド</Text>
+        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.headerTitle}>Commons</Text>
         <View style={styles.headerSideRight}>
+          <CommonsRequestsButton key={profile.userId} />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="投稿を作成"
@@ -376,56 +417,48 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
         </View>
       </View>
       <ScrollView horizontal style={styles.feedTabsViewport} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedTabs}>{FEEDS.map((item) => <Pressable key={item.key} style={[styles.feedTab, feed === item.key && styles.feedTabActive]} onPress={() => setFeed(item.key)}><Text style={[styles.feedTabText, feed === item.key && styles.feedTabTextActive]}>{item.label}</Text></Pressable>)}</ScrollView>
-      <View style={styles.aiSearchPanel}>
-        <View style={styles.aiTitleRow}>
-          <Text style={styles.aiTitle}>✦ ギルドAI検索</Text>
-          {!isCloudSyncEntitled ? <Text style={styles.plusBadge}>Temis Plus</Text> : null}
-        </View>
-        <Text style={styles.aiCaption}>質問と候補になった公開投稿本文をOpenAIへ送信し、根拠と回答を探します。</Text>
-        <View style={styles.aiInputRow}>
-          <TextInput
-            value={aiQuery}
-            onChangeText={setAIQuery}
-            style={styles.aiInput}
-            placeholder="ギルドの投稿に質問"
-            returnKeyType="search"
-            onSubmitEditing={() => void handleAISearch()}
-          />
-          <Pressable
-            style={[styles.aiButton, (!aiQuery.trim() || aiSearching) && styles.aiButtonDisabled]}
-            disabled={!aiQuery.trim() || aiSearching}
-            onPress={() => void handleAISearch()}
-          >
-            {aiSearching ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.aiButtonText}>検索</Text>}
-          </Pressable>
-        </View>
-        {aiError ? <Text style={styles.aiError}>{aiError}</Text> : null}
-        {aiResult ? <ScrollView style={styles.aiResultScroll} nestedScrollEnabled showsVerticalScrollIndicator>
-          <AIAnswerEvidencePanel
-          answerTitle="AI回答"
-          answerText={aiResult.answerText}
-          citedTitle="参照した根拠"
-          allTitle="全根拠"
-          showAllLabel="全根拠を表示"
-          hideAllLabel="全根拠を閉じる"
-          citedEvidence={citedAIEvidence}
-          allEvidence={aiResult.evidencePosts}
-          showAll={showAllAIEvidence}
-          onToggleAll={() => setShowAllAIEvidence((current) => !current)}
-          getEvidenceKey={(post) => post.id}
-          renderEvidence={(post, options) => <Pressable
-            style={[styles.aiEvidenceCard, options.cited ? styles.aiEvidenceCardCited : null]}
-            onPress={() => void openAIEvidence(post)}
-          >
-            <Text style={styles.aiEvidenceTitle} numberOfLines={2}>{post.title?.trim() || post.body.split("\n").find(Boolean) || "無題"}</Text>
-            <Text style={styles.aiEvidenceBody} numberOfLines={3}>{post.body}</Text>
-            <Text style={styles.aiEvidenceMeta}>{post.authorDisplayName}・{formatDate(post.publishedAt)}</Text>
-          </Pressable>}
-          />
-        </ScrollView> : null}
-      </View>
       <TextInput value={search} onChangeText={setSearch} style={styles.search} placeholder="投稿・#タグ・((Wikiリンク)) を検索" />
       {loading ? <View style={styles.center}><ActivityIndicator color="#2563eb" /></View> : loadError && !posts.length ? <View style={styles.center}><Text style={styles.error}>{loadError}</Text><Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>再試行</Text></Pressable></View> : <FlatList style={styles.feedList} data={visiblePosts} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadFirst(true)} />} onEndReached={() => void loadMore()} onEndReachedThreshold={0.6} contentContainerStyle={visiblePosts.length ? styles.list : styles.emptyList} renderItem={({ item }) => <Pressable style={styles.card} onPress={() => void openDetail(item)}><View style={styles.cardMeta}><Text style={styles.author}>{item.authorDisplayName}</Text><Text style={styles.date}>{formatDate(item.publishedAt ?? item.updatedAt)}</Text></View>{feed === "mine" ? <Text style={[styles.statusBadge, item.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>{item.status === "published" ? "公開中" : "非公開"}</Text> : null}<Text style={styles.cardTitle} numberOfLines={2}>{item.title?.trim() || item.body.split("\n").find(Boolean) || "無題"}</Text><Text style={styles.body} numberOfLines={5}>{item.body}</Text><View style={styles.tagRow}>{item.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>{item.projectId ? <Text style={styles.projectLabel}>関連プロジェクト</Text> : null}</Pressable>} ListEmptyComponent={<View style={styles.center}><Text style={styles.empty}>{feed === "mine" ? "自分の投稿はまだありません" : tags.length ? "タグに合う投稿がまだありません" : "公開投稿はまだありません"}</Text><Pressable onPress={() => setComposerOpen(true)}><Text style={styles.retry}>最初の投稿を作成</Text></Pressable></View>} ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} color="#2563eb" /> : loadError && posts.length ? <Pressable style={styles.footer} onPress={() => void loadMore()}><Text style={styles.retry}>追加読み込みを再試行</Text></Pressable> : null} />}
+      <TemisAIDock
+        expanded={aiOpen}
+        expandedTop={headerBottomY > 0 ? headerBottomY : undefined}
+        query={aiQuery}
+        placeholder="Commonsの投稿に質問"
+        searchLabel={aiSearching ? "検索中" : "検索"}
+        searchDisabled={aiSearching}
+        onChangeQuery={setAIQuery}
+        onSearch={() => void handleAISearch()}
+        onToggle={() => setAIOpen((current) => !current)}
+        badge={!isCloudSyncEntitled ? <Text style={styles.plusBadge}>Temis Plus</Text> : null}
+        inputProps={{ onFocus: () => setAIOpen(true) }}
+      >
+        {aiSearching ? <Text style={styles.aiHelperText}>根拠を検索中...</Text> : null}
+        {aiError ? <Text style={styles.aiError}>{aiError}</Text> : null}
+        {aiResult ? <ScrollView style={styles.aiResultScroll} nestedScrollEnabled showsVerticalScrollIndicator>
+            <AIAnswerEvidencePanel
+              answerTitle="Temis AI"
+              answerText={aiResult.answerText}
+              citedTitle="参照した根拠"
+              allTitle="全根拠"
+              showAllLabel="全根拠を表示"
+              hideAllLabel="全根拠を閉じる"
+              citedEvidence={citedAIEvidence}
+              allEvidence={aiResult.evidencePosts}
+              showAll={showAllAIEvidence}
+              onToggleAll={() => setShowAllAIEvidence((current) => !current)}
+              getEvidenceKey={(post) => post.id}
+              renderEvidence={(post, options) => <Pressable
+                style={[styles.aiEvidenceCard, options.cited ? styles.aiEvidenceCardCited : null]}
+                onPress={() => void openAIEvidence(post)}
+              >
+                <Text style={styles.aiEvidenceTitle} numberOfLines={2}>{post.title?.trim() || post.body.split("\n").find(Boolean) || "無題"}</Text>
+                <Text style={styles.aiEvidenceBody} numberOfLines={3}>{post.snippetText ?? post.body}</Text>
+                {post.linkPath?.length ? <Text style={styles.aiEvidenceMeta}>{post.linkPath.join(" → ")}経由</Text> : null}
+                <Text style={styles.aiEvidenceMeta}>{post.authorDisplayName}・{formatDate(post.publishedAt)}</Text>
+              </Pressable>}
+            />
+          </ScrollView> : null}
+      </TemisAIDock>
       <GuildPostComposerModal visible={composerOpen} onClose={() => setComposerOpen(false)} onPublished={(post) => setPosts((current) => [post, ...current])} />
       <Modal visible={selectedPost !== null} animationType="slide" onRequestClose={() => setSelectedPost(null)}>
         <SafeAreaView style={styles.detail}>
@@ -438,13 +471,17 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
           {detailLoading ? <ActivityIndicator color="#2563eb" /> : selectedPost ? <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
             <Text style={styles.detailTitle}>{selectedPost.title?.trim() || selectedPost.body.split("\n").find(Boolean) || "無題"}</Text>
             <Text style={styles.date}>{formatDate(selectedPost.publishedAt ?? selectedPost.updatedAt)}</Text>
-            <Text style={[styles.scopeBadge, selectedPost.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>ギルド・{selectedPost.status === "published" ? "公開" : "非公開"}</Text>
+            <Text style={[styles.scopeBadge, selectedPost.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>Commons・{selectedPost.status === "published" ? "公開" : "非公開"}</Text>
             <Text style={styles.author}>投稿者: {selectedPost.authorDisplayName}</Text>
             {editing ? <>
               <Text style={styles.fieldLabel}>タイトル</Text>
               <TextInput style={styles.detailInput} value={titleDraft} onChangeText={setTitleDraft} />
               <Text style={styles.fieldLabel}>本文</Text>
-              <TextInput style={[styles.detailInput, styles.detailBodyInput]} value={bodyDraft} onChangeText={setBodyDraft} multiline textAlignVertical="top" />
+              <MemoTextEditor
+                value={bodyDraft}
+                onChangeText={setBodyDraft}
+                inputStyle={[styles.detailInput, styles.detailBodyInput]}
+              />
             </> : <View style={styles.detailBodySurface}><Text style={styles.detailBody}>{selectedPost.body}</Text></View>}
             <View style={styles.tagRow}>{selectedPost.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>
             <View style={styles.wikiSection}>
@@ -486,34 +523,26 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#f8fafc" },
-  header: { flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingHorizontal: 16 },
-  headerSide: { width: 120, flexDirection: "row", alignItems: "center" },
-  headerSideRight: { width: 120, flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
-  headerTitle: { flex: 1, color: "#111827", fontSize: 18, fontWeight: "600", textAlign: "center" },
+  header: { position: "relative", flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingHorizontal: 16 },
+  headerSide: { width: 44, flexDirection: "row", alignItems: "center" },
+  headerSideRight: { width: 112, flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
+  headerTitle: { position: "absolute", left: 0, right: 0, color: "#111827", fontSize: 18, fontWeight: "600", textAlign: "center" },
   menuButton: { paddingHorizontal: 6, paddingVertical: 6 },
   newButton: { minHeight: 32, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#fff" },
   newButtonText: { marginLeft: 4, color: "#111827", fontSize: 12, fontWeight: "600" },
   title: { flex: 1, textAlign: "center", color: "#111827", fontSize: 18, fontWeight: "600" }, detailHeaderAction: { width: 64, alignItems: "flex-end" }, headerActionText: { color: "#2563eb", fontWeight: "800", padding: 8 },
   feedTabsViewport: { flexGrow: 0, flexShrink: 0, marginBottom: 9 },
-  aiSearchPanel: { flexShrink: 0, marginHorizontal: 16, marginBottom: 10, borderWidth: 1, borderColor: "#dbeafe", borderRadius: 12, backgroundColor: "#fff", padding: 12, gap: 8 },
-  aiTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  aiTitle: { color: "#111827", fontSize: 15, fontWeight: "800" },
   plusBadge: { color: "#1d4ed8", backgroundColor: "#dbeafe", borderRadius: 999, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 3, fontSize: 10, fontWeight: "800" },
-  aiCaption: { color: "#6b7280", fontSize: 12, lineHeight: 17 },
-  aiInputRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  aiInput: { flex: 1, minHeight: 42, borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 8, color: "#111827" },
-  aiButton: { minWidth: 64, minHeight: 42, alignItems: "center", justifyContent: "center", borderRadius: 9, backgroundColor: "#111827", paddingHorizontal: 14 },
-  aiButtonDisabled: { opacity: 0.45 },
-  aiButtonText: { color: "#fff", fontWeight: "800" },
   aiError: { color: "#b91c1c", fontSize: 12, lineHeight: 17 },
-  aiResultScroll: { maxHeight: 300, borderTopWidth: 1, borderTopColor: "#e5e7eb", paddingTop: 10 },
+  aiHelperText: { color: "#6b7280", fontSize: 12 },
+  aiResultScroll: { flex: 1, minHeight: 0 },
   aiEvidenceCard: { borderWidth: 1, borderColor: "#bfdbfe", borderRadius: 9, backgroundColor: "#eff6ff", padding: 10, gap: 4 },
   aiEvidenceCardCited: { borderColor: "#60a5fa", backgroundColor: "#dbeafe" },
   aiEvidenceTitle: { color: "#1d4ed8", fontWeight: "800" },
   aiEvidenceBody: { color: "#1f2937", fontSize: 12, lineHeight: 17 },
   aiEvidenceMeta: { color: "#6b7280", fontSize: 11 },
   feedList: { flex: 1 },
-  feedTabs: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 8 }, feedTab: { flexShrink: 0, minHeight: 34, justifyContent: "center", borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: "#e5e7eb" }, feedTabActive: { backgroundColor: "#dbeafe" }, feedTabText: { color: "#4b5563", fontSize: 12 }, feedTabTextActive: { color: "#1d4ed8", fontWeight: "800" }, search: { flexShrink: 0, marginHorizontal: 16, marginBottom: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 }, list: { padding: 16, gap: 10 }, emptyList: { flexGrow: 1, justifyContent: "center", padding: 24 }, card: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 12, padding: 14, gap: 8 }, cardMeta: { flexDirection: "row", justifyContent: "space-between", gap: 12 }, cardTitle: { color: "#111827", fontSize: 16, fontWeight: "800" }, author: { fontSize: 14, color: "#111827", fontWeight: "800" }, date: { fontSize: 12, color: "#6b7280" }, statusBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, fontSize: 11, fontWeight: "800" }, statusPublished: { color: "#166534", backgroundColor: "#dcfce7" }, statusUnpublished: { color: "#92400e", backgroundColor: "#fef3c7" }, body: { color: "#1f2937", lineHeight: 21, fontSize: 14 }, tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 }, tag: { color: "#2563eb", fontSize: 12 }, projectLabel: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, color: "#166534", backgroundColor: "#dcfce7", fontSize: 11, fontWeight: "700" }, center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }, signIn: { margin: 24, color: "#4b5563", textAlign: "center" }, empty: { color: "#6b7280", textAlign: "center" }, error: { color: "#b91c1c", textAlign: "center" }, retry: { color: "#2563eb", fontWeight: "700", padding: 8 }, footer: { alignSelf: "center", marginVertical: 14 }, detail: { flex: 1, backgroundColor: "#fff" }, detailKeyboard: { flex: 1 }, detailScroll: { flex: 1 }, detailBack: { width: 64, minHeight: 44, justifyContent: "center" }, detailBackText: { color: "#2563eb", fontSize: 12 }, detailHeader: { flexShrink: 0, minHeight: 44, paddingHorizontal: 16, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, detailContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 36, gap: 12 }, detailTitle: { color: "#111827", fontSize: 16, fontWeight: "700" }, scopeBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, fontWeight: "700" }, fieldLabel: { color: "#6b7280", fontSize: 12, fontWeight: "700" }, detailInput: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: "#111827", fontSize: 16 }, detailBodyInput: { minHeight: 160, fontSize: 14, lineHeight: 20 }, detailBodySurface: { minHeight: 160, borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, padding: 10 }, detailBody: { color: "#111827", fontSize: 14, lineHeight: 20 }, wikiSection: { marginTop: 8, gap: 8 }, wikiSectionTitle: { color: "#6b7280", fontSize: 13, fontWeight: "700" }, actions: { gap: 9 }, action: { borderRadius: 9, paddingVertical: 11, paddingHorizontal: 14, backgroundColor: "#eff6ff", borderWidth: 1, borderColor: "#bfdbfe" }, actionText: { color: "#1d4ed8", fontWeight: "700", textAlign: "center" }, report: { alignSelf: "flex-start", paddingVertical: 10 }, reportText: { color: "#b91c1c", fontWeight: "700" },
+  feedTabs: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 8 }, feedTab: { flexShrink: 0, minHeight: 34, justifyContent: "center", borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: "#e5e7eb" }, feedTabActive: { backgroundColor: "#dbeafe" }, feedTabText: { color: "#4b5563", fontSize: 12 }, feedTabTextActive: { color: "#1d4ed8", fontWeight: "800" }, search: { flexShrink: 0, marginHorizontal: 16, marginBottom: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 }, list: { padding: 16, paddingBottom: 132, gap: 10 }, emptyList: { flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: 132 }, card: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 12, padding: 14, gap: 8 }, cardMeta: { flexDirection: "row", justifyContent: "space-between", gap: 12 }, cardTitle: { color: "#111827", fontSize: 16, fontWeight: "800" }, author: { fontSize: 14, color: "#111827", fontWeight: "800" }, date: { fontSize: 12, color: "#6b7280" }, statusBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, fontSize: 11, fontWeight: "800" }, statusPublished: { color: "#166534", backgroundColor: "#dcfce7" }, statusUnpublished: { color: "#92400e", backgroundColor: "#fef3c7" }, body: { color: "#1f2937", lineHeight: 21, fontSize: 14 }, tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 }, tag: { color: "#2563eb", fontSize: 12 }, projectLabel: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, color: "#166534", backgroundColor: "#dcfce7", fontSize: 11, fontWeight: "700" }, center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }, signIn: { margin: 24, color: "#4b5563", textAlign: "center" }, empty: { color: "#6b7280", textAlign: "center" }, error: { color: "#b91c1c", textAlign: "center" }, retry: { color: "#2563eb", fontWeight: "700", padding: 8 }, footer: { alignSelf: "center", marginVertical: 14 }, detail: { flex: 1, backgroundColor: "#fff" }, detailKeyboard: { flex: 1 }, detailScroll: { flex: 1 }, detailBack: { width: 64, minHeight: 44, justifyContent: "center" }, detailBackText: { color: "#2563eb", fontSize: 12 }, detailHeader: { flexShrink: 0, minHeight: 44, paddingHorizontal: 16, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, detailContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 36, gap: 12 }, detailTitle: { color: "#111827", fontSize: 16, fontWeight: "700" }, scopeBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, fontWeight: "700" }, fieldLabel: { color: "#6b7280", fontSize: 12, fontWeight: "700" }, detailInput: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: "#111827", fontSize: 16 }, detailBodyInput: { minHeight: 160, fontSize: 14, lineHeight: 20 }, detailBodySurface: { minHeight: 160, borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, padding: 10 }, detailBody: { color: "#111827", fontSize: 14, lineHeight: 20 }, wikiSection: { marginTop: 8, gap: 8 }, wikiSectionTitle: { color: "#6b7280", fontSize: 13, fontWeight: "700" }, actions: { gap: 9 }, action: { borderRadius: 9, paddingVertical: 11, paddingHorizontal: 14, backgroundColor: "#eff6ff", borderWidth: 1, borderColor: "#bfdbfe" }, actionText: { color: "#1d4ed8", fontWeight: "700", textAlign: "center" }, report: { alignSelf: "flex-start", paddingVertical: 10 }, reportText: { color: "#b91c1c", fontWeight: "700" },
 });
 
 export default GuildScreen;

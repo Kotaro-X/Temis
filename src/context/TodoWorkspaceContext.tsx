@@ -13,6 +13,7 @@ import { useTodos } from "../hooks/useTodos";
 import {
   TODO_REPEAT_OPTIONS,
   buildCalendarMonthCells,
+  buildTodoEditEntryById,
   buildTodoEntriesForDate,
   buildTodoListEntries,
   createEmptyTodoDraft,
@@ -52,6 +53,7 @@ type TodoWorkspaceContextValue = {
   todoCalendarSelectedDate: string;
   setTodoCalendarSelectedDate: React.Dispatch<React.SetStateAction<string>>;
   todoCreateOpen: boolean;
+  todoComposerSource: "todo" | "memo" | null;
   todoEditingContext: TodoEditContext | null;
   todoDraft: TodoDraft;
   setTodoDraft: React.Dispatch<React.SetStateAction<TodoDraft>>;
@@ -76,11 +78,12 @@ type TodoWorkspaceContextValue = {
   unscheduledTodos: TodoListEntry[];
   hourOptions: number[];
   minuteOptions: number[];
-  repeatOptions: Array<Exclude<SimpleTodoItem["repeat"], "none">>;
+  repeatOptions: Exclude<SimpleTodoItem["repeat"], "none">[];
   refreshTodos: () => Promise<void>;
   openTodoCreate: () => void;
   closeTodoCreate: () => void;
   openTodoEdit: (entry: TodoListEntry) => void;
+  openTodoEditById: (todoId: string, source: "todo" | "memo") => Promise<boolean>;
   addSimpleTodo: () => void;
   applyTodoEdit: (scope: TodoEditScope) => void;
   toggleTodoDraftTag: (tag: Tag) => void;
@@ -141,6 +144,7 @@ export const TodoWorkspaceProvider = ({
     toDateString(new Date()),
   );
   const [todoCreateOpen, setTodoCreateOpen] = useState(false);
+  const [todoComposerSource, setTodoComposerSource] = useState<"todo" | "memo" | null>(null);
   const [todoEditingContext, setTodoEditingContext] =
     useState<TodoEditContext | null>(null);
   const [todoDraft, setTodoDraft] = useState<TodoDraft>(createEmptyTodoDraft);
@@ -195,7 +199,7 @@ export const TodoWorkspaceProvider = ({
   }, [persistTodos, setSimpleTodos]);
 
   useEffect(() => {
-    if (active) {
+    if (active || todoComposerSource === "memo") {
       return;
     }
     const currentState = {
@@ -214,6 +218,7 @@ export const TodoWorkspaceProvider = ({
     setOpenSwipeTodoId(nextState.openSwipeTodoId);
     if (todoCreateOpen !== nextState.todoCreateOpen) {
       setTodoCreateOpen(nextState.todoCreateOpen);
+      if (!nextState.todoCreateOpen) setTodoComposerSource(null);
     }
     if (todoEditingContext !== nextState.todoEditingContext) {
       setTodoEditingContext(nextState.todoEditingContext);
@@ -234,6 +239,7 @@ export const TodoWorkspaceProvider = ({
     active,
     openSwipeTodoId,
     todoCreateOpen,
+    todoComposerSource,
     todoDateError,
     todoDatePickerOpen,
     todoDraft,
@@ -252,9 +258,9 @@ export const TodoWorkspaceProvider = ({
     });
 
   const {
-    openTodoCreate,
-    closeTodoCreate,
-    openTodoEdit,
+    openTodoCreate: openTodoCreateBase,
+    closeTodoCreate: closeTodoCreateBase,
+    openTodoEdit: openTodoEditBase,
     addSimpleTodo,
     applyTodoEdit,
     toggleTodoDraftTag,
@@ -281,6 +287,60 @@ export const TodoWorkspaceProvider = ({
     cancelTodoNotifications,
     rescheduleTodoNotification,
   });
+
+  const openTodoCreate = useCallback(() => {
+    setTodoComposerSource("todo");
+    openTodoCreateBase();
+  }, [openTodoCreateBase]);
+
+  const closeTodoCreate = useCallback(() => {
+    closeTodoCreateBase();
+    setTodoComposerSource(null);
+  }, [closeTodoCreateBase]);
+
+  const openTodoEdit = useCallback((entry: TodoListEntry) => {
+    setTodoComposerSource("todo");
+    openTodoEditBase(entry);
+  }, [openTodoEditBase]);
+
+  const openTodoEditById = useCallback(async (
+    todoId: string,
+    source: "todo" | "memo",
+  ): Promise<boolean> => {
+    let items = simpleTodos;
+    let entry = buildTodoEditEntryById(items, todoId);
+    if (!entry) {
+      items = await loadTodos();
+      setSimpleTodos(items);
+      entry = buildTodoEditEntryById(items, todoId);
+    }
+    if (!entry) return false;
+    const target = entry.todo;
+    setOpenSwipeTodoId(null);
+    setTodoEditingContext({
+      todoId: target.id,
+      seriesId: entry.seriesId,
+      occurrenceDate: entry.occurrenceDate,
+      isRecurringSeries: entry.isRecurringSeries,
+    });
+    setTodoDraft({
+      text: target.text,
+      memo: target.memo,
+      reminderDate: entry.displayDate ?? "",
+      reminderTime: target.reminderTime ?? "",
+      repeat: entry.seriesMaster?.repeat ?? target.repeat,
+      tags: [...target.tags],
+    });
+    setTodoComposerSource(source);
+    setTodoCreateOpen(true);
+    return true;
+  }, [loadTodos, setSimpleTodos, simpleTodos]);
+
+  useEffect(() => {
+    if (!todoCreateOpen && todoComposerSource !== null) {
+      setTodoComposerSource(null);
+    }
+  }, [todoComposerSource, todoCreateOpen]);
 
   const openTodoDatePicker = useCallback(() => {
     const parsed = parseDateString(todoDraft.reminderDate) ?? new Date();
@@ -466,6 +526,7 @@ export const TodoWorkspaceProvider = ({
       todoCalendarSelectedDate,
       setTodoCalendarSelectedDate,
       todoCreateOpen,
+      todoComposerSource,
       todoEditingContext,
       todoDraft,
       setTodoDraft,
@@ -495,6 +556,7 @@ export const TodoWorkspaceProvider = ({
       openTodoCreate,
       closeTodoCreate,
       openTodoEdit,
+      openTodoEditById,
       addSimpleTodo,
       applyTodoEdit,
       toggleTodoDraftTag,
@@ -532,6 +594,7 @@ export const TodoWorkspaceProvider = ({
       openTodoCreate,
       openTodoDatePicker,
       openTodoEdit,
+      openTodoEditById,
       openTodoTimePicker,
       refreshTodos,
       selectedDateTodos,
@@ -548,6 +611,7 @@ export const TodoWorkspaceProvider = ({
       todoCalendarSelectedDate,
       todoCountsByDate,
       todoCreateOpen,
+      todoComposerSource,
       todoDateDraft,
       todoDateError,
       todoDatePickerOpen,

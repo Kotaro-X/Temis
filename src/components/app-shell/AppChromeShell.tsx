@@ -11,6 +11,7 @@ import { hasStaffFreeAccess } from "../../services/subscription/staffAccess";
 import { t } from "../../i18n";
 import appChromeStyles from "../../styles/appChromeStyles";
 import AppLanguageBridge from "../app-bridges/AppLanguageBridge";
+import { useDirectMessages } from "../../context/DirectMessagesContext";
 import AppMenuBridge from "../app-bridges/AppMenuBridge";
 import AppNoticeBridge from "../app-bridges/AppNoticeBridge";
 import AppPickerBridge from "../app-bridges/AppPickerBridge";
@@ -21,7 +22,7 @@ export type AppChromeTab = "tasks" | "todo" | "memos" | "projects" | "guild";
 type Props = {
   insetsTop: number;
   insetsBottom: number;
-  activeTab: AppChromeTab;
+  activeTab: AppChromeTab | null;
   onTabPress: (tab: AppChromeTab) => void;
   onOpenTodo: () => void;
   onOpenSettings: () => void;
@@ -59,6 +60,9 @@ const TabButton = ({
       ]}
     />
     <Text
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.75}
       style={[
         appChromeStyles.tabLabel,
         active && appChromeStyles.tabLabelActive,
@@ -76,7 +80,7 @@ const BottomTabBar = ({
   showProjects,
   showGuild,
 }: {
-  activeTab: AppChromeTab;
+  activeTab: AppChromeTab | null;
   onTabPress: (tab: AppChromeTab) => void;
   bottomInset: number;
   showProjects: boolean;
@@ -115,7 +119,7 @@ const BottomTabBar = ({
       ) : null}
       {showGuild ? (
         <TabButton
-          label="ギルド"
+          label="Commons"
           active={activeTab === "guild"}
           onPress={() => onTabPress("guild")}
         />
@@ -143,12 +147,14 @@ const AppChromeShell = ({
   } = useAppSettings();
   const {
     rootScreen,
+    taskScreen,
     workspaceScope,
     activeProjectId,
     openPrivateWorkspace,
     openProjectWorkspace,
     openSettingsSync,
     openGuildAdmin,
+    openDM,
     menuOpen,
     closeMenu,
     datePickerOpen,
@@ -171,7 +177,11 @@ const AppChromeShell = ({
   const { profile, projects, status: collaborationStatus } = useCollaboration();
   const [scopePickerOpen, setScopePickerOpen] = useState(false);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
-  const isWorkspaceScreen = rootScreen !== "settings";
+  const { unread: dmUnread } = useDirectMessages();
+  const isWorkspaceScreen = rootScreen !== "settings" && rootScreen !== "dm";
+  // The Logs screen has its own full header. A workspace switcher here overlaps
+  // that header, so keep the switcher on the other workspace screens only.
+  const showScopeTrigger = isWorkspaceScreen && taskScreen !== "logs";
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const scopeLabel = workspaceScope === "private"
     ? "Private"
@@ -208,7 +218,7 @@ const AppChromeShell = ({
     <SafeAreaView style={appChromeStyles.container} edges={["left", "right"]}>
       <View style={[appChromeStyles.statusBarFill, { height: insetsTop }]} />
       <View style={appChromeStyles.body}>{children}</View>
-      {isWorkspaceScreen ? (
+      {showScopeTrigger ? (
         <View style={[appChromeStyles.scopeTrigger, { top: insetsTop + 2 }]}>
           <Pressable
             accessibilityRole="button"
@@ -369,6 +379,8 @@ const AppChromeShell = ({
         visible={menuOpen}
         onCloseMenu={closeMenu}
         onOpenTodo={onOpenTodo}
+        onOpenDM={openDM}
+        dmUnread={dmUnread}
         onOpenSettings={onOpenSettings}
         onOpenAccountSettings={onOpenAccountSettings}
         onOpenGuildAdmin={openGuildAdmin}

@@ -82,8 +82,8 @@ const MemoSearchModal = ({
             setError(
               mode === "ai"
                 ? language === "en"
-                  ? "AI search is unavailable. Sign in and try again."
-                  : "AI検索を利用できません。ログイン後にもう一度お試しください。"
+                  ? "Temis AI is unavailable. Sign in and try again."
+                  : "Temis AIを利用できません。ログイン後にもう一度お試しください。"
                 : language === "en"
                   ? "Search failed. Please try again."
                   : "検索に失敗しました。もう一度お試しください。",
@@ -157,7 +157,7 @@ const MemoSearchModal = ({
               onPress={() => setMode("ai")}
             >
               <Text style={[styles.modeText, mode === "ai" && styles.modeTextActive]}>
-                {language === "en" ? "AI Search" : "AI検索"}
+                Temis AI
               </Text>
             </Pressable>
           </View>
@@ -178,8 +178,8 @@ const MemoSearchModal = ({
           {mode === "ai" ? (
             <Text style={styles.disclosureText}>
               {language === "en"
-                ? "AI search sends memo text for embeddings, and sends your question with selected memo excerpts to OpenAI for answers."
-                : "AI検索では、埋め込み生成用のメモ本文と、回答生成用の質問・選択済みメモ断片を OpenAI API に送信します。"}
+                ? "Temis AI sends memo text for embeddings, and sends your question with selected memo excerpts to OpenAI for answers."
+                : "Temis AIでは、埋め込み生成用のメモ本文と、回答生成用の質問・選択済みメモ断片を OpenAI API に送信します。"}
             </Text>
           ) : null}
           {loading ? (

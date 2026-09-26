@@ -6,6 +6,8 @@ import {
   type User,
 } from "firebase/auth";
 
+import { unregisterDMNotificationsBeforeSignOut } from "../notifications/notificationService";
+
 import { getFirebaseAuth } from "../sync/firebaseApp";
 
 export type GoogleSyncUser = {
@@ -91,9 +93,10 @@ export const signInGoogleSyncUser = async (): Promise<GoogleSyncUser | null> => 
   return signInFirebaseWithGoogleIdToken(idToken);
 };
 
-export const signOutSyncUser = async (): Promise<void> => {
+export const signOutSyncUser = async (options?: { accountDeleted?: boolean }): Promise<void> => {
   const auth = getFirebaseAuth();
   const shouldSignOutGoogle = isGoogleFirebaseUser(auth.currentUser);
+  await unregisterDMNotificationsBeforeSignOut(Boolean(options?.accountDeleted));
   await firebaseSignOut(auth);
   if (shouldSignOutGoogle) {
     configureGoogleSignin();

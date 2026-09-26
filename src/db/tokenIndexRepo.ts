@@ -178,3 +178,40 @@ export const getTokenIndexCountByDocumentId = async (
   const row = result.rows.item(0) as { count: number };
   return Number(row.count) || 0;
 };
+
+/** Complete per-document Wiki links, independent of excerpt/chunk boundaries. */
+export const getTokensByMemoIds = async (memoIds: string[]): Promise<Map<string, string[]>> => {
+  await ensureDbReady();
+  const result = new Map<string, string[]>();
+  for (let offset = 0; offset < memoIds.length; offset += 300) {
+    const ids = memoIds.slice(offset, offset + 300);
+    const rows = await executeSql(
+      `SELECT DISTINCT memo_id, token FROM token_index WHERE memo_id IN (${ids.map(() => "?").join(",")}) ORDER BY memo_id, token`, ids,
+    );
+    for (const row of rows.rows._array as { memo_id: string; token: string }[]) {
+      result.set(row.memo_id, [...(result.get(row.memo_id) ?? []), row.token]);
+    }
+  }
+  return result;
+};
+
+/** Bound discovery before loading bodies, including very common Wiki links. */
+export const findWikiLinkedMemoIds = async (tokens: string[], excludeIds: string[] = []): Promise<string[]> => {
+  await ensureDbReady();
+  const candidates = new Map<string, { matches: number; updated: number }>();
+  const uniqueTokens = Array.from(new Set(tokens));
+  for (let offset = 0; offset < uniqueTokens.length; offset += 100) {
+    const batch = uniqueTokens.slice(offset, offset + 100);
+    const exclude = excludeIds.length ? ` AND memo_id NOT IN (${excludeIds.map(() => "?").join(",")})` : "";
+    const rows = await executeSql(
+      `SELECT memo_id, COUNT(DISTINCT token) AS matches, MAX(updated_at) AS updated FROM token_index WHERE token IN (${batch.map(() => "?").join(",")})${exclude} GROUP BY memo_id ORDER BY matches DESC, updated DESC, memo_id ASC LIMIT 300`,
+      [...batch, ...excludeIds],
+    );
+    for (const row of rows.rows._array as { memo_id: string; matches: number; updated: number }[]) {
+      const prior = candidates.get(row.memo_id);
+      candidates.set(row.memo_id, { matches: (prior?.matches ?? 0) + row.matches, updated: Math.max(prior?.updated ?? 0, row.updated) });
+    }
+  }
+  return Array.from(candidates).sort(([aId, a], [bId, b]) => b.matches - a.matches || b.updated - a.updated || aId.localeCompare(bId))
+    .slice(0, 300).map(([id]) => id);
+};

@@ -367,7 +367,7 @@ export const useTodoCrudActions = ({
 
   const toggleSimpleTodoDone = useCallback(
     (entry: TodoListEntry) => {
-      if (openSwipeTodoId === entry.todo.id) {
+      if (openSwipeTodoId === entry.key) {
         setOpenSwipeTodoId(null);
         return;
       }
@@ -428,7 +428,7 @@ export const useTodoCrudActions = ({
         if (target.occurrenceDate) {
           void cancelTodoNotifications(getTodoNotificationIds(target));
           updateSimpleTodos(simpleTodos.filter((item) => item.id !== target.id));
-          setOpenSwipeTodoId((prev) => (prev === target.id ? null : prev));
+          setOpenSwipeTodoId((prev) => (prev === entry.key ? null : prev));
           return;
         }
         const deletedOverride: SimpleTodoItem = {
@@ -450,7 +450,7 @@ export const useTodoCrudActions = ({
           isDeleted: true,
         };
         updateSimpleTodos([deletedOverride, ...simpleTodos]);
-        setOpenSwipeTodoId((prev) => (prev === target.id ? null : prev));
+        setOpenSwipeTodoId((prev) => (prev === entry.key ? null : prev));
         return;
       }
       const seriesId = getTodoSeriesId(target);
@@ -474,7 +474,7 @@ export const useTodoCrudActions = ({
           (item) => !removedItems.some((removed) => removed.id === item.id),
         ),
       );
-      setOpenSwipeTodoId((prev) => (prev === target.id ? null : prev));
+      setOpenSwipeTodoId((prev) => (prev === entry.key ? null : prev));
     },
     [cancelTodoNotifications, setOpenSwipeTodoId, simpleTodos, updateSimpleTodos],
   );

@@ -1,3 +1,4 @@
+import { labelAnswerEvidence, type EvidenceInput } from "./aiEvidence";
 import { getLLMProvider } from "./LLMProvider";
 import type { LLMProvider } from "./LLMProvider";
 import {
@@ -10,14 +11,7 @@ import {
 import { checkOllamaConnection, getLLMRuntimeConfig } from "./llmSettings";
 import { requestOpenAIGroundedAnswer } from "./openAIGroundedAnswerCallable";
 
-export type AnswerEvidence = {
-  memoId: string;
-  chunkId: string;
-  snippetText: string;
-  createdAt: number;
-  tokensHit?: string[];
-  score?: number;
-};
+export type AnswerEvidence = EvidenceInput;
 
 export type AnswerWithCitationsResult = {
   answerText: string;
@@ -61,7 +55,7 @@ const OPENAI_ERROR_TEXT =
   "AI回答を生成できませんでした。しばらくしてからもう一度お試しください。";
 
 const normalizeTopK = (value: number): number =>
-  Math.min(10, Math.max(1, Math.floor(value)));
+  Math.min(15, Math.max(1, Math.floor(value)));
 
 const normalizeParens = (text: string): string =>
   text.replace(/\uFF08/g, "(").replace(/\uFF09/g, ")");
@@ -227,19 +221,7 @@ const toPromptEvidence = (
   evidence: AnswerEvidence[],
   topK = DEFAULT_TOP_K,
 ): LabeledEvidence[] =>
-  evidence
-    .slice()
-    .sort(
-      (left, right) =>
-        (right.tokensHit?.length ?? 0) - (left.tokensHit?.length ?? 0) ||
-        (right.score ?? 0) - (left.score ?? 0) ||
-        left.chunkId.localeCompare(right.chunkId),
-    )
-    .slice(0, normalizeTopK(topK))
-    .map((item, index) => ({
-      ...item,
-      evidenceKey: `E${index + 1}`,
-    }));
+  labelAnswerEvidence(evidence, normalizeTopK(topK));
 
 const debugLog = (message: string): void => {
   console.log(`${DEBUG_PREFIX} ${message}`);
@@ -759,7 +741,7 @@ const buildRetrievalOnlyFallback = (
   citedEvidenceKeys:
     promptEvidence.length === 0
       ? []
-      : buildFallbackCitations(promptEvidence),
+      : buildMemoBlocks(promptEvidence).flatMap((block) => block.evidenceKeys),
 });
 
 export const parseLLMJsonOrFallback = (
@@ -974,7 +956,7 @@ export const answerWithCitations = async (
   const provider = llmProvider ?? getLLMProvider();
   const runtimeConfig = getLLMRuntimeConfig();
   const isLocal = runtimeConfig.provider === "local";
-  const topK = isLocal ? LOCAL_DEFAULT_TOP_K : DEFAULT_TOP_K;
+  const topK = isLocal ? LOCAL_DEFAULT_TOP_K : runtimeConfig.provider === "openai" ? 15 : DEFAULT_TOP_K;
   const promptEvidence = toPromptEvidence(evidence, topK);
   const evidenceQuality = evaluateEvidenceQuality(promptEvidence);
   if (!evidenceQuality.ok) {
@@ -994,6 +976,7 @@ export const answerWithCitations = async (
           evidence: promptEvidence.map((item) => ({
             key: item.evidenceKey,
             text: item.snippetText.slice(0, 1_200),
+            linkPath: item.linkPath?.every((token) => token.length <= 200) ? item.linkPath : undefined,
           })),
           logSummaryText: logSummaryText?.slice(0, 500),
         },
@@ -1010,10 +993,7 @@ export const answerWithCitations = async (
       }
       if (missesQuestionTopic(guarded.answerText, trimmedQuestion, promptEvidence)) {
         debugLog("final route=openai-question-topic-missing -> retrieval fallback");
-        return {
-          answerText: buildEvidenceSummaryAnswer(promptEvidence),
-          citedEvidenceKeys,
-        };
+        return buildRetrievalOnlyFallback(promptEvidence);
       }
       return { answerText: guarded.answerText, citedEvidenceKeys };
     }

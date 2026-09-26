@@ -34,7 +34,7 @@ export type CloudSyncAccessGrant = {
 export type InviteCodeRecord = {
   code: string;
   active: boolean;
-  grantType: Extract<CloudSyncGrantType, "invite_free" | "invite_discount">;
+  grantType: CloudSyncGrantType;
   offeringId: string | null;
   packageId: string | null;
   expiresAt: number | null;
@@ -73,8 +73,7 @@ const isCloudSyncGrantType = (value: unknown): value is CloudSyncGrantType =>
 
 const isInviteGrantType = (
   value: unknown,
-): value is Extract<CloudSyncGrantType, "invite_free" | "invite_discount"> =>
-  value === "invite_free" || value === "invite_discount";
+): value is CloudSyncGrantType => isCloudSyncGrantType(value);
 
 export const normalizeInviteCode = (value: string): string =>
   value.replace(/\s+/g, "").trim().toUpperCase();
@@ -221,9 +220,13 @@ export const redeemInviteCode = async (
     if (
       existingGrant &&
       existingGrant.grantType === "staff_free" &&
-      isCloudSyncGrantActive(existingGrant)
+      !(
+        existingGrant.inviteCode === code &&
+        redemptionSnapshot.exists() &&
+        isCloudSyncGrantActive(existingGrant)
+      )
     ) {
-      throw new Error("This account already has a staff grant.");
+      throw new Error("This account already has a staff grant that cannot be replaced by an invite code.");
     }
     if (
       existingGrant &&

@@ -9,6 +9,9 @@ export type GuildAIEvidencePost = {
   title: string | null;
   body: string;
   publishedAt: number | null;
+  linkDepth?: number;
+  linkPath?: string[];
+  snippetText?: string;
 };
 
 export type GuildAISearchResult = {
@@ -29,5 +32,18 @@ export const searchGuildPostsWithAI = async (
     "searchGuildPostsWithAI",
     { timeout: 60_000 },
   );
-  return (await callable({ question })).data;
+  try {
+    return (await callable({ question })).data;
+  } catch (cause) {
+    const code = (cause as { code?: string })?.code;
+    const messages: Record<string, string> = {
+      "functions/unauthenticated": "Temis AIを利用するにはログインしてください。",
+      "functions/permission-denied": "CommonsのTemis AIはTemis Plusで利用できます。",
+      "functions/failed-precondition": "Temis AIの検索索引を準備中です。しばらくしてからお試しください。",
+      "functions/aborted": "参照する投稿が更新されました。もう一度検索してください。",
+      "functions/resource-exhausted": "Temis AIが混み合っています。しばらくしてからお試しください。",
+      "functions/deadline-exceeded": "Temis AIの検索がタイムアウトしました。もう一度お試しください。",
+    };
+    throw new Error(messages[code ?? ""] ?? "Temis AIの検索に失敗しました。しばらくしてからお試しください。");
+  }
 };

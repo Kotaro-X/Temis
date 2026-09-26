@@ -1,10 +1,6 @@
-import { hybridSearch, type HybridSearchResult } from "../services/hybridSearch";
+import { searchWikiAnswerEvidence } from "../services/wikiAnswerRetrieval";
 
 export const buildAIContext = async (
   query: string,
   options?: { topK?: number; topN?: number },
-): Promise<HybridSearchResult[]> =>
-  hybridSearch(query, {
-    topK: options?.topK ?? 4,
-    topN: options?.topN ?? options?.topK ?? 4,
-  });
+) => searchWikiAnswerEvidence(query, options?.topN ?? options?.topK ?? 15);

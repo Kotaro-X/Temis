@@ -22,6 +22,7 @@ export type HybridSearchResult = {
 type HybridSearchOptions = {
   topK?: number;
   topN?: number;
+  queryEmbedding?: number[];
 };
 
 const DEFAULT_TOP_K = 8;
@@ -147,8 +148,9 @@ export const hybridSearch = async (
 
   const [tokenHits, embeddingHits] = await Promise.all([
     queryTokens.length > 0 ? searchByTokens(queryTokens) : Promise.resolve([]),
-    embeddingProvider
-      .embed(normalizedQuery)
+    (options.queryEmbedding
+      ? Promise.resolve(options.queryEmbedding)
+      : embeddingProvider.embed(normalizedQuery))
       .then((embedding) =>
         searchTopChunksByEmbedding(embedding, topK, {
           embeddingModel: embeddingProvider.getModel(),

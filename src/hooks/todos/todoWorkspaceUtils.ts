@@ -7,7 +7,7 @@ const TIME_PICKER_VISIBLE_ROWS = 5;
 export const TIME_PICKER_SIDE_PADDING =
   ((TIME_PICKER_VISIBLE_ROWS - 1) / 2) * TIME_PICKER_ITEM_HEIGHT;
 
-export const TODO_REPEAT_OPTIONS: Array<Exclude<TodoRepeat, "none">> = [
+export const TODO_REPEAT_OPTIONS: Exclude<TodoRepeat, "none">[] = [
   "daily",
   "weekly",
   "monthly",
@@ -216,6 +216,30 @@ const buildTodoListEntry = ({
       (!seriesMaster && isRecurringSeriesMaster(todo)),
   ),
 });
+
+export const buildTodoEditEntryById = (
+  items: readonly SimpleTodoItem[],
+  todoId: string,
+): TodoListEntry | null => {
+  const todo = items.find((item) => item.id === todoId && !item.isDeleted);
+  if (!todo) return null;
+  const seriesId = getTodoSeriesId(todo);
+  const seriesMaster = todo.occurrenceDate && seriesId
+    ? items.find((item) => getTodoSeriesId(item) === seriesId && isRecurringSeriesMaster(item)) ?? null
+    : null;
+  return {
+    key: todo.id,
+    todo,
+    seriesMaster,
+    seriesId,
+    // Opening a master record edits the series itself. Only a stored override
+    // retains an occurrence date and therefore shows the existing scope choice.
+    occurrenceDate: todo.occurrenceDate ?? null,
+    displayDate: todo.occurrenceDate ?? todo.reminderDate,
+    displayTime: todo.reminderTime,
+    isRecurringSeries: isRecurringSeriesMaster(todo) || Boolean(seriesMaster),
+  };
+};
 
 export const buildTodoEntriesForDate = (
   items: SimpleTodoItem[],

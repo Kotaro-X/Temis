@@ -49,6 +49,7 @@
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "moderationVisibility", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" },
         {
           "fieldPath": "embedding",
           "vectorConfig": {
@@ -57,11 +58,58 @@
           }
         }
       ]
+    },
+    {
+      "collectionGroup": "guildPostAIIndex",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "moderationVisibility", "order": "ASCENDING" },
+        { "fieldPath": "indexVersion", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "guildPostAIIndex",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "moderationVisibility", "order": "ASCENDING" },
+        { "fieldPath": "wikiTokenHashes", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "sourceUpdatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dmConversations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "senderUserId", "order": "ASCENDING" },
+        { "fieldPath": "deleted", "order": "ASCENDING" }
+      ]
     }
   ],
-  "fieldOverrides": [{
-    "collectionGroup": "redemptions",
-    "fieldPath": "userId",
-    "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }]
-  }]
+  "fieldOverrides": [
+    {
+      "collectionGroup": "redemptions",
+      "fieldPath": "userId",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "guildPostAIIndex",
+      "fieldPath": "wikiTokens",
+      "indexes": []
+    }
+  ]
 }

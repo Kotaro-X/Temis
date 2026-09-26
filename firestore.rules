@@ -35,7 +35,7 @@ service cloud.firestore {
     }
 
     function isInviteGrantType(value) {
-      return value == "invite_free" || value == "invite_discount";
+      return value in ["staff_free", "invite_free", "invite_discount"];
     }
 
     function grantKeysAreValid() {
@@ -99,6 +99,9 @@ service cloud.firestore {
       let priorGrant = exists(subscriptionAccessPath(userId))
         ? get(subscriptionAccessPath(userId)).data
         : null;
+      let redemptionExists = exists(inviteRedemptionPath(code, userId));
+      let redemptionAfter = getAfter(inviteRedemptionPath(code, userId)).data;
+      let inviteAfter = getAfter(inviteCodePath(code)).data;
       return isSelf(userId)
         && isSupportedAccountUser()
         && grantKeysAreValid()
@@ -114,7 +117,14 @@ service cloud.firestore {
         && request.resource.data.grantedBy == invite.data.createdBy
         && request.resource.data.redeemedAt is int
         && request.resource.data.updatedAt is int
-        && !(priorGrant != null && priorGrant.grantType == "staff_free" && priorGrant.active == true)
+        && redemptionAfter.userId == userId
+        && redemptionAfter.inviteCode == code
+        && redemptionAfter.grantType == invite.data.grantType
+        && inviteAfter.redeemedCount == invite.data.redeemedCount + (redemptionExists ? 0 : 1)
+        && !(priorGrant != null && priorGrant.grantType == "staff_free"
+          && !(priorGrant.active == true && priorGrant.inviteCode == code
+            && (priorGrant.expiresAt == null || priorGrant.expiresAt > request.time.toMillis())
+            && redemptionExists))
         && (
           priorGrant == null ||
           priorGrant.inviteCode == null ||
@@ -545,7 +555,9 @@ service cloud.firestore {
       return signedIn()
         && exists(subscriptionAccessPath(request.auth.uid))
         && get(subscriptionAccessPath(request.auth.uid)).data.active == true
-        && get(subscriptionAccessPath(request.auth.uid)).data.grantType == "staff_free";
+        && get(subscriptionAccessPath(request.auth.uid)).data.grantType == "staff_free"
+        && (get(subscriptionAccessPath(request.auth.uid)).data.expiresAt == null
+          || get(subscriptionAccessPath(request.auth.uid)).data.expiresAt > request.time.toMillis());
     }
 
     function connectionPath(leftUserId, rightUserId) {
@@ -604,7 +616,10 @@ service cloud.firestore {
     }
 
     match /profiles/{userId} {
-      allow get: if isSelf(userId) || resource.data.profileVisibility == "public";
+      allow get: if isSelf(userId) || resource.data.profileVisibility == "public"
+        || (signedIn() && resource.data.profileVisibility == "connections_only"
+          && exists(connectionPath(request.auth.uid, userId))
+          && get(connectionPath(request.auth.uid, userId)).data.status == "connected");
       allow list: if signedIn() && resource.data.profileVisibility == "public";
       allow create: if isSelf(userId) && isSupportedAccountUser() && validProfile(request.resource.data, userId)
         && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.userId == userId;
@@ -627,19 +642,57 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // DM authorization relies on an authentic, two-party accepted connection.
+    function validConnection(data, connectionId) {
+      return data.keys().hasOnly(["id", "userIds", "requesterUserId", "recipientUserId", "status", "blockedByUserId", "createdAt", "updatedAt"])
+        && data.userIds is list && data.userIds.size() == 2
+        && validString(data.userIds[0], 128) && validString(data.userIds[1], 128)
+        && data.userIds[0] < data.userIds[1]
+        && data.id == connectionId && connectionId == data.userIds[0] + "__" + data.userIds[1]
+        && data.requesterUserId in data.userIds && data.recipientUserId in data.userIds
+        && data.requesterUserId != data.recipientUserId
+        && data.status in ["pending", "connected", "blocked"]
+        && (data.status != "blocked" || data.blockedByUserId in data.userIds)
+        && data.createdAt is int && data.updatedAt is int;
+    }
+
     match /connections/{connectionId} {
       allow read: if signedIn() && request.auth.uid in resource.data.userIds;
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(["id", "userIds", "requesterUserId", "recipientUserId", "status", "blockedByUserId", "createdAt", "updatedAt"])
-        && request.resource.data.id == connectionId && request.resource.data.requesterUserId == request.auth.uid
-        && (request.resource.data.status == "pending" || (request.resource.data.status == "blocked" && request.resource.data.blockedByUserId == request.auth.uid)) && request.auth.uid in request.resource.data.userIds
-        && request.resource.data.recipientUserId in request.resource.data.userIds;
-      allow update: if signedIn() && request.auth.uid in resource.data.userIds
+      allow create: if isSupportedAccountUser() && validConnection(request.resource.data, connectionId)
+        && request.resource.data.requesterUserId == request.auth.uid
+        && (request.resource.data.status == "pending"
+          || (request.resource.data.status == "blocked" && request.resource.data.blockedByUserId == request.auth.uid));
+      allow update: if isSupportedAccountUser() && request.auth.uid in resource.data.userIds
+        && validConnection(request.resource.data, connectionId)
         && request.resource.data.userIds == resource.data.userIds
-        && ((resource.data.status == "pending" && resource.data.recipientUserId == request.auth.uid && request.resource.data.status == "connected")
-          || request.resource.data.status == "blocked");
-      allow delete: if signedIn() && request.auth.uid in resource.data.userIds;
+        && ((resource.data.status == "pending" && resource.data.recipientUserId == request.auth.uid
+            && request.resource.data.status == "connected"
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "blockedByUserId", "updatedAt"]))
+          || (request.resource.data.status == "blocked" && request.resource.data.blockedByUserId == request.auth.uid
+            && (resource.data.status != "blocked" || resource.data.blockedByUserId == request.auth.uid)));
+      allow delete: if signedIn() && request.auth.uid in resource.data.userIds
+        && (resource.data.status != "blocked" || resource.data.blockedByUserId == request.auth.uid);
     }
+
+    // Server-created DM documents. Only participants may read; writes go through
+    // the callable API, including monotonic read positions and device ownership.
+    function dmAccountAvailable() {
+      return isSupportedAccountUser()
+        && (!exists(/databases/$(database)/documents/dmAccounts/$(request.auth.uid))
+          || get(/databases/$(database)/documents/dmAccounts/$(request.auth.uid)).data.get("deleting", false) != true);
+    }
+    match /dmConversations/{conversationId} {
+      allow read: if dmAccountAvailable() && request.auth.uid in resource.data.userIds;
+      allow write: if false;
+      match /messages/{messageId} {
+        allow read: if dmAccountAvailable()
+          && request.auth.uid in get(/databases/$(database)/documents/dmConversations/$(conversationId)).data.userIds;
+        allow write: if false;
+      }
+    }
+    match /dmDevices/{deviceId} { allow read, write: if false; }
+    match /dmAccounts/{userId} { allow read, write: if false; }
+    match /dmNotificationJobs/{jobId} { allow read, write: if false; }
 
     match /projects/{projectId} {
       allow get: if isProjectMember(projectId) || resource.data.visibility == "public";

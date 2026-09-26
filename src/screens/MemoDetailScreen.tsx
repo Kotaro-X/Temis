@@ -660,7 +660,7 @@ const MemoDetailScreen = ({
             onPress={() => setGuildComposerOpen(true)}
             disabled={loading || !detail}
           >
-            <Text style={styles.guildButtonText}>ギルドに投稿</Text>
+            <Text style={styles.guildButtonText}>Commonsに投稿</Text>
           </Pressable>
           <Pressable
             style={[

@@ -292,9 +292,9 @@ const ProjectsScreen = ({
 
           {myRole === "owner" ? (
             <>
-              <Text style={styles.sectionTitle}>ギルド公開</Text>
+              <Text style={styles.sectionTitle}>Commons公開</Text>
               <View style={styles.surfaceRow}>
-                <View><Text style={styles.rowTitle}>{selected.visibility === "public" ? "公開・承認制" : "非公開"}</Text><Text style={styles.caption}>公開しても、メモ・タスク・メンバー一覧はギルドには公開されません。</Text></View>
+                <View><Text style={styles.rowTitle}>{selected.visibility === "public" ? "公開・承認制" : "非公開"}</Text><Text style={styles.caption}>公開しても、メモ・タスク・メンバー一覧はCommonsには公開されません。</Text></View>
                 <Pressable style={styles.inviteButton} onPress={() => void handleProjectVisibility(selected.visibility !== "public")}><Text style={styles.inviteButtonText}>{selected.visibility === "public" ? "非公開にする" : "公開する"}</Text></Pressable>
               </View>
               {joinRequests.filter((request) => request.status === "pending").length > 0 ? <>

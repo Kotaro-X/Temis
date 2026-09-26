@@ -31,13 +31,20 @@ import {
   normalizeParens,
   tokenizeLinks,
 } from "../utils/linkTokenize";
-import { normalizeSearchToken } from "../utils/wikiLink";
+import { loadTodos } from "../repositories/todoRepository";
+import TodoComposerHost from "../components/todos/TodoComposerHost";
+import { useTodoWorkspace } from "../context/TodoWorkspaceContext";
+import {
+  ALL_TAG_FILTER, NO_TAG_FILTER, buildTodoMemoItems, filterMemoTab,
+  filterMemoTags, filterMemoQuery, hasMemoTags, type MemoItem,
+} from "../utils/memoListItems";
 import {
   buildNoteDocumentId,
   buildTankyuDocumentId,
 } from "../services/indexTextBuilder";
 import BracketToolbar from "../components/BracketToolbar";
 import AIAnswerEvidencePanel from "../components/ai/AIAnswerEvidencePanel";
+import TemisAIDock from "../components/ai/TemisAIDock";
 import { AppLanguage, t } from "../i18n";
 import { useAI } from "../hooks/useAI";
 import type { MemoWorkspaceTabKey } from "../types/appNavigation";
@@ -48,25 +55,6 @@ export type MemoNavigation = {
 };
 
 type MemoTab = MemoWorkspaceTabKey;
-
-type MemoItem = {
-  key: string;
-  memoId: string;
-  date: string;
-  memoTitle: string;
-  memoText: string;
-  taskTitle: string;
-  updatedAt: number;
-  source: "task" | "note" | "tankyu";
-  taskId?: string;
-  noteId?: string;
-  noteType?: "daily" | "free";
-  noteTitle?: string | null;
-  tankyuId?: string;
-  tags?: string[];
-  scope?: "personal" | "project";
-  projectId?: string | null;
-};
 
 type Section = {
   title: string;
@@ -108,8 +96,6 @@ const TAB_LABELS: Record<MemoTab, string> = {
   task: "Task",
   note: "Note",
 };
-const ALL_TAG_FILTER = "すべて";
-const NO_TAG_FILTER = "タグ未設定";
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
 
@@ -153,13 +139,14 @@ const buildTaskIndex = async () => {
 };
 
 const buildMemoItems = async (): Promise<MemoItem[]> => {
-  const [taskIndex, memos, notes, tankyuNotes] = await Promise.all([
+  const [taskIndex, memos, notes, tankyuNotes, todos] = await Promise.all([
     buildTaskIndex(),
     listAllMemos(),
     listAllNotes(),
     listResearchNotes(),
+    loadTodos(),
   ]);
-  const items: MemoItem[] = [];
+  const items: MemoItem[] = buildTodoMemoItems(todos);
   for (const memo of memos) {
     const info = taskIndex.get(memo.taskId);
     const updatedAt = memo.updatedAt ?? memo.createdAt;
@@ -249,6 +236,9 @@ const MemoEvidenceCard = ({
     >
           <Text style={styles.qaEvidenceId}>[{result.evidenceId}]</Text>
           <Text style={styles.qaResultSnippet}>{result.snippetText}</Text>
+          {result.linkPath?.length ? (
+            <Text style={styles.qaResultMeta}>{result.linkPath.join(" → ")}経由</Text>
+          ) : null}
           <Text style={styles.qaResultMeta}>
             {(memo?.date ?? "-") +
               " · " +
@@ -284,6 +274,7 @@ const MemoScreen = ({
   language,
 }: Props) => {
   const tr = (key: string) => t(language, key);
+  const { closeTodoCreate, openTodoEditById, todoComposerSource } = useTodoWorkspace();
   const allTagLabel = tr("common.all");
   const noTagLabel = tr("common.noTag");
   const untitledLabel = tr("common.untitled");
@@ -305,6 +296,7 @@ const MemoScreen = ({
     return value;
   };
   const sourceLabel = (source: MemoItem["source"]) => {
+    if (source === "todo") return "ToDo";
     if (source === "task") {
       return language === "en" ? "Task" : "タスク";
     }
@@ -383,7 +375,13 @@ const MemoScreen = ({
     };
   }, []);
 
-  useEffect(() => loadItems(), [loadItems, refreshToken]);
+  useEffect(() => {
+    if (visible) return loadItems();
+  }, [loadItems, refreshToken, visible, tab]);
+
+  useEffect(() => {
+    if (!visible && todoComposerSource === "memo") closeTodoCreate();
+  }, [closeTodoCreate, todoComposerSource, visible]);
 
   useEffect(() => {
     const showEvent =
@@ -586,20 +584,12 @@ const MemoScreen = ({
     return [...prefixMatches, ...containsMatches].slice(0, 10);
   }, [activeLinkQuery, linkIndex]);
 
-  const tabbedItems = useMemo(() => {
-    if (tab === "task") {
-      return items.filter((item) => item.source === "task");
-    }
-    if (tab === "note") {
-      return items.filter((item) => item.source === "note");
-    }
-    return items;
-  }, [items, tab]);
+  const tabbedItems = useMemo(() => filterMemoTab(items, tab), [items, tab]);
 
   const tagFilterOptions = useMemo(() => {
     const options = [ALL_TAG_FILTER, ...tagLibrary];
     const hasNoTag = items.some((item) => {
-      if (item.source !== "task" && item.source !== "tankyu") {
+      if (!hasMemoTags(item)) {
         return false;
       }
       const validTags = (item.tags ?? []).filter((tag) =>
@@ -619,41 +609,12 @@ const MemoScreen = ({
     }
   }, [tagFilterOptions, tagFilter]);
 
-  const tagFilteredItems = useMemo(() => {
-    if (tab === "note" || tagFilter === ALL_TAG_FILTER) {
-      return tabbedItems;
-    }
-    return tabbedItems.filter((item) => {
-      if (item.source !== "task" && item.source !== "tankyu") {
-        return false;
-      }
-      const validTags = (item.tags ?? []).filter((tag) =>
-        activeTagSet.has(tag),
-      );
-      if (tagFilter === NO_TAG_FILTER) {
-        return validTags.length === 0;
-      }
-      return validTags.includes(tagFilter);
-    });
-  }, [tab, tabbedItems, tagFilter, activeTagSet]);
+  const tagFilteredItems = useMemo(() =>
+    tab === "note" ? tabbedItems : filterMemoTags(tabbedItems, tagFilter, activeTagSet),
+  [tab, tabbedItems, tagFilter, activeTagSet]);
 
-  const filteredItems = useMemo(() => {
-    const rawInput = normalizeParens(query).trim();
-    if (!rawInput) {
-      return tagFilteredItems;
-    }
-    const normalizedQuery = normalizeSearchToken(rawInput).toLowerCase();
-    const rawQuery = rawInput.toLowerCase();
-    const keys =
-      normalizedQuery === rawQuery
-        ? [rawQuery]
-        : [normalizedQuery, rawQuery];
-    return tagFilteredItems.filter((item) => {
-      const title = normalizeParens(item.memoTitle).toLowerCase();
-      const body = normalizeParens(item.memoText).toLowerCase();
-      return keys.some((key) => key && (title.includes(key) || body.includes(key)));
-    });
-  }, [tagFilteredItems, query]);
+  const filteredItems = useMemo(() => filterMemoQuery(tagFilteredItems, query),
+    [tagFilteredItems, query]);
 
   const sections = useMemo<Section[]>(() => {
     const grouped = new Map<string, MemoItem[]>();
@@ -692,18 +653,7 @@ const MemoScreen = ({
 
   const labeledEvidence = useMemo<LabeledEvidence[]>(
     () =>
-      qaResults
-        .slice()
-        .sort(
-          (left, right) =>
-            (right.tokensHit?.length ?? 0) - (left.tokensHit?.length ?? 0) ||
-            (right.score ?? 0) - (left.score ?? 0) ||
-            left.chunkId.localeCompare(right.chunkId),
-        )
-        .map((item, index) => ({
-          ...item,
-          evidenceId: `E${index + 1}`,
-        })),
+      qaResults.map((item) => ({ ...item, evidenceId: item.key })),
     [qaResults],
   );
 
@@ -751,6 +701,7 @@ const MemoScreen = ({
   };
 
   const confirmDeleteMemo = async (item: MemoItem) => {
+    if (item.source === "todo") return;
     setDeletingMemoKeys((prev) =>
       prev.includes(item.key) ? prev : [...prev, item.key],
     );
@@ -920,7 +871,15 @@ const MemoScreen = ({
                 <View style={styles.item}>
                   <Pressable
                     style={styles.itemContent}
-                    onPress={() => openMemoDetail(item.memoId)}
+                    onPress={() => {
+                      if (item.source === "todo") {
+                        Keyboard.dismiss();
+                        if (!item.todoId) return;
+                        void openTodoEditById(item.todoId, "memo").then((opened) => {
+                          if (!opened) Alert.alert(tr("todo.editTitle"), "ToDoが削除されたか、見つかりません。");
+                        });
+                      } else openMemoDetail(item.memoId);
+                    }}
                     disabled={isDeleting}
                   >
                     <Text style={styles.itemTitle}>{normalizeUiText(item.memoTitle)}</Text>
@@ -929,8 +888,11 @@ const MemoScreen = ({
                         item.taskTitle || "メモ",
                       )}${item.scope === "project" ? " · プロジェクト" : ""}`}
                     </Text>
+                    {item.source === "todo" && item.tags?.length ? (
+                      <Text style={styles.itemMeta}>{item.tags.join(" · ")}</Text>
+                    ) : null}
                   </Pressable>
-                  <Pressable
+                  {item.source !== "todo" ? <Pressable
                     style={[
                       styles.itemDeleteButton,
                       isDeleting && styles.itemDeleteButtonDisabled,
@@ -939,7 +901,7 @@ const MemoScreen = ({
                     disabled={isDeleting}
                   >
                     <Ionicons name="trash-outline" size={16} color="#111827" />
-                  </Pressable>
+                  </Pressable> : null}
                 </View>
               );
             }}
@@ -949,67 +911,32 @@ const MemoScreen = ({
           />
         )}
       </View>
-      <View
-        style={[
-          styles.aiDock,
-          qaOpen ? styles.aiDockExpanded : null,
-          qaOpen && headerBottomY > 0 ? { top: headerBottomY } : null,
-        ]}
+      <TemisAIDock
+        expanded={qaOpen}
+        expandedTop={headerBottomY > 0 ? headerBottomY : undefined}
+        query={qaQuery}
+        placeholder={tr("memo.aiInputPlaceholder")}
+        searchLabel={qaSearchLoading
+          ? tr("memo.aiSearching")
+          : qaAnswerLoading
+            ? tr("memo.aiGenerating")
+            : tr("memo.aiSearch")}
+        searchDisabled={qaSearchLoading || qaAnswerLoading}
+        onChangeQuery={setQaQuery}
+        onSearch={handleSearchEvidence}
+        onToggle={() => setQaOpen((prev) => !prev)}
+        inputProps={{
+          selection: qaSelectionOverride ?? undefined,
+          onSelectionChange: handleQaSelectionChange,
+          inputAccessoryViewID: Platform.OS === "ios" ? qaAccessoryId : undefined,
+          onFocus: () => {
+            setQaInputFocused(true);
+            setQaOpen(true);
+          },
+          onBlur: () => setQaInputFocused(false),
+        }}
       >
-        <Pressable
-          style={styles.aiDockHeader}
-          onPress={() => setQaOpen((prev) => !prev)}
-        >
-          <View style={styles.aiDockTitleRow}>
-            <Ionicons name="sparkles" size={16} color="#111827" />
-            <View style={styles.aiDockTitleGroup}>
-              <Text style={styles.aiDockTitle}>{tr("memo.aiTitle")}</Text>
-              <Text style={styles.aiDockSubtitle}>{tr("memo.aiSubtitle")}</Text>
-            </View>
-          </View>
-          <Ionicons
-            name={qaOpen ? "chevron-down" : "chevron-up"}
-            size={16}
-            color="#111827"
-          />
-        </Pressable>
-        <View style={styles.aiDockInputRow}>
-          <TextInput
-            style={styles.aiInput}
-            placeholder={tr("memo.aiInputPlaceholder")}
-            placeholderTextColor="#9ca3af"
-            value={qaQuery}
-            onChangeText={setQaQuery}
-            selection={qaSelectionOverride ?? undefined}
-            onSelectionChange={handleQaSelectionChange}
-            inputAccessoryViewID={
-              Platform.OS === "ios" ? qaAccessoryId : undefined
-            }
-            onFocus={() => {
-              setQaInputFocused(true);
-              setQaOpen(true);
-            }}
-            onBlur={() => setQaInputFocused(false)}
-            onSubmitEditing={handleSearchEvidence}
-            returnKeyType="search"
-          />
-          <Pressable
-            style={styles.aiSearchButton}
-            onPress={handleSearchEvidence}
-            disabled={qaSearchLoading || qaAnswerLoading}
-          >
-            <Text style={styles.aiSearchButtonText}>
-              {qaSearchLoading
-                ? tr("memo.aiSearching")
-                : qaAnswerLoading
-                  ? tr("memo.aiGenerating")
-                  : tr("memo.aiSearch")}
-            </Text>
-          </Pressable>
-        </View>
-        {qaOpen ? (
-          <View style={[styles.aiDockBody, styles.aiDockBodyExpanded]}>
-            {qaSearchLoading ? (
+        {qaSearchLoading ? (
               <Text style={styles.qaHelperText}>{tr("memo.aiSearchingEvidence")}</Text>
             ) : qaAnswerLoading ? (
               <Text style={styles.qaHelperText}>{tr("memo.aiGeneratingAnswer")}</Text>
@@ -1049,9 +976,7 @@ const MemoScreen = ({
                 />
               </ScrollView>
             )}
-          </View>
-        ) : null}
-      </View>
+      </TemisAIDock>
       {Platform.OS === "ios" ? (
         <>
           <InputAccessoryView nativeID={qaAccessoryId} backgroundColor="#fff">
@@ -1100,6 +1025,7 @@ const MemoScreen = ({
           />
         </View>
       ) : null}
+      <TodoComposerHost source="memo" tr={tr} />
     </SafeAreaView>
   );
 };
@@ -1248,90 +1174,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: "#ffffff",
     maxHeight: 200,
-  },
-  aiDock: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    backgroundColor: "#ffffff",
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 18,
-    shadowColor: "#000000",
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: -4 },
-    elevation: 8,
-  },
-  aiDockExpanded: {
-    bottom: 0,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    paddingTop: 12,
-  },
-  aiDockHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  aiDockTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  aiDockTitleGroup: {
-    marginLeft: 8,
-  },
-  aiDockTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  aiDockSubtitle: {
-    fontSize: 11,
-    color: "#6b7280",
-  },
-  aiDockInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  aiInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: "#111827",
-  },
-  aiSearchButton: {
-    marginLeft: 8,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: "#111827",
-  },
-  aiSearchButtonText: {
-    fontSize: 12,
-    color: "#ffffff",
-    fontWeight: "700",
-  },
-  aiDockBody: {
-    marginTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-    paddingTop: 10,
-  },
-  aiDockBodyExpanded: {
-    flex: 1,
-    minHeight: 0,
   },
   qaSection: {
     marginHorizontal: 16,

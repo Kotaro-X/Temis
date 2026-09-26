@@ -1,12 +1,6 @@
-export type AIEvidence = {
-  key: string;
-  memoId: string;
-  chunkId: string;
-  snippetText: string;
-  createdAt: number;
-  tokensHit?: string[];
-  score?: number;
-};
+import type { EvidenceInput } from "../services/aiEvidence";
+
+export type AIEvidence = EvidenceInput & { key: string };
 
 export type AIResponse = {
   answerText: string;

@@ -18,6 +18,8 @@ type Props = {
   visible: boolean;
   onCloseMenu: () => void;
   onOpenTodo: () => void;
+  onOpenDM: () => void;
+  dmUnread: number;
   onOpenSettings: () => void;
   onOpenAccountSettings: () => void;
   onOpenGuildAdmin: () => void;
@@ -31,6 +33,8 @@ const AppMenuBridge = ({
   visible,
   onCloseMenu,
   onOpenTodo,
+  onOpenDM,
+  dmUnread,
   onOpenSettings,
   onOpenAccountSettings,
   onOpenGuildAdmin,
@@ -112,6 +116,13 @@ const AppMenuBridge = ({
             }}
           >
             <Text style={appChromeStyles.sheetItemText}>{tr("menu.todos")}</Text>
+          </Pressable>
+          <Pressable style={appChromeStyles.sheetItem} accessibilityRole="button" onPress={() => { onOpenDM(); onCloseMenu(); }}>
+            <View style={appChromeStyles.sheetItemInline}>
+              <Ionicons name="chatbubbles-outline" size={16} color="#111827" />
+              <Text style={[appChromeStyles.sheetItemText, appChromeStyles.sheetItemTextWithIcon]}>DM</Text>
+              {dmUnread > 0 ? <Text accessibilityLabel={`未読${dmUnread}件`} style={{ marginLeft: 8, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, overflow: "hidden", backgroundColor: "#2563eb", color: "#ffffff", fontSize: 12 }}>{dmUnread > 99 ? "99+" : dmUnread}</Text> : null}
+            </View>
           </Pressable>
           <TaskWorkspaceMenuBridge
             styles={appChromeStyles}

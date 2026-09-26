@@ -52,6 +52,8 @@ type AppUIContextValue = {
   openTodo: () => void;
   openMemos: (screen?: MemoWorkspaceScreenKey) => void;
   openProjects: () => void;
+  openDM: (conversationId?: string | null) => void;
+  dmConversationId: string | null;
   openGuild: () => void;
   openGuildAdmin: () => void;
   openPrivateWorkspace: () => void;
@@ -160,6 +162,7 @@ export const AppUIProvider = ({
   children: React.ReactNode;
 }) => {
   const { appLanguage, languagePickerOpen, tr } = useAppSettings();
+  const [dmConversationId, setDMConversationId] = useState<string | null>(null);
   const [rootScreen, setRootScreen] = useState<AppRootScreen>("tasks");
   const [workspaceScope, setWorkspaceScope] =
     useState<WorkspaceScope>("private");
@@ -353,6 +356,12 @@ export const AppUIProvider = ({
     switchRootScreen("projects");
   }, [switchRootScreen]);
 
+  const openDM = useCallback((conversationId?: string | null) => {
+    setWorkspaceScope("private");
+    setDMConversationId(conversationId ?? null);
+    switchRootScreen("dm");
+  }, [switchRootScreen]);
+
   const openGuild = useCallback(() => {
     setWorkspaceScope("private");
     switchRootScreen("guild");
@@ -485,6 +494,8 @@ export const AppUIProvider = ({
       openTodo,
       openMemos,
       openProjects,
+      openDM,
+      dmConversationId,
       openGuild,
       openGuildAdmin,
       openPrivateWorkspace,
@@ -544,6 +555,8 @@ export const AppUIProvider = ({
       openDatePicker,
       openMemoDetail,
       openMemos,
+    openDM,
+    dmConversationId,
     openGuild,
     openGuildAdmin,
     openProjects,

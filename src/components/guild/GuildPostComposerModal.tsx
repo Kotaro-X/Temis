@@ -62,7 +62,7 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
 
   const handlePublish = async () => {
     if (!profile || submitting) {
-      if (!profile) Alert.alert("ログインが必要です", "ギルドへ投稿するにはアカウントにログインしてください。");
+      if (!profile) Alert.alert("ログインが必要です", "Commonsへ投稿するにはアカウントにログインしてください。");
       return;
     }
     setSubmitting(true);
@@ -117,13 +117,13 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
       <SafeAreaView style={styles.screen}>
         <View style={styles.header}>
           <Pressable style={styles.headerButton} onPress={onClose} disabled={submitting}><Text style={styles.cancel}>キャンセル</Text></Pressable>
-          <Text style={styles.title}>ギルドに投稿</Text>
+          <Text style={styles.title}>Commonsに投稿</Text>
           <Pressable style={[styles.publishButton, submitting && styles.disabled]} onPress={() => void handlePublish()} disabled={submitting}>
             {submitting ? <ActivityIndicator color="#ffffff" size="small" /> : <Text style={styles.publishText}>公開</Text>}
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.caption}>公開後にギルド側で編集すると、元メモにも同じ変更が反映されます。</Text>
+          <Text style={styles.caption}>公開後にCommons側で編集すると、元メモにも同じ変更が反映されます。</Text>
           <Text style={styles.label}>タイトル</Text>
           <TextInput value={title} onChangeText={setTitle} style={styles.input} placeholder="タイトル（任意）" />
           <TextInput value={body} onChangeText={setBody} style={styles.body} multiline autoFocus placeholder="探究やプロジェクトの活動を共有する" textAlignVertical="top" />

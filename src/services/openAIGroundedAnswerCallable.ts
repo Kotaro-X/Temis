@@ -2,7 +2,7 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { getFirebaseApp } from "./sync/firebaseApp";
 
-export type GroundedAnswerEvidence = { key: string; text: string };
+export type GroundedAnswerEvidence = { key: string; text: string; linkPath?: string[] };
 
 export type GroundedAnswerCallableResponse = {
   model: string;

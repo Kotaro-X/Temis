@@ -134,6 +134,21 @@ Result:
 - Client writes `inviteCodes/FREE-ALPHA/redemptions/{userId}`
 - Client increments `inviteCodes/FREE-ALPHA.redeemedCount`
 
+### Staff invite codes
+
+To grant both free Cloud Sync and Commons staff access through a code, create a
+`staff_free` invite. Limit how many accounts can redeem a staff code and set an
+expiry when appropriate:
+
+```bash
+npm run firebase:create-invite-code -- --code STAFF-EXAMPLE --grant-type staff_free --max-redemptions 1 --expires-at 1790780400000 --created-by YOUR_FIREBASE_UID
+```
+
+`--expires-at` is a Unix timestamp in milliseconds. Omit it for a code without
+an expiry. Re-running the command preserves the existing redemption count and
+any optional settings you do not specify. Only share a staff code with people
+who should have Commons moderation access.
+
 ### 4.1 Backfill expiry to existing redeemers
 
 Changing `inviteCodes/{CODE}.expiresAt` affects future redemptions only. If you already granted the code to users and need to align their existing `subscriptionAccess/{userId}.expiresAt`, run:
@@ -216,7 +231,7 @@ This keeps access control simple:
 
 ## 7. Operational notes
 
-- `staff_free` should be granted only by admin tooling or the Firebase console
+- `staff_free` can be granted by admin tooling or by redeeming an admin-created staff code
 - `inviteCodes` should not be writable by normal clients
 - The current client prevents a staff grant from being overwritten by invite redemption
 - If you change admin custom claims, Firebase notes that the new claim is picked up on the next ID token issuance
@@ -232,7 +247,7 @@ npm run test:firestore-rules
 It covers:
 
 - users can write only their own sync namespace
-- normal users cannot self-grant `staff_free`
+- normal users cannot self-grant `staff_free` without a valid staff code and matching redemption transaction
 - admin claim can write `staff_free`
 - invite redemption succeeds only with the expected transaction shape
 - invite code counter updates fail when done in isolation

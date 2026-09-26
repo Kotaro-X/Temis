@@ -108,6 +108,7 @@ export type ProjectInvitationStatus =
 
 export type ProjectInvitation = {
   id: string;
+  projectName?: string;
   projectId: string;
   inviterUserId: string;
   inviteeUserId: string;

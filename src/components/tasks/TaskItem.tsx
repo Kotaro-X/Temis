@@ -177,11 +177,7 @@ const TaskItem = ({
       onOpen={onOpen}
       onClose={onClose}
       revealOnLeft
-      swipeActivationDistance={6}
-      swipeOpenThreshold={0.2}
-      swipeVelocityThreshold={0.22}
-      swipeHorizontalDominanceRatio={0.6}
-      swipeMaxVerticalDrift={40}
+      progressiveSwipe
     >
       <View
         ref={rowRef}

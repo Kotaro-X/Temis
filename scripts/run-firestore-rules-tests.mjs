@@ -23,7 +23,7 @@ const runRulesAssertions = () => {
   }
 
   console.info(
-    `[firestore-rules][assertions-started] Emulator detected at ${process.env.FIRESTORE_EMULATOR_HOST}; running 8 rules tests.`,
+    `[firestore-rules][assertions-started] Emulator detected at ${process.env.FIRESTORE_EMULATOR_HOST}; running rules and backend integration tests.`,
   );
   const result = spawnSync(
     process.execPath,
@@ -41,7 +41,7 @@ const runRulesAssertions = () => {
     );
     process.exit(42);
   }
-  console.info("[firestore-rules][success] All 8 rules tests passed.");
+  console.info("[firestore-rules][success] All rules and backend integration tests passed.");
 };
 
 if (childMode) {

@@ -12,7 +12,7 @@ The app should treat these separately because they represent different business 
 - RevenueCat active `cloud_sync` entitlement:
   - Grants Cloud Sync access immediately
   - Source: `revenuecat`
-- Firestore manual staff grant:
+- Firestore staff grant (admin-assigned or redeemed from a staff code):
   - Grants Cloud Sync access without purchase
   - Source: `staff_free`
 - Firestore invite free grant:
@@ -60,7 +60,7 @@ Suggested fields:
 
 - `code: string`
 - `active: boolean`
-- `grantType: "invite_free" | "invite_discount"`
+- `grantType: "staff_free" | "invite_free" | "invite_discount"`
 - `offeringId: string | null`
 - `packageId: string | null`
 - `expiresAt: number | null`
@@ -106,15 +106,17 @@ Suggested fields:
   - Add `subscriptionAccess/{yourUserId}` with `grantType = "staff_free"` and `active = true`
 - Invite free access:
   - Create `inviteCodes/{CODE}` with `grantType = "invite_free"`
+- Staff code access, including Commons moderation:
+  - Create `inviteCodes/{CODE}` with `grantType = "staff_free"`; set `maxRedemptions` and, if needed, `expiresAt`
 - Invite discount access:
   - Create `inviteCodes/{CODE}` with `grantType = "invite_discount"` and set `offeringId` / `packageId`
 
 ## Security note
 
-This repo currently implements the client flow only. Firestore Security Rules must prevent:
+Firestore Security Rules validate the same three-document redemption transaction and prevent:
 
 - arbitrary writes to `subscriptionAccess`
 - arbitrary creation/edit of `inviteCodes`
-- invalid self-redemption bypasses
+- invalid self-redemption bypasses, including unbacked `staff_free` grants
 
 The client uses a transaction for invite redemption, but correctness still depends on rules.

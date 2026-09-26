@@ -194,6 +194,7 @@ const deleteCoreAccountData = async (uid) => {
   return runAccountDeletionStages([
     // Fail the indexed query before deleting other data. Every step is retryable.
     ["invitations", () => deleteRedemptionRecords(uid)],
+    ["direct_messages", () => require("./directMessagesCore.cjs").createDMService(firestore).deleteAccountMessages(uid)],
     ["profile", async () => {
       const usernames = await firestore.collection("usernames").where("userId", "==", uid).get();
       for (const document of usernames.docs) await document.ref.delete();

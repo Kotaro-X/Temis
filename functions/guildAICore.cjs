@@ -1,6 +1,6 @@
 const GUILD_INDEX_COLLECTION = "guildPostAIIndex";
 const MAX_GUILD_QUESTION_CHARS = 1_000;
-const MAX_GUILD_EVIDENCE = 4;
+const MAX_GUILD_EVIDENCE = 15;
 
 const toMillis = (value) => {
   if (typeof value === "number" && Number.isFinite(value)) return value;

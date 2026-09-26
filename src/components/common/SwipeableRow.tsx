@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   PanResponder,
@@ -6,6 +6,8 @@ import {
   Text,
   View,
 } from "react-native";
+
+import { resolveSwipeProgress, shouldStartTaskSwipe } from "./swipeProgress";
 
 type Action = {
   label: string;
@@ -16,6 +18,7 @@ type Action = {
 };
 
 type Props = {
+  progressiveSwipe?: boolean;
   styles: Record<string, any>;
   children: React.ReactNode;
   actions: Action[];
@@ -33,7 +36,7 @@ type Props = {
   swipeMaxVerticalDrift?: number;
 };
 
-const SwipeableRow = ({
+const LegacySwipeableRow = ({
   styles,
   children,
   actions,
@@ -53,17 +56,17 @@ const SwipeableRow = ({
   const translateX = useRef(new Animated.Value(0)).current;
   const openTranslateX = revealOnLeft ? -maxSwipe : maxSwipe;
 
-  const animateTo = (value: number) => {
+  const animateTo = useCallback((value: number) => {
     Animated.timing(translateX, {
       toValue: value,
       duration: 160,
       useNativeDriver: true,
     }).start();
-  };
+  }, [translateX]);
 
   useEffect(() => {
     animateTo(isOpen ? openTranslateX : 0);
-  }, [isOpen, openTranslateX]);
+  }, [isOpen, openTranslateX, animateTo]);
 
   const panResponder = useMemo(
     () =>
@@ -135,6 +138,7 @@ const SwipeableRow = ({
         },
       }),
     [
+      animateTo,
       enabled,
       isOpen,
       maxSwipe,
@@ -184,5 +188,105 @@ const SwipeableRow = ({
     </View>
   );
 };
+
+// Keep the legacy policy for project rows. Task/Todo rows use a stable responder
+// whose gesture baseline cannot change when onOpen/onClose rerenders the parent.
+const ProgressiveSwipeableRow = (props: Props) => {
+  const { styles, children, actions, isOpen, enabled = true, maxSwipe = 196 } = props;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const latest = useRef(props);
+  latest.current = props;
+  const [side, setSide] = useState(props.revealOnLeft ? -1 : 1);
+  const sideRef = useRef(side);
+  const positionRef = useRef(0);
+  const gestureRef = useRef({ active: false, base: 0, open: isOpen, direction: side });
+  const animateTo = useCallback((position: number) => {
+    Animated.timing(translateX, { toValue: position, duration: 160, useNativeDriver: true }).start();
+  }, [translateX]);
+
+  useEffect(() => {
+    const id = translateX.addListener(({ value }) => { positionRef.current = value; });
+    return () => translateX.removeListener(id);
+  }, [translateX]);
+
+  useEffect(() => {
+    if (!gestureRef.current.active) animateTo(isOpen ? sideRef.current * maxSwipe : 0);
+  }, [isOpen, maxSwipe, animateTo]);
+
+  const panResponder = useMemo(() => {
+    const move = (dx: number) => {
+      const session = gestureRef.current;
+      if (!session.active) return;
+      const result = resolveSwipeProgress(
+        session.base + dx * session.direction,
+        session.open,
+        latest.current.maxSwipe ?? 196,
+      );
+      translateX.setValue(result.position * session.direction);
+      if (result.isOpen !== session.open) {
+        session.open = result.isOpen;
+        if (result.isOpen) latest.current.onOpen();
+        else latest.current.onClose();
+      }
+    };
+    const finish = () => {
+      const session = gestureRef.current;
+      session.active = false;
+      if (session.open) latest.current.onOpen();
+      else latest.current.onClose();
+      animateTo(session.open ? session.direction * (latest.current.maxSwipe ?? 196) : 0);
+    };
+    return PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) => {
+        if (latest.current.enabled === false || !shouldStartTaskSwipe(gesture.dx, gesture.dy)) return false;
+        const direction = latest.current.isOpen
+          ? sideRef.current
+          : latest.current.openFromBothSides
+            ? Math.sign(gesture.dx)
+            : latest.current.revealOnLeft ? -1 : 1;
+        if (!latest.current.isOpen && gesture.dx * direction <= 0) return false;
+        gestureRef.current.direction = direction;
+        return true;
+      },
+      onPanResponderGrant: () => {
+        translateX.stopAnimation();
+        const session = gestureRef.current;
+        session.active = true;
+        session.base = Math.max(0, positionRef.current * session.direction);
+        session.open = latest.current.isOpen;
+        sideRef.current = session.direction;
+        setSide(session.direction);
+      },
+      onPanResponderMove: (_, gesture) => move(gesture.dx),
+      onPanResponderRelease: (_, gesture) => { move(gesture.dx); finish(); },
+      // Once horizontal movement owns the responder, leaving the row or a
+      // ScrollView's termination request must not cancel that movement.
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderTerminate: finish,
+    });
+  }, [translateX, animateTo]);
+
+  return (
+    <View style={styles.swipeRowContainer}>
+      <View style={[styles.swipeActions, { width: maxSwipe }, side < 0 ? { right: 0 } : { left: 0 }]}>
+        {actions.map((action) => (
+          <Pressable key={action.label} style={[styles.swipeActionButton, action.style]}
+            onPress={action.onPress} accessibilityRole="button"
+            accessibilityLabel={action.accessibilityLabel ?? action.label}>
+            <Text style={[styles.swipeActionText, action.textStyle]}>{action.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Animated.View style={[styles.swipeContent, { transform: [{ translateX }] }]}
+        {...(enabled ? panResponder.panHandlers : {})}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+};
+
+const SwipeableRow = (props: Props) => props.progressiveSwipe
+  ? <ProgressiveSwipeableRow {...props} />
+  : <LegacySwipeableRow {...props} />;
 
 export default SwipeableRow;

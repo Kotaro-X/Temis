@@ -124,7 +124,7 @@ const appChromeStyles = StyleSheet.create({
     justifyContent: "center",
     paddingTop: 10,
     paddingBottom: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 4,
   },
   tabButtonActive: {
     backgroundColor: "#f9fafb",
@@ -133,6 +133,7 @@ const appChromeStyles = StyleSheet.create({
     backgroundColor: "#f3f4f6",
   },
   tabLabel: {
+    flexShrink: 1,
     fontSize: 13,
     color: "#6b7280",
     fontWeight: "500",

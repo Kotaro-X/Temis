@@ -1,4 +1,5 @@
 import React from "react";
+import { DirectMessagesProvider } from "../../context/DirectMessagesContext";
 
 import { useAppBootstrap } from "../../hooks/app/useAppBootstrap";
 import { useCloudSyncContext, CloudSyncProvider } from "../../context/CloudSyncContext";
@@ -27,11 +28,13 @@ const AppProviders = ({
     <AppSettingsProvider>
       <CollaborationProvider>
         <AppUIProvider>
+          <DirectMessagesProvider>
           <AppRefreshProvider>
             <CloudSyncProvider>
               <AppBootstrapBoundary>{children}</AppBootstrapBoundary>
             </CloudSyncProvider>
           </AppRefreshProvider>
+          </DirectMessagesProvider>
         </AppUIProvider>
       </CollaborationProvider>
     </AppSettingsProvider>

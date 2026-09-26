@@ -37,21 +37,6 @@ export const useTodoNotifications = ({
   const notificationBootstrappedRef = useRef(false);
 
   useEffect(() => {
-    if (!NotificationsModule?.setNotificationHandler) {
-      return;
-    }
-    NotificationsModule.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldShowAlert: true,
-        shouldPlaySound: false,
-        shouldSetBadge: false,
-      }),
-    });
-  }, []);
-
-  useEffect(() => {
     if (Platform.OS !== "android" || !NotificationsModule?.setNotificationChannelAsync) {
       return;
     }

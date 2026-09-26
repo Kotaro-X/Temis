@@ -5,6 +5,8 @@ import { FieldPath, FieldValue, getFirestore } from "firebase-admin/firestore";
 import accountDeletion from "./accountDeletion.cjs";
 import groundedAnswerCore from "./groundedAnswerCore.cjs";
 import guildAICore from "./guildAICore.cjs";
+import guildAIIndex from "./guildAIIndex.cjs";
+import guildAIRetrieval from "./guildAIRetrieval.cjs";
 
 export const deleteAccount = accountDeletion.deleteAccount;
 export const getAccountDeletionBlockers = accountDeletion.getAccountDeletionBlockers;
@@ -28,14 +30,8 @@ const REGION = "asia-northeast1";
 const db = getFirestore();
 
 const {
-  GUILD_INDEX_COLLECTION,
-  MAX_GUILD_EVIDENCE,
-  buildGuildIndexText,
   isActiveFreeGrant,
-  isPublicVisibleGuildPost,
   readGuildQuestion,
-  toMillis,
-  toSafeGuildEvidencePost,
 } = guildAICore;
 
 const invalidArgument = (message) =>
@@ -215,35 +211,14 @@ const requirePlusAccess = async (uid) => {
   throw new HttpsError("permission-denied", "Temis Plus is required for Guild AI search.");
 };
 
-const writeGuildPostIndex = async (postId, post) => {
-  const indexRef = db.collection(GUILD_INDEX_COLLECTION).doc(postId);
-  if (!isPublicVisibleGuildPost(post)) {
-    await indexRef.delete().catch((error) => {
-      if (error?.code !== 5) throw error;
-    });
-    return false;
-  }
-  const indexText = buildGuildIndexText(post);
-  if (!indexText) {
-    await indexRef.delete();
-    return false;
-  }
-  const [embedding] = await requestEmbeddings([indexText]);
-  await indexRef.set({
-    postId,
-    status: "published",
-    moderationVisibility: "visible",
-    embeddingModel: EMBEDDING_MODEL,
-    sourceUpdatedAt: toMillis(post.updatedAt) ?? Date.now(),
-    publishedAt: toMillis(post.publishedAt) ?? Date.now(),
-    embedding: FieldValue.vector(embedding),
-  });
-  return true;
-};
+const writeGuildPostIndex = guildAIIndex.createGuildIndexWriter({
+  db, FieldValue, requestEmbeddings, embeddingModel: EMBEDDING_MODEL,
+});
 
 export const indexGuildPostForAISearch = onDocumentWritten(
   {
     document: "guildPosts/{postId}",
+    retry: true,
     region: REGION,
     timeoutSeconds: 60,
     maxInstances: 3,
@@ -252,13 +227,8 @@ export const indexGuildPostForAISearch = onDocumentWritten(
   },
   async (event) => {
     const postId = event.params.postId;
-    const post = event.data?.after.exists ? event.data.after.data() : null;
-    if (!post) {
-      await db.collection(GUILD_INDEX_COLLECTION).doc(postId).delete();
-      return;
-    }
     try {
-      await writeGuildPostIndex(postId, post);
+      await writeGuildPostIndex(postId);
     } catch (error) {
       throw mapOpenAIError(error, "Guild AI indexing");
     }
@@ -287,46 +257,37 @@ export const searchGuildPostsWithAI = onCall(
 
     try {
       const [queryEmbedding] = await requestEmbeddings([question]);
-      const nearest = db.collection(GUILD_INDEX_COLLECTION)
-        .where("status", "==", "published")
-        .where("moderationVisibility", "==", "visible")
-        .findNearest({
-          vectorField: "embedding",
-          queryVector: FieldValue.vector(queryEmbedding),
-          limit: 20,
-          distanceMeasure: "COSINE",
-        });
-      const indexSnapshot = await nearest.get();
-      const candidates = [];
-      for (const indexDoc of indexSnapshot.docs) {
-        const postId = indexDoc.data()?.postId;
-        if (typeof postId !== "string") continue;
-        const postSnapshot = await db.collection("guildPosts").doc(postId).get();
-        const post = postSnapshot.data();
-        if (!postSnapshot.exists || !isPublicVisibleGuildPost(post)) continue;
-        if (await hasBlockedConnection(uid, post.authorUserId)) continue;
-        candidates.push(toSafeGuildEvidencePost(postId, post));
-        if (candidates.length >= MAX_GUILD_EVIDENCE) break;
-      }
-      if (candidates.length === 0) {
+      const result = await guildAIRetrieval.retrieveGuildAnswer({
+        db, FieldValue, HttpsError, uid, question, queryEmbedding, hasBlockedConnection,
+      });
+      if (result.evidence.length === 0) {
         return { answerText: "関連する公開投稿が見つかりませんでした。", citedPostIds: [], evidencePosts: [] };
       }
-      const evidence = candidates.map((post, index) => ({
+      await result.revalidate();
+      const evidence = result.evidence.map((item, index) => ({
         key: `G${index + 1}`,
-        text: [post.title, post.body].filter(Boolean).join("\n").slice(0, 1_200),
+        text: item.snippetText,
+        ...(item.linkPath.every((token) => token.length <= 200) ? { linkPath: item.linkPath } : {}),
       }));
       const generated = await groundedAnswerCore.generateGroundedAnswer({
         apiKey: openAiApiKey.value(),
         data: { question, evidence },
       });
-      const postIdByKey = new Map(evidence.map((item, index) => [item.key, candidates[index].id]));
+      await result.revalidate();
+      const postIdByKey = new Map(evidence.map((item, index) => [item.key, result.posts[index].id]));
       return {
         answerText: generated.answerText,
         citedPostIds: generated.citedEvidenceKeys.map((key) => postIdByKey.get(key)).filter(Boolean),
-        evidencePosts: candidates,
+        evidencePosts: result.posts,
       };
     } catch (error) {
-      throw mapOpenAIError(error, "Guild AI search");
+      // No post bodies, questions, or upstream responses in logs.
+      console.error("Temis AI Guild search failed", { code: error?.code ?? null, status: error?.status ?? null });
+      if (error instanceof HttpsError) throw error;
+      if (error?.code === 9) throw new HttpsError("failed-precondition", "Temis AI search index is not ready.");
+      const mapped = mapOpenAIError(error, "Temis AI Guild search");
+      if (mapped.code === "failed-precondition") throw new HttpsError("unavailable", "Temis AI search failed. Please retry.");
+      throw mapped;
     }
   },
 );
@@ -349,13 +310,23 @@ export const backfillGuildPostAIIndex = onCall(
     if (cursor) query = query.startAfter(cursor);
     const snapshot = await query.get();
     let indexedCount = 0;
+    const failedPostIds = [];
     for (const document of snapshot.docs) {
-      if (await writeGuildPostIndex(document.id, document.data())) indexedCount += 1;
+      try {
+        if (await writeGuildPostIndex(document.id)) indexedCount += 1;
+      } catch {
+        failedPostIds.push(document.id);
+      }
     }
     return {
       processedCount: snapshot.size,
+      failedPostIds,
       indexedCount,
       nextCursor: snapshot.size === limit ? snapshot.docs[snapshot.docs.length - 1].id : null,
     };
   },
 );
+
+// Connection-only direct messages; independent of Cloud Sync entitlements.
+import directMessages from "./directMessages.cjs";
+export const { sendDirectMessage, markDirectMessagesRead, setDirectMessageDevice, notifyDirectMessage, retryDirectMessageNotifications } = directMessages;

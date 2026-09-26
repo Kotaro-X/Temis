@@ -4,7 +4,9 @@ import {
   doc,
   documentId,
   getDoc,
+  getDocFromServer,
   getDocs,
+  getDocsFromServer,
   limit,
   orderBy,
   query,
@@ -45,7 +47,7 @@ const joinRequestRef = (id: string) => doc(db(), "projectJoinRequests", id);
 const reportRef = (id: string) => doc(db(), "guildReports", id);
 const requireUserId = () => {
   const userId = getFirebaseAuth().currentUser?.uid;
-  if (!userId) throw new Error("アカウントにログインしてからギルドを利用してください。");
+  if (!userId) throw new Error("アカウントにログインしてからCommonsを利用してください。");
   return userId;
 };
 
@@ -105,7 +107,7 @@ export const listGuildPosts = async ({
   const userId = requireUserId();
   const normalizedTags = normalizeGuildTags(tags);
   const [snapshot, relationships] = await Promise.all([
-    getDocs(pageQuery(normalizedTags, cursor)),
+    getDocsFromServer(pageQuery(normalizedTags, cursor)),
     loadViewerRelationships(userId),
   ]);
   let posts = snapshot.docs.map((item) => item.data() as GuildPost);
@@ -126,7 +128,7 @@ export const listGuildPosts = async ({
 
 export const getGuildPost = async (postId: string): Promise<GuildFeedPost | null> => {
   const userId = requireUserId();
-  const snapshot = await getDoc(postRef(postId));
+  const snapshot = await getDocFromServer(postRef(postId));
   if (!snapshot.exists()) return null;
   const post = snapshot.data() as GuildPost;
   if (post.status !== "published" || post.moderation.visibility !== "visible") return null;

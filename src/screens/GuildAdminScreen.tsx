@@ -112,7 +112,7 @@ const GuildAdminScreen = ({ visible, contentPaddingTop, onBack }: Props) => {
     <View style={[styles.screen, { paddingTop: contentPaddingTop }]}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" onPress={onBack}>
-          <Text style={styles.back}>ギルドへ</Text>
+          <Text style={styles.back}>Commonsへ</Text>
         </Pressable>
         <Text style={styles.title}>運営画面</Text>
         <View style={styles.headerSpacer} />

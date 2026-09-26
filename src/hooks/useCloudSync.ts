@@ -93,7 +93,7 @@ export const useCloudSync = ({
         setUser(remainingUser);
         setAuthStatus(remainingUser ? "signedIn" : "signedOut");
         if (deletionState === "pending") setError(accountDeletionErrorMessage(null));
-        if (deletionState === "deleted") await signOutSyncUser().catch(() => {});
+        if (deletionState === "deleted") await signOutSyncUser({ accountDeleted: true }).catch(() => {});
         return remainingUser;
       }
       const firebaseUser = getFirebaseAuth().currentUser;
@@ -339,7 +339,7 @@ export const useCloudSync = ({
 
         // The cloud account is gone at this point. Sign out locally before
         // clearing storage so Firebase and RevenueCat cannot retain the old UID.
-        const cleanup = await Promise.allSettled([logOutRevenueCatUser(), signOutSyncUser()]);
+        const cleanup = await Promise.allSettled([logOutRevenueCatUser(), signOutSyncUser({ accountDeleted: true })]);
         const signOutPending = cleanup[1].status === "rejected";
         let localCleanupPending = false;
         try {

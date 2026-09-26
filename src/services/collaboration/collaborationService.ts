@@ -6,6 +6,7 @@ import {
   getDocs,
   limit,
   orderBy,
+  onSnapshot,
   query,
   runTransaction,
   setDoc,
@@ -332,7 +333,10 @@ export const setConnectionBlocked = async (otherUserId: string, blocked: boolean
     return;
   }
   const timestamp = now();
-  await setDoc(ref, {
+  const existing = await getConnectionWithUser(otherUserId);
+  await setDoc(ref, existing ? {
+    ...existing, status: "blocked", blockedByUserId: userId, updatedAt: timestamp,
+  } : {
     id: ref.id, userIds: sortedUserIds(userId, otherUserId), requesterUserId: userId,
     recipientUserId: otherUserId, status: "blocked", blockedByUserId: userId,
     createdAt: timestamp, updatedAt: timestamp,
@@ -407,11 +411,34 @@ export const inviteToProject = async (
   const id = nanoid();
   const timestamp = now();
   const invitation: ProjectInvitation = {
-    id, projectId: project.id, inviterUserId, inviteeUserId, role,
+    id, projectId: project.id, projectName: project.name, inviterUserId, inviteeUserId, role,
     status: "pending", createdAt: timestamp, updatedAt: timestamp, expiresAt: null,
   };
   await setDoc(invitationRef(id), invitation);
   return invitation;
+};
+
+// Keep the query constrained to the signed-in participant for Firestore Rules.
+export const subscribeToIncomingConnections = (
+  onChange: (items: Connection[]) => void,
+  onError: (error: Error) => void,
+): (() => void) => {
+  const userId = requireCurrentUserId();
+  return onSnapshot(query(collection(db(), "connections"), where("userIds", "array-contains", userId)),
+    (snapshot) => onChange(snapshot.docs.map((item) => item.data() as Connection)
+      .filter((item) => item.status === "pending" && item.recipientUserId === userId)
+      .sort((a, b) => b.createdAt - a.createdAt)), onError);
+};
+
+export const subscribeToIncomingInvitations = (
+  onChange: (items: ProjectInvitation[]) => void,
+  onError: (error: Error) => void,
+): (() => void) => {
+  const userId = requireCurrentUserId();
+  return onSnapshot(query(collection(db(), "projectInvitations"), where("inviteeUserId", "==", userId)),
+    (snapshot) => onChange(snapshot.docs.map((item) => item.data() as ProjectInvitation)
+      .filter((item) => item.status === "pending")
+      .sort((a, b) => b.createdAt - a.createdAt)), onError);
 };
 
 export const listMyPendingInvitations = async (): Promise<ProjectInvitation[]> => {
@@ -430,6 +457,9 @@ export const respondToProjectInvitation = async (invitationId: string, accept: b
       throw new Error("この招待には応答できません。");
     }
     const timestamp = now();
+    if (accept && invitation.expiresAt != null && invitation.expiresAt <= timestamp) {
+      throw new Error("この招待は有効期限が切れています。");
+    }
     transaction.set(invitationRef(invitationId), { ...invitation, status: accept ? "accepted" : "declined", updatedAt: timestamp });
     if (accept) transaction.set(memberRef(invitation.projectId, userId), {
       userId, role: invitation.role, invitationId, joinedAt: timestamp, updatedAt: timestamp,

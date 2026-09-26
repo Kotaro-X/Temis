@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 type Props<T> = {
   answerTitle: string;
@@ -37,11 +37,9 @@ const AIAnswerEvidencePanel = <T,>({
     <View style={styles.container}>
       {answerText || errorText ? <View style={[styles.answer, errorText ? styles.answerError : null]}>
         <Text style={styles.answerLabel}>{answerTitle}</Text>
-        <ScrollView style={styles.answerScroll} nestedScrollEnabled>
-          <Text style={[styles.answerText, errorText ? styles.errorText : null]}>
-            {errorText || answerText}
-          </Text>
-        </ScrollView>
+        <Text selectable={!errorText} style={[styles.answerText, errorText ? styles.errorText : null]}>
+          {errorText || answerText}
+        </Text>
       </View> : null}
       {citedEvidence.length ? <View style={styles.section}>
         <Text style={styles.sectionTitle}>{citedTitle}</Text>
@@ -76,7 +74,6 @@ const styles = StyleSheet.create({
   answer: { borderWidth: 1, borderColor: "#111827", borderRadius: 12, padding: 12, gap: 8 },
   answerError: { borderColor: "#b91c1c", backgroundColor: "#fef2f2" },
   answerLabel: { alignSelf: "flex-start", color: "#fff", backgroundColor: "#111827", paddingHorizontal: 8, paddingVertical: 4, fontSize: 11, fontWeight: "800" },
-  answerScroll: { maxHeight: 170 },
   answerText: { color: "#111827", fontSize: 14, lineHeight: 21 },
   errorText: { color: "#b91c1c" },
   section: { gap: 8 },

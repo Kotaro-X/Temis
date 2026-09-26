@@ -1,8 +1,8 @@
 import {
-  AnswerEvidence,
   answerWithCitations,
 } from "./answerWithCitations";
-import { hybridSearch } from "./hybridSearch";
+import { searchWikiAnswerEvidence } from "./wikiAnswerRetrieval";
+import { labelAnswerEvidence, type EvidenceInput } from "./aiEvidence";
 
 type SelectedPeriod =
   | string
@@ -12,15 +12,7 @@ type SelectedPeriod =
       to?: string;
     };
 
-export type AskLocalAIEvidence = {
-  key: string;
-  memoId: string;
-  chunkId: string;
-  snippetText: string;
-  createdAt: number;
-  tokensHit?: string[];
-  score?: number;
-};
+export type AskLocalAIEvidence = EvidenceInput & { key: string };
 
 export type AskLocalAIResult = {
   answerText: string;
@@ -28,7 +20,7 @@ export type AskLocalAIResult = {
   allEvidence: AskLocalAIEvidence[];
 };
 
-const DEFAULT_TOP_K = 8;
+const DEFAULT_TOP_K = 15;
 const NOT_FOUND_TEXT = "該当メモが見つかりません。";
 
 const toDateLabel = (timestamp: number): string => {
@@ -58,26 +50,6 @@ const normalizePeriod = (value?: SelectedPeriod): string | null => {
   }
   return from || to || null;
 };
-
-const labelEvidence = (evidence: AnswerEvidence[]): AskLocalAIEvidence[] =>
-  evidence
-    .slice()
-    .sort(
-      (left, right) =>
-        (right.tokensHit?.length ?? 0) - (left.tokensHit?.length ?? 0) ||
-        (right.score ?? 0) - (left.score ?? 0) ||
-        left.chunkId.localeCompare(right.chunkId),
-    )
-    .slice(0, DEFAULT_TOP_K)
-    .map((item, index) => ({
-      key: `E${index + 1}`,
-      memoId: item.memoId,
-      chunkId: item.chunkId,
-      snippetText: item.snippetText,
-      createdAt: item.createdAt,
-      tokensHit: item.tokensHit,
-      score: item.score,
-    }));
 
 const buildLogSummaryText = (
   evidence: AskLocalAIEvidence[],
@@ -118,11 +90,8 @@ export const askLocalAI = async (
     };
   }
 
-  const rawEvidence = await hybridSearch(trimmed, {
-    topK: DEFAULT_TOP_K,
-    topN: DEFAULT_TOP_K,
-  });
-  const allEvidence = labelEvidence(rawEvidence);
+  const rawEvidence = await searchWikiAnswerEvidence(trimmed, DEFAULT_TOP_K);
+  const allEvidence = labelAnswerEvidence(rawEvidence);
   if (allEvidence.length === 0) {
     return {
       answerText: NOT_FOUND_TEXT,

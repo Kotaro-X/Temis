@@ -10,7 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import MenuButton from "../components/common/MenuButton";
 import ProjectOwnedTaskList from "../components/private-project/ProjectOwnedTaskList";
 import {
-  TodoComposerModal,
+  TodoComposerHost,
   TodoItemsList,
   TodoWorkspaceContent,
 } from "../components/todos";
@@ -32,7 +32,6 @@ const TodoWorkspaceScreen = ({
   onOpenMenu,
 }: Props) => {
   const {
-    tagOptions,
     calendarWeekdayLabels,
     todoViewMode,
     setTodoViewMode,
@@ -40,50 +39,19 @@ const TodoWorkspaceScreen = ({
     setTodoListRange,
     setTodoCalendarMonth,
     todoCalendarSelectedDate,
-    todoCreateOpen,
-    todoEditingContext,
-    todoDraft,
-    setTodoDraft,
     openSwipeTodoId,
     setOpenSwipeTodoId,
-    todoDatePickerOpen,
-    todoDateDraft,
-    setTodoDateDraft,
-    todoDateError,
-    todoCalendarMonthLabel,
-    todoCalendarCells,
-    todoTimePickerOpen,
-    todoHourDraft,
-    todoMinuteDraft,
     todoScreenCalendarMonthLabel,
     todoScreenCalendarCells,
     todoListEntries,
     todoCountsByDate,
     selectedDateTodos,
     unscheduledTodos,
-    hourOptions,
-    minuteOptions,
     openTodoCreate,
-    closeTodoCreate,
     openTodoEdit,
-    addSimpleTodo,
-    applyTodoEdit,
-    toggleTodoDraftTag,
-    setTodoDraftRepeat,
     toggleSimpleTodoDone,
     deleteSimpleTodo,
-    openTodoDatePicker,
-    closeTodoDatePicker,
-    shiftTodoDateDraft,
-    shiftTodoDatePickerMonth,
-    selectTodoDateFromCalendar,
-    applyTodoDateDraft,
     selectTodoCalendarCell,
-    openTodoTimePicker,
-    closeTodoTimePicker,
-    applyTodoTimeDraft,
-    handleHourPickerScrollEnd,
-    handleMinutePickerScrollEnd,
   } = useTodoWorkspace();
 
   const handleOpenMenu = useCallback(() => {
@@ -91,33 +59,6 @@ const TodoWorkspaceScreen = ({
     setOpenSwipeTodoId(null);
     onOpenMenu();
   }, [onOpenMenu, setOpenSwipeTodoId]);
-
-  const handleSaveTodo = useCallback(() => {
-    Keyboard.dismiss();
-    if (!todoEditingContext) {
-      addSimpleTodo();
-      return;
-    }
-    if (todoEditingContext.isRecurringSeries && todoEditingContext.occurrenceDate) {
-      Alert.alert(
-        tr("todo.editScopeTitle"),
-        tr("todo.editScopeBody"),
-        [
-          { text: tr("common.cancel"), style: "cancel" },
-          {
-            text: tr("todo.editScope.single"),
-            onPress: () => applyTodoEdit("single"),
-          },
-          {
-            text: tr("todo.editScope.all"),
-            onPress: () => applyTodoEdit("series"),
-          },
-        ],
-      );
-      return;
-    }
-    applyTodoEdit("series");
-  }, [addSimpleTodo, applyTodoEdit, todoEditingContext, tr]);
 
   const confirmDeleteSimpleTodo = useCallback((entry: TodoListEntry) => {
     if (entry.isRecurringSeries && entry.occurrenceDate) {
@@ -205,42 +146,7 @@ const TodoWorkspaceScreen = ({
         unscheduledTodos={unscheduledTodos}
         projectItemsFooter={<ProjectOwnedTaskList kind="todo" />}
       />
-      <TodoComposerModal
-        visible={todoCreateOpen}
-        styles={styles}
-        tr={tr}
-        todoEditingContext={todoEditingContext}
-        todoDraft={todoDraft}
-        setTodoDraft={setTodoDraft}
-        tagOptions={tagOptions}
-        calendarWeekdayLabels={calendarWeekdayLabels}
-        todoDatePickerOpen={todoDatePickerOpen}
-        todoDateDraft={todoDateDraft}
-        setTodoDateDraft={setTodoDateDraft}
-        todoDateError={todoDateError}
-        todoCalendarMonthLabel={todoCalendarMonthLabel}
-        todoCalendarCells={todoCalendarCells}
-        todoTimePickerOpen={todoTimePickerOpen}
-        todoHourDraft={todoHourDraft}
-        todoMinuteDraft={todoMinuteDraft}
-        hourOptions={hourOptions}
-        minuteOptions={minuteOptions}
-        onClose={closeTodoCreate}
-        onSave={handleSaveTodo}
-        onToggleTodoDraftTag={toggleTodoDraftTag}
-        onSetTodoDraftRepeat={setTodoDraftRepeat}
-        onOpenTodoDatePicker={openTodoDatePicker}
-        onCloseTodoDatePicker={closeTodoDatePicker}
-        onShiftTodoDateDraft={shiftTodoDateDraft}
-        onShiftTodoDatePickerMonth={shiftTodoDatePickerMonth}
-        onSelectTodoDateFromCalendar={selectTodoDateFromCalendar}
-        onApplyTodoDateDraft={applyTodoDateDraft}
-        onOpenTodoTimePicker={openTodoTimePicker}
-        onCloseTodoTimePicker={closeTodoTimePicker}
-        onApplyTodoTimeDraft={applyTodoTimeDraft}
-        onHandleHourPickerScrollEnd={handleHourPickerScrollEnd}
-        onHandleMinutePickerScrollEnd={handleMinutePickerScrollEnd}
-      />
+      <TodoComposerHost source="todo" tr={tr} />
     </>
   );
 };

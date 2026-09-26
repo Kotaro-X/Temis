@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,7 +11,7 @@ import {
 
 import MemoTextEditor from "../inputs/MemoTextEditor";
 import TokenChips from "../TokenChips";
-import { loadMemoByTaskId, updateMemo } from "../../repositories/memoRepository";
+import { useTaskMemoAutosave } from "../../hooks/tasks/useTaskMemoAutosave";
 import { extractTokens } from "../../utils/wikiLink";
 import { AppLanguage, t } from "../../i18n";
 
@@ -22,77 +23,8 @@ type Props = {
 
 const TaskMemoPanel = ({ taskId, onSearchToken, language }: Props) => {
   const tr = (key: string) => t(language, key);
-  const [body, setBody] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedRef = useRef("");
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    loadMemoByTaskId(taskId)
-      .then((memo) => {
-        if (active) {
-          setBody(memo?.body ?? "");
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setBody("");
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [taskId]);
-
+  const { body, loading, saving, error, setBody, retry } = useTaskMemoAutosave(taskId);
   const tokens = useMemo(() => extractTokens(body), [body]);
-
-  const saveDraft = async (nextBody: string) => {
-    if (saving) {
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateMemo(taskId, nextBody, { indexMode: "async" });
-      lastSavedRef.current = nextBody;
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  useEffect(() => {
-    lastSavedRef.current = body;
-  }, [taskId]);
-
-  useEffect(() => {
-    if (loading || body === lastSavedRef.current) {
-      return;
-    }
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-    }
-    autosaveTimerRef.current = setTimeout(() => {
-      void saveDraft(body);
-    }, 800);
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-      }
-    };
-  }, [body, loading]);
-
-  useEffect(() => () => {
-    if (body !== lastSavedRef.current) {
-      void saveDraft(body);
-    }
-  }, [body]);
 
   return (
     <KeyboardAvoidingView
@@ -108,6 +40,7 @@ const TaskMemoPanel = ({ taskId, onSearchToken, language }: Props) => {
           <Text style={styles.sectionTitle}>{tr("memo.title")}</Text>
         </View>
         <MemoTextEditor
+          editable={!loading && error !== "load"}
           value={body}
           onChangeText={setBody}
           placeholder={language === "en" ? "Enter memo" : "メモを入力"}
@@ -115,6 +48,20 @@ const TaskMemoPanel = ({ taskId, onSearchToken, language }: Props) => {
           linkStyle={styles.memoLink}
           enableHighlight={false}
         />
+        {error ? (
+          <View accessibilityLiveRegion="polite">
+            <Text style={styles.helperText}>
+              {error === "load"
+                ? (language === "en" ? "Could not load memo." : "メモを読み込めませんでした。")
+                : (language === "en" ? "Could not save memo. Your draft is retained." : "メモを保存できませんでした。入力内容は保持されています。")}
+            </Text>
+            <Pressable accessibilityRole="button" onPress={() => { void retry(); }}>
+              <Text style={styles.retryText}>{language === "en" ? "Retry" : "再試行"}</Text>
+            </Pressable>
+          </View>
+        ) : saving ? (
+          <Text style={styles.helperText}>{language === "en" ? "Saving…" : "保存中…"}</Text>
+        ) : null}
         {loading ? (
           <Text style={styles.helperText}>{tr("common.loading")}</Text>
         ) : (
@@ -170,6 +117,7 @@ const styles = StyleSheet.create({
     color: "#1f2937",
     fontWeight: "600",
   },
+  retryText: { color: "#2563eb", paddingVertical: 10 },
   helperText: {
     marginTop: 8,
     fontSize: 12,

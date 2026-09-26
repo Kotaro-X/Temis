@@ -8,7 +8,7 @@ import {
   takeValue,
 } from "./firebase-admin-runtime.ts";
 
-type InviteGrantType = "invite_free" | "invite_discount";
+type InviteGrantType = "staff_free" | "invite_free" | "invite_discount";
 
 type Args = {
   code: string | null;
@@ -44,12 +44,13 @@ type ExistingInviteCodeRecord = {
 
 const USAGE = `
 Usage:
+  npm run firebase:create-invite-code -- --code <CODE> --grant-type staff_free --max-redemptions <COUNT>
   npm run firebase:create-invite-code -- --code <CODE> --grant-type invite_free
   npm run firebase:create-invite-code -- --code <CODE> --grant-type invite_discount --offering-id <REVENUECAT_OFFERING>
 
 Options:
   --code <code>               Invite code identifier
-  --grant-type <type>         invite_free | invite_discount
+  --grant-type <type>         staff_free | invite_free | invite_discount
   --offering-id <id>          RevenueCat offering override
   --package-id <id>           RevenueCat package override
   --expires-at <unix-ms>      Optional expiry timestamp in milliseconds
@@ -74,7 +75,7 @@ const normalizeOptionalNumber = (value: unknown): number | null =>
 const normalizeBoolean = (value: unknown): boolean => value === true;
 
 const isInviteGrantType = (value: unknown): value is InviteGrantType =>
-  value === "invite_free" || value === "invite_discount";
+  value === "staff_free" || value === "invite_free" || value === "invite_discount";
 
 const parseArgs = (argv: string[]): Args => {
   const next: Args = {

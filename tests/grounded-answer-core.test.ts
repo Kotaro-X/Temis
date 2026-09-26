@@ -125,3 +125,29 @@ test("grounded answer retains 5xx status without returning upstream content", as
       (error as Error & { status?: number }).status === 503,
   );
 });
+
+test("grounded answer accepts 15 full excerpts, keeps legacy inputs and rejects 16 or oversized text", () => {
+  const evidence = Array.from({ length: 15 }, (_, n) => ({ key: `E${n + 1}`, text: "根".repeat(1200) }));
+  assert.doesNotThrow(() => grounded.readGroundedAnswerInput({ question: "質問", evidence }));
+  assert.doesNotThrow(() => grounded.readGroundedAnswerInput({ question: "質問", evidence: evidence.slice(0, 4) }));
+  assert.throws(() => grounded.readGroundedAnswerInput({ question: "質問", evidence: [...evidence, { key: "E16", text: "根拠" }] }), /1 to 15/);
+  assert.throws(() => grounded.readGroundedAnswerInput({ question: "質問", evidence: [{ key: "E1", text: "根".repeat(1201) }] }), /1200/);
+});
+
+test("Wiki paths are bounded metadata and all 15 evidence keys reach the model", async () => {
+  const evidence = Array.from({ length: 15 }, (_, n) => ({ key: `E${n + 1}`, text: `根拠${n}`, linkPath: ["風の谷", "医療", "交通"] }));
+  await grounded.generateGroundedAnswer({
+    apiKey: "test-key", data: { question: "田舎", evidence },
+    fetchImpl: (async (_url: unknown, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body));
+      assert.ok(request.input.includes("[E15] 根拠14"));
+      assert.ok(request.input.includes('["風の谷","医療","交通"]'));
+      assert.ok(request.instructions.includes("因果関係を断定せず"));
+      assert.equal(request.text.format.schema.properties.citedEvidenceKeys.items.enum.length, 15);
+      return new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ answerText: "交通と医療を考慮します。", citedEvidenceKeys: ["E15"] }) }] }] }), { status: 200 });
+    }) as typeof fetch,
+  });
+  for (const linkPath of [["a", "b", "c", "d"], [4], [""], ["a".repeat(201)]]) {
+    assert.throws(() => grounded.readGroundedAnswerInput({ question: "質問", evidence: [{ key: "E1", text: "根拠", linkPath }] }), /Wiki link paths/);
+  }
+});

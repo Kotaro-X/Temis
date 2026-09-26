@@ -12,6 +12,7 @@ type Props = {
   emptyLabel: string;
   styles: Record<string, any>;
   tr: (key: string) => string;
+  // Stores TodoListEntry.key (including occurrence date), not the record ID.
   openSwipeTodoId: string | null;
   setOpenSwipeTodoId: React.Dispatch<React.SetStateAction<string | null>>;
   onToggleSimpleTodoDone: (entry: TodoListEntry) => void;
@@ -48,13 +49,14 @@ const TodoItemsList = ({
           style: styles.swipeDeleteButton,
         },
       ]}
-      isOpen={openSwipeTodoId === todo.todo.id}
-      onOpen={() => setOpenSwipeTodoId(todo.todo.id)}
+      isOpen={openSwipeTodoId === todo.key}
+      onOpen={() => setOpenSwipeTodoId(todo.key)}
       onClose={() =>
-        setOpenSwipeTodoId((prev) => (prev === todo.todo.id ? null : prev))
+        setOpenSwipeTodoId((prev) => (prev === todo.key ? null : prev))
       }
       maxSwipe={100}
-      openFromBothSides
+      progressiveSwipe
+      revealOnLeft
     >
       <View style={styles.todoItem}>
         <View style={styles.todoItemHeader}>
