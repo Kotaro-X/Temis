@@ -36,7 +36,7 @@ const TYPE_LABEL: Record<GuildPostType, string> = {
 };
 
 const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", initialBody = "", onClose, onPublished }: Props) => {
-  const { profile, projects } = useCollaboration();
+  const { profile, projects, projectStatus } = useCollaboration();
   const [title, setTitle] = useState(initialTitle);
   const [body, setBody] = useState(initialBody);
   const [type, setType] = useState<GuildPostType>(source?.scope === "project" ? "project_activity" : "personal");
@@ -61,6 +61,10 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
   };
 
   const handlePublish = async () => {
+    if ((projectId || type !== "personal" || source?.scope === "project") && projectStatus !== "ready") {
+      Alert.alert("投稿できません", "プロジェクトの利用状態を確認してから再試行してください。");
+      return;
+    }
     if (!profile || submitting) {
       if (!profile) Alert.alert("ログインが必要です", "Commonsへ投稿するにはアカウントにログインしてください。");
       return;

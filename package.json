@@ -17,6 +17,7 @@
     "test:firestore-rules": "node scripts/run-firestore-rules-tests.mjs",
     "cloud-sync:preflight": "bash ./scripts/cloud-sync-preflight.sh",
     "firebase:backfill-invite-grant-expiry": "node --experimental-strip-types ./scripts/backfill-invite-grant-expiry.ts",
+    "firebase:prepare-freemium": "node --experimental-strip-types ./scripts/prepare-freemium-rollout.ts",
     "firebase:create-invite-code": "node --experimental-strip-types ./scripts/create-invite-code.ts",
     "firebase:grant-cloud-sync": "node --experimental-strip-types ./scripts/upsert-cloud-sync-grant.ts",
     "firebase:set-admin-claim": "node --experimental-strip-types ./scripts/set-firebase-admin-claim.ts",

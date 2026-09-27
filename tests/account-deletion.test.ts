@@ -150,7 +150,9 @@ test("actual callable: external outages leave Firebase success intact", async ()
   const result = await fixture.call(request);
   assert.equal(result.deleted, true);
   assert.deepEqual(Array.from(result.externalCleanupPending), ["revenuecat", "crashlytics"]);
-  assert.deepEqual(fixture.events.slice(0, 7), ["query", "invitations", "direct_messages", "profile", "cloud_data", "subscription_access", "firebase_auth"]);
+  assert.deepEqual(fixture.events.slice(0, 5), ["query", "invitations", "direct_messages", "profile", "cloud_data"]);
+  assert.equal(fixture.events.filter((event) => event === "subscription_access").length, 3);
+  assert.ok(fixture.events.indexOf("firebase_auth") > fixture.events.indexOf("subscription_access"));
   assert.doesNotMatch(JSON.stringify(fixture.logs), /NOT_REAL|FAKE_DISPOSABLE_UID/);
 });
 

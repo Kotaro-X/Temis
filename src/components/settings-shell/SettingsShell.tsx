@@ -170,7 +170,7 @@ const SettingsShell = ({
     restoreTag,
   } = useAppSettings();
   const { openGuild, openMenu, openProjects, settingsScreen, setSettingsScreen } = useAppUI();
-  const { profile, saveDisplayName, saveUsername, refresh: refreshCollaboration } = useCollaboration();
+  const { profile, status: profileStatus, error: profileError, refreshProfile, saveDisplayName, saveUsername, refresh: refreshCollaboration } = useCollaboration();
   const { resetApp } = useAppReset();
   const { isRefreshing, refreshApp } = useAppRefresh();
   const {
@@ -411,6 +411,9 @@ const SettingsShell = ({
           googleAccountEmail={syncUser?.email ?? null}
           googleAccountName={syncUser?.name ?? null}
           username={profile?.username ?? null}
+          profileStatus={profileStatus}
+          profileError={profileError}
+          onRetryProfile={refreshProfile}
           onSaveUsername={saveUsername}
           displayName={profile?.displayName ?? null}
           onSaveDisplayName={saveDisplayName}

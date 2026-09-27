@@ -7,7 +7,6 @@ import {
   SafeAreaView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,9 +15,8 @@ import { loadAllTodayStates } from "../../storage";
 import WikiReferenceOverlay, {
   WikiReferenceFilter,
 } from "../components/WikiReferenceOverlay";
-import MemoTextEditor from "../components/inputs/MemoTextEditor";
+import MemoEditorFields from "../components/memo/MemoEditorFields";
 import GuildPostComposerModal from "../components/guild/GuildPostComposerModal";
-import TokenChips from "../components/TokenChips";
 import {
   deleteMemo,
   loadMemoById,
@@ -689,39 +687,18 @@ const MemoDetailScreen = ({
                   <Text style={styles.scopeButtonText}>{detail.scope === "project" ? "保存先：プロジェクト" : "保存先：個人"}</Text>
                 </Pressable>
               ) : null}
-              {(detail.kind === "tankyu" ||
-                (detail.kind === "note" && detail.noteType === "free")) ? (
-                <View style={styles.titleInputRow}>
-                  <Text style={styles.label}>
-                    {language === "en" ? "Title" : "タイトル"}
-                  </Text>
-                  <TextInput
-                    style={styles.titleInput}
-                    value={titleDraft}
-                    onChangeText={handleTitleChange}
-                    placeholder={language === "en" ? "Title (optional)" : "タイトル（任意）"}
-                  />
-                </View>
-              ) : null}
-              <MemoTextEditor
-                value={bodyDraft}
-                onChangeText={handleBodyChange}
-                placeholder={language === "en" ? "Body" : "本文"}
-                style={styles.editor}
-                inputStyle={styles.bodyInput}
-                linkStyle={styles.memoLink}
-                enableHighlight={false}
+              <MemoEditorFields
+                title={titleDraft}
+                body={bodyDraft}
+                editable
+                showTitle={detail.kind === "tankyu" ||
+                  (detail.kind === "note" && detail.noteType === "free")}
+                language={language}
+                tokens={tokens}
+                onChangeTitle={handleTitleChange}
+                onChangeBody={handleBodyChange}
+                onPressToken={handlePressToken}
               />
-              <View style={styles.tokenSection}>
-                <Text style={styles.label}>
-                  {language === "en" ? "Wiki links" : "Wikiリンク"}
-                </Text>
-                <TokenChips
-                  tokens={tokens}
-                  onPressToken={handlePressToken}
-                  emptyLabel={language === "en" ? "No linked terms" : undefined}
-                />
-              </View>
             </>
           )}
         </View>

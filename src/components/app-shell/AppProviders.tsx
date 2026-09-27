@@ -8,6 +8,7 @@ import { AppSettingsProvider } from "../../context/AppSettingsContext";
 import { AppUIProvider } from "../../context/AppUIContext";
 import { SubscriptionProvider } from "../../context/SubscriptionContext";
 import { CollaborationProvider } from "../../context/CollaborationContext";
+import { TemisAIUsageProvider } from "../../context/TemisAIUsageContext";
 
 const AppBootstrapBoundary = ({
   children,
@@ -27,7 +28,8 @@ const AppProviders = ({
   <SubscriptionProvider>
     <AppSettingsProvider>
       <CollaborationProvider>
-        <AppUIProvider>
+        <TemisAIUsageProvider>
+          <AppUIProvider>
           <DirectMessagesProvider>
           <AppRefreshProvider>
             <CloudSyncProvider>
@@ -35,7 +37,8 @@ const AppProviders = ({
             </CloudSyncProvider>
           </AppRefreshProvider>
           </DirectMessagesProvider>
-        </AppUIProvider>
+          </AppUIProvider>
+        </TemisAIUsageProvider>
       </CollaborationProvider>
     </AppSettingsProvider>
   </SubscriptionProvider>

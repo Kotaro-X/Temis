@@ -60,6 +60,7 @@ test("shared Temis AI dock keeps the same controls while expanding only its resu
     onSearch: () => { searches += 1; },
     onToggle: () => { toggles += 1; },
     badge: reactMock.createElement("Badge", {}, "Plus"),
+    controls: reactMock.createElement("Controls", {}, "Project only"),
     children: reactMock.createElement("Result", {}, "answer"),
   });
   const closed = collect(render(false));
@@ -75,6 +76,25 @@ test("shared Temis AI dock keeps the same controls while expanding only its resu
   const open = collect(render(true));
   assert.equal(open.some((item) => item.type === "Result"), true);
   assert.equal(open.some((item) => item.type === "Badge"), true);
+  assert.equal(open.some((item) => item.type === "Controls"), true);
+});
+
+test("Project memo screen reuses the memo UI and exposes explicit AI scopes", () => {
+  const projectMemo = readFileSync(resolve("src/screens/ProjectWorkspaceScreen.tsx"), "utf8");
+  assert.equal(projectMemo.includes("<MemoListCard"), true);
+  assert.equal(projectMemo.includes("<MemoEditorFields"), true);
+  assert.equal(projectMemo.includes("<TemisAIDock"), true);
+  assert.equal(projectMemo.includes("Projectのみ"), true);
+  assert.equal(projectMemo.includes("Project＋Private"), true);
+  assert.equal(projectMemo.includes("このメモは読み取り専用です。"), true);
+});
+
+test("Projects visibility action is constrained inside the row", () => {
+  const projects = readFileSync(resolve("src/screens/ProjectsScreen.tsx"), "utf8");
+  assert.equal(projects.includes("styles.visibilityCopy"), true);
+  assert.equal(projects.includes("styles.visibilityButton"), true);
+  assert.equal(projects.includes("visibilityCopy: { flex: 1, minWidth: 0"), true);
+  assert.equal(projects.includes("visibilityButton: { flexShrink: 0 }"), true);
 });
 
 test("obsolete Temis AI subtitle copy is removed and both screens use the shared dock", () => {

@@ -8,7 +8,11 @@ import { hybridSearch } from "./hybridSearch";
 import { listResearchNotes } from "./researchNoteService";
 import { retrieveWikiAnswerEvidence, type WikiAnswerDocument } from "./wikiAnswerRetrievalCore";
 
-export const searchWikiAnswerEvidence = async (query: string, maxMemos = 15) => {
+export const searchWikiAnswerEvidence = async (
+  query: string,
+  maxMemos = 15,
+  options?: { noteScope?: "personal" | "project"; projectId?: string },
+) => {
   if (!query.trim()) return [];
   let researchNotes: ReturnType<typeof listResearchNotes> | undefined;
   const provider = getEmbeddingProvider();
@@ -27,7 +31,12 @@ export const searchWikiAnswerEvidence = async (query: string, maxMemos = 15) => 
             : memoId.startsWith("tankyu:")
               ? (await (researchNotes ??= listResearchNotes())).find((note) => note.id === memoId.slice(7))
               : await getMemoById(memoId);
-          return record ? { memoId, record } : null;
+          if (!record) return null;
+          if (memoId.startsWith("note:") && options?.noteScope) {
+            if (!("scope" in record) || record.scope !== options.noteScope) return null;
+            if (options.noteScope === "project" && options.projectId && record.projectId !== options.projectId) return null;
+          }
+          return { memoId, record };
         })),
       ]);
       const similarities = new Map<string, number>();

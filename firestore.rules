@@ -26,6 +26,35 @@ service cloud.firestore {
       return /databases/$(database)/documents/subscriptionAccess/$(userId);
     }
 
+    function temisAccessStatePath(userId) {
+      return /databases/$(database)/documents/temisAccessStates/$(userId);
+    }
+
+    function projectAccessStatePath(userId) {
+      return /databases/$(database)/documents/projectAccessStates/$(userId);
+    }
+
+    function hasActiveTemisPlus(userId) {
+      return exists(temisAccessStatePath(userId))
+        && get(temisAccessStatePath(userId)).data.userId == userId
+        && get(temisAccessStatePath(userId)).data.tier == "plus"
+        && get(temisAccessStatePath(userId)).data.verifiedUntil > request.time.toMillis();
+    }
+
+    function hasFreeProjectAccess(userId, projectId) {
+      return exists(projectAccessStatePath(userId))
+        && get(projectAccessStatePath(userId)).data.userId == userId
+        && get(projectAccessStatePath(userId)).data.status == "ready"
+        && get(projectAccessStatePath(userId)).data.freeProjectId == projectId;
+    }
+
+    function hasProjectDataAccess(projectId) {
+      return signedIn() && (
+        hasActiveTemisPlus(request.auth.uid)
+        || hasFreeProjectAccess(request.auth.uid, projectId)
+      );
+    }
+
     function inviteCodePath(code) {
       return /databases/$(database)/documents/inviteCodes/$(code);
     }
@@ -416,43 +445,63 @@ service cloud.firestore {
     }
 
     match /users/{userId}/tags/{tagId} {
-      allow read: if isSelf(userId);
-      allow create: if isSelf(userId)
+      allow read: if isSelf(userId) && hasActiveTemisPlus(userId);
+      allow create: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validTagDocument(request.resource.data, tagId);
-      allow update: if isSelf(userId)
+      allow update: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validTagDocument(request.resource.data, tagId)
         && request.resource.data.updatedAt >= resource.data.updatedAt;
-      allow delete: if isSelf(userId);
+      allow delete: if isSelf(userId) && hasActiveTemisPlus(userId);
     }
 
     match /users/{userId}/todos/{todoId} {
-      allow read: if isSelf(userId);
-      allow create: if isSelf(userId)
+      allow read: if isSelf(userId) && hasActiveTemisPlus(userId);
+      allow create: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validTodoEnvelope(request.resource.data, todoId);
-      allow update: if isSelf(userId)
+      allow update: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validTodoEnvelope(request.resource.data, todoId)
         && request.resource.data.updatedAt >= resource.data.updatedAt;
-      allow delete: if isSelf(userId);
+      allow delete: if isSelf(userId) && hasActiveTemisPlus(userId);
     }
 
     match /users/{userId}/tasks/{taskId} {
-      allow read: if isSelf(userId);
-      allow create: if isSelf(userId)
+      allow read: if isSelf(userId) && hasActiveTemisPlus(userId);
+      allow create: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validTaskEnvelope(request.resource.data, taskId);
-      allow update: if isSelf(userId)
+      allow update: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validTaskEnvelope(request.resource.data, taskId)
         && request.resource.data.updatedAt >= resource.data.updatedAt;
-      allow delete: if isSelf(userId);
+      allow delete: if isSelf(userId) && hasActiveTemisPlus(userId);
     }
 
     match /users/{userId}/memos/{memoId} {
-      allow read: if isSelf(userId);
-      allow create: if isSelf(userId)
+      allow read: if isSelf(userId) && hasActiveTemisPlus(userId);
+      allow create: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validMemoEnvelope(request.resource.data, memoId);
-      allow update: if isSelf(userId)
+      allow update: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validMemoEnvelope(request.resource.data, memoId)
         && request.resource.data.updatedAt >= resource.data.updatedAt;
-      allow delete: if isSelf(userId);
+      allow delete: if isSelf(userId) && hasActiveTemisPlus(userId);
+    }
+
+    match /temisAccessStates/{userId} {
+      allow read: if isSelf(userId);
+      allow write: if false;
+    }
+
+    match /projectAccessStates/{userId} {
+      allow read: if isSelf(userId);
+      allow write: if false;
+    }
+
+    match /temisAIWeeklyUsage/{usageId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /temisAIUsageReservations/{reservationId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
     }
 
     match /subscriptionAccess/{userId} {
@@ -695,12 +744,11 @@ service cloud.firestore {
     match /dmNotificationJobs/{jobId} { allow read, write: if false; }
 
     match /projects/{projectId} {
-      allow get: if isProjectMember(projectId) || resource.data.visibility == "public";
+      allow get: if (isProjectMember(projectId) && hasProjectDataAccess(projectId)) || resource.data.visibility == "public";
       allow list: if resource.data.visibility == "public";
-      allow create: if signedIn() && validProject(request.resource.data, projectId)
-        && request.resource.data.ownerUserId == request.auth.uid
-        && getAfter(projectMemberPath(projectId, request.auth.uid)).data.role == "owner";
-      allow update: if isProjectOwner(projectId) && validProject(request.resource.data, projectId)
+      allow create: if false;
+      allow update: if isProjectOwner(projectId) && hasProjectDataAccess(projectId)
+        && validProject(request.resource.data, projectId)
         && request.resource.data.ownerUserId == resource.data.ownerUserId;
       allow delete: if false;
 
@@ -708,16 +756,9 @@ service cloud.firestore {
         // A collection-group query for a user's project list can only prove
         // access to that user's own membership document. Project member lists
         // remain available to existing members through the second condition.
-        allow get: if isProjectMember(projectId);
-        allow list: if (signedIn() && resource.data.userId == request.auth.uid)
-          || isProjectMember(projectId);
-        allow create: if ((request.resource.data.role == "owner" && request.resource.data.invitationId == null
-            && getAfter(projectPath(projectId)).data.ownerUserId == userId) || isProjectOwner(projectId) || (
-            signedIn() && userId == request.auth.uid
-            && getAfter(/databases/$(database)/documents/projectInvitations/$(request.resource.data.invitationId)).data.inviteeUserId == request.auth.uid
-          )) && validProjectMember(request.resource.data, userId);
-        allow update: if isProjectOwner(projectId) && validProjectMember(request.resource.data, userId);
-        allow delete: if isProjectOwner(projectId) && resource.data.role != "owner";
+        allow get: if isProjectMember(projectId) && hasProjectDataAccess(projectId);
+        allow list: if isProjectMember(projectId) && hasProjectDataAccess(projectId);
+        allow create, update, delete: if false;
       }
     }
 
@@ -725,49 +766,80 @@ service cloud.firestore {
     // query and its extra index requirement when opening the project tab.
     match /projectMemberships/{membershipId} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
-      allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(["id", "projectId", "userId", "role", "updatedAt"])
-        && request.resource.data.id == membershipId
-        && request.resource.data.role in ["owner", "member", "viewer"]
-        && request.resource.data.updatedAt is int
-        && (request.auth.uid == request.resource.data.userId || isProjectOwner(request.resource.data.projectId))
-        && getAfter(projectMemberPath(request.resource.data.projectId, request.resource.data.userId)).data.role == request.resource.data.role;
-      allow update, delete: if false;
+      allow create, update, delete: if false;
     }
 
     match /projectInvitations/{invitationId} {
       allow read: if signedIn() && (resource.data.inviterUserId == request.auth.uid || resource.data.inviteeUserId == request.auth.uid);
       allow create: if isProjectMember(request.resource.data.projectId)
+        && hasProjectDataAccess(request.resource.data.projectId)
         && (projectRole(request.resource.data.projectId) == "owner" || get(projectPath(request.resource.data.projectId)).data.invitationPolicy == "members")
         && request.resource.data.inviterUserId == request.auth.uid && request.resource.data.status == "pending";
-      allow update: if signedIn() && resource.data.inviteeUserId == request.auth.uid
-        && resource.data.status == "pending" && request.resource.data.status in ["accepted", "declined"];
+      allow update: if false;
       allow delete: if signedIn() && resource.data.inviterUserId == request.auth.uid;
     }
 
     match /projectNotes/{noteId} {
-      allow read: if isProjectMember(resource.data.projectId);
+      allow read: if isProjectMember(resource.data.projectId) && hasProjectDataAccess(resource.data.projectId);
       allow create: if signedIn() && request.resource.data.id == noteId
         && request.resource.data.ownerUserId == request.auth.uid
-        && isProjectEditor(request.resource.data.projectId);
-      allow update: if signedIn() && resource.data.ownerUserId == request.auth.uid
-        && request.resource.data.ownerUserId == resource.data.ownerUserId
-        && request.resource.data.projectId == resource.data.projectId;
-      allow delete: if signedIn() && resource.data.ownerUserId == request.auth.uid;
+        && request.resource.data.sourceNoteId != null
+        && (!request.resource.data.keys().hasAny(["creatorAnonymizedAt"]) || request.resource.data.creatorAnonymizedAt == null)
+        && (!request.resource.data.keys().hasAny(["anonymizedReason"]) || request.resource.data.anonymizedReason == null)
+        && isProjectEditor(request.resource.data.projectId)
+        && hasProjectDataAccess(request.resource.data.projectId);
+      allow update: if signedIn()
+        && request.resource.data.projectId == resource.data.projectId
+        && hasProjectDataAccess(resource.data.projectId)
+        && (
+          (resource.data.ownerUserId == null
+            && resource.data.get("anonymizedReason", null) == "project_exit"
+            && isProjectOwner(resource.data.projectId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["title", "body", "updatedAt"]))
+          || (resource.data.ownerUserId == request.auth.uid
+            && request.resource.data.ownerUserId == resource.data.ownerUserId
+            && request.resource.data.sourceNoteId == resource.data.sourceNoteId
+            && request.resource.data.get("creatorDisplayName", null) == resource.data.get("creatorDisplayName", null)
+            && request.resource.data.get("creatorAnonymizedAt", null) == resource.data.get("creatorAnonymizedAt", null)
+            && request.resource.data.get("anonymizedReason", null) == resource.data.get("anonymizedReason", null))
+        );
+      allow delete: if signedIn() && hasProjectDataAccess(resource.data.projectId)
+        && ((resource.data.ownerUserId == null && resource.data.get("anonymizedReason", null) == "project_exit"
+          && isProjectOwner(resource.data.projectId))
+          || resource.data.ownerUserId == request.auth.uid);
     }
 
     match /projectTasks/{taskId} {
-      allow read: if isProjectMember(resource.data.projectId);
+      allow read: if isProjectMember(resource.data.projectId) && hasProjectDataAccess(resource.data.projectId);
       allow create: if signedIn() && request.resource.data.id == taskId
         && request.resource.data.ownerUserId == request.auth.uid
         && request.resource.data.creatorUserId == request.auth.uid
         && isProjectEditor(request.resource.data.projectId)
+        && hasProjectDataAccess(request.resource.data.projectId)
+        && (!request.resource.data.keys().hasAny(["creatorAnonymizedAt"]) || request.resource.data.creatorAnonymizedAt == null)
+        && (!request.resource.data.keys().hasAny(["anonymizedReason"]) || request.resource.data.anonymizedReason == null)
         && get(projectPath(request.resource.data.projectId)).data.taskEnabled == true
         && (request.resource.data.assigneeUserId == null || exists(projectMemberPath(request.resource.data.projectId, request.resource.data.assigneeUserId)));
       allow update: if signedIn() && isProjectMember(resource.data.projectId)
-        && (projectRole(resource.data.projectId) in ["owner", "member"] || resource.data.ownerUserId == request.auth.uid || resource.data.creatorUserId == request.auth.uid || resource.data.assigneeUserId == request.auth.uid)
+        && hasProjectDataAccess(resource.data.projectId)
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.ownerUserId == resource.data.ownerUserId
+        && request.resource.data.creatorUserId == resource.data.creatorUserId
+        && request.resource.data.get("creatorDisplayName", null) == resource.data.get("creatorDisplayName", null)
+        && request.resource.data.get("creatorAnonymizedAt", null) == resource.data.get("creatorAnonymizedAt", null)
+        && request.resource.data.get("anonymizedReason", null) == resource.data.get("anonymizedReason", null)
+        && (resource.data.get("anonymizedReason", null) != "project_exit"
+          || request.resource.data.get("relatedMemoId", null) == resource.data.get("relatedMemoId", null))
+        && ((resource.data.get("anonymizedReason", null) == "project_exit"
+            && projectRole(resource.data.projectId) in ["owner", "member"]
+            && (projectRole(resource.data.projectId) == "owner"
+              || request.resource.data.get("deletedAt", null) == resource.data.get("deletedAt", null)))
+          || (resource.data.get("anonymizedReason", null) != "project_exit"
+            && (projectRole(resource.data.projectId) in ["owner", "member"] || resource.data.ownerUserId == request.auth.uid || resource.data.creatorUserId == request.auth.uid || resource.data.assigneeUserId == request.auth.uid)))
         && (request.resource.data.assigneeUserId == null || exists(projectMemberPath(resource.data.projectId, request.resource.data.assigneeUserId)));
-      allow delete: if signedIn() && (isProjectOwner(resource.data.projectId) || resource.data.ownerUserId == request.auth.uid);
+      allow delete: if signedIn() && hasProjectDataAccess(resource.data.projectId)
+        && ((resource.data.get("anonymizedReason", null) == "project_exit" && isProjectOwner(resource.data.projectId))
+          || (resource.data.get("anonymizedReason", null) != "project_exit" && (isProjectOwner(resource.data.projectId) || resource.data.ownerUserId == request.auth.uid)));
     }
 
     match /guildPosts/{postId} {
@@ -786,7 +858,10 @@ service cloud.firestore {
         && request.resource.data.authorUserId == request.auth.uid
         && request.resource.data.status == "published"
         && request.resource.data.moderation.visibility == "visible"
-        && (request.resource.data.projectId == null || isProjectEditor(request.resource.data.projectId));
+        && (request.resource.data.projectId == null || (
+          isProjectEditor(request.resource.data.projectId)
+          && hasProjectDataAccess(request.resource.data.projectId)
+        ));
       allow update: if validGuildPost(request.resource.data, postId) && (
         (signedIn() && resource.data.authorUserId == request.auth.uid
           && request.resource.data.authorUserId == resource.data.authorUserId
@@ -808,21 +883,7 @@ service cloud.firestore {
       allow get, list: if signedIn() && (
         resource.data.applicantUserId == request.auth.uid || isProjectOwner(resource.data.projectId)
       );
-      allow create: if signedIn() && validProjectJoinRequest(request.resource.data, requestId)
-        && request.resource.data.applicantUserId == request.auth.uid
-        && request.resource.data.id == request.resource.data.projectId + "__" + request.auth.uid
-        && request.resource.data.status == "pending"
-        && get(projectPath(request.resource.data.projectId)).data.visibility == "public"
-        && get(projectPath(request.resource.data.projectId)).data.joinPolicy == "approval_required"
-        && !exists(projectMemberPath(request.resource.data.projectId, request.auth.uid));
-      allow update: if validProjectJoinRequest(request.resource.data, requestId) && (
-        (signedIn() && resource.data.applicantUserId == request.auth.uid
-          && resource.data.status == "pending" && request.resource.data.status == "withdrawn"
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]))
-        || (isProjectOwner(resource.data.projectId) && resource.data.status == "pending"
-          && request.resource.data.status in ["accepted", "declined"]
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]))
-      );
+      allow create, update: if false;
       allow delete: if false;
     }
 

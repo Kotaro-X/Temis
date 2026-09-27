@@ -19,7 +19,11 @@ import {
 } from "firebase/firestore";
 
 import { getFirebaseAuth, getFirebaseFirestore } from "../sync/firebaseApp";
-import { type Connection, type Project, type ProjectMember, type ProjectMembership } from "../../types/collaboration";
+import {
+  createProjectJoinRequestWithQuota,
+  respondToProjectJoinRequestWithQuota,
+} from "../freemium/temisFreemiumService";
+import { type Connection, type ProjectMembership } from "../../types/collaboration";
 import {
   extractGuildTags,
   normalizeGuildTags,
@@ -42,8 +46,6 @@ const now = () => Date.now();
 const postRef = (id: string) => doc(db(), "guildPosts", id);
 const projectRef = (id: string) => doc(db(), "projects", id);
 const memberRef = (projectId: string, userId: string) => doc(db(), "projects", projectId, "members", userId);
-const membershipRef = (projectId: string, userId: string) => doc(db(), "projectMemberships", `${projectId}__${userId}`);
-const joinRequestRef = (id: string) => doc(db(), "projectJoinRequests", id);
 const reportRef = (id: string) => doc(db(), "guildReports", id);
 const requireUserId = () => {
   const userId = getFirebaseAuth().currentUser?.uid;
@@ -248,38 +250,13 @@ export const updateGuildPostAuthorSnapshot = async ({
 };
 
 export const createProjectJoinRequest = async ({ projectId, role = "member", message = null }: Pick<ProjectJoinRequest, "projectId"> & { role?: "member" | "viewer"; message?: string | null }): Promise<ProjectJoinRequest> => {
-  const userId = requireUserId();
-  const id = `${projectId}__${userId}`;
-  const timestamp = now();
-  return runTransaction(db(), async (transaction) => {
-    const [projectSnapshot, memberSnapshot, requestSnapshot] = await Promise.all([
-      transaction.get(projectRef(projectId)), transaction.get(memberRef(projectId, userId)), transaction.get(joinRequestRef(id)),
-    ]);
-    const project = projectSnapshot.data() as Project | undefined;
-    if (!projectSnapshot.exists() || project?.visibility !== "public" || project.joinPolicy !== "approval_required") throw new Error("このプロジェクトには参加申請できません。");
-    if (memberSnapshot.exists()) throw new Error("すでにプロジェクトへ参加しています。");
-    if (requestSnapshot.exists() && requestSnapshot.data()?.status === "pending") throw new Error("参加申請はすでに送信済みです。");
-    const request: ProjectJoinRequest = { id, projectId, applicantUserId: userId, requestedRole: role, message: message?.trim() || null, status: "pending", createdAt: requestSnapshot.data()?.createdAt ?? timestamp, updatedAt: timestamp };
-    transaction.set(joinRequestRef(id), request);
-    return request;
-  });
+  requireUserId();
+  return createProjectJoinRequestWithQuota<ProjectJoinRequest>({ projectId, role, message });
 };
 
 export const respondToProjectJoinRequest = async (requestId: string, accept: boolean): Promise<void> => {
-  const userId = requireUserId();
-  await runTransaction(db(), async (transaction) => {
-    const requestSnapshot = await transaction.get(joinRequestRef(requestId));
-    if (!requestSnapshot.exists()) throw new Error("参加申請が見つかりません。");
-    const request = requestSnapshot.data() as ProjectJoinRequest;
-    const projectMember = await transaction.get(memberRef(request.projectId, userId));
-    if (projectMember.data()?.role !== "owner" || request.status !== "pending") throw new Error("この申請は処理できません。");
-    const timestamp = now();
-    transaction.update(joinRequestRef(requestId), { status: accept ? "accepted" : "declined", updatedAt: timestamp });
-    if (accept) {
-      transaction.set(memberRef(request.projectId, request.applicantUserId), { userId: request.applicantUserId, role: "member", invitationId: null, joinedAt: timestamp, updatedAt: timestamp } satisfies ProjectMember);
-      transaction.set(membershipRef(request.projectId, request.applicantUserId), { id: `${request.projectId}__${request.applicantUserId}`, projectId: request.projectId, userId: request.applicantUserId, role: "member", updatedAt: timestamp });
-    }
-  });
+  requireUserId();
+  await respondToProjectJoinRequestWithQuota(requestId, accept);
 };
 
 export const listProjectJoinRequests = async (projectId: string): Promise<ProjectJoinRequest[]> => {

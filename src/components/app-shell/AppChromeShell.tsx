@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAppSettings } from "../../context/AppSettingsContext";
@@ -152,7 +152,6 @@ const AppChromeShell = ({
     activeProjectId,
     openPrivateWorkspace,
     openProjectWorkspace,
-    openSettingsSync,
     openGuildAdmin,
     openDM,
     menuOpen,
@@ -173,8 +172,8 @@ const AppChromeShell = ({
     downloadCompleteNoticeOpen,
     dismissDownloadCompleteNotice,
   } = useAppUI();
-  const { isCloudSyncEntitled, accessGrant } = useSubscription();
-  const { profile, projects, status: collaborationStatus } = useCollaboration();
+  const { accessGrant } = useSubscription();
+  const { profile, projects, projectStatus: collaborationStatus } = useCollaboration();
   const [scopePickerOpen, setScopePickerOpen] = useState(false);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const { unread: dmUnread } = useDirectMessages();
@@ -195,23 +194,6 @@ const AppChromeShell = ({
   const chooseProjectScope = (projectId: string) => {
     setScopePickerOpen(false);
     openProjectWorkspace(projectId);
-  };
-
-  const showProjectSubscriptionNotice = () => {
-    Alert.alert(
-      "Temis Plus限定機能",
-      "プロジェクト機能を利用するにはTemis Plusへの加入が必要です。",
-      [
-        { text: "あとで", style: "cancel" },
-        {
-          text: "Temis Plusを見る",
-          onPress: () => {
-            setScopePickerOpen(false);
-            openSettingsSync();
-          },
-        },
-      ],
-    );
   };
 
   return (
@@ -235,7 +217,7 @@ const AppChromeShell = ({
         activeTab={activeTab}
         onTabPress={onTabPress}
         bottomInset={insetsBottom}
-        showProjects={workspaceScope === "projects" && isCloudSyncEntitled}
+        showProjects={workspaceScope === "projects"}
         showGuild={workspaceScope === "private"}
       />
       <Modal
@@ -272,23 +254,7 @@ const AppChromeShell = ({
             </Pressable>
 
             <Text style={appChromeStyles.scopePickerSectionTitle}>Projects</Text>
-            {!isCloudSyncEntitled ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Temis Plusでプロジェクト機能を利用する"
-                style={appChromeStyles.scopePickerItem}
-                onPress={showProjectSubscriptionNotice}
-              >
-                <View style={appChromeStyles.scopePickerProjectText}>
-                  <Text style={appChromeStyles.scopePickerTitle}>Projects</Text>
-                  <Text style={appChromeStyles.scopePickerCaption}>
-                    Temis Plusに加入すると利用できます
-                  </Text>
-                </View>
-                <Ionicons name="lock-closed-outline" size={20} color="#6b7280" />
-              </Pressable>
-            ) : (
-              <>
+            <>
                 {collaborationStatus === "loading" ? (
                   <Text style={appChromeStyles.scopePickerEmpty}>プロジェクトを読み込み中です…</Text>
                 ) : null}
@@ -334,8 +300,7 @@ const AppChromeShell = ({
                     <Text style={appChromeStyles.scopePickerCaption}>作成後、そのプロジェクトを開きます</Text>
                   </View>
                 </Pressable>
-              </>
-            )}
+            </>
           </ScrollView>
         </View>
       </Modal>

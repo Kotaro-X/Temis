@@ -173,7 +173,35 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await env.clearFirestore();
   });
 
+  const seedPlusAccess = async (...userIds: string[]) => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await Promise.all(userIds.map((userId) => db.collection("temisAccessStates").doc(userId).set({
+        userId,
+        tier: "plus",
+        source: "revenuecat",
+        verifiedAt: Date.now(),
+        verifiedUntil: Date.now() + 60_000,
+        updatedAt: Date.now(),
+      })));
+    });
+  };
+
+  const seedFreeProjectAccess = async (userId: string, projectId: string) => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection("projectAccessStates").doc(userId).set({
+        userId,
+        status: "ready",
+        membershipCount: 1,
+        freeProjectId: projectId,
+        pendingFreeProjectId: null,
+        updatedAt: Date.now(),
+      });
+    });
+  };
+
   test("users can read and write only their own four sync collections", async () => {
+    await seedPlusAccess("alice");
     const aliceDb = env.authenticatedContext(
       "alice",
       createGoogleToken({ email: "alice@example.com" }),
@@ -250,17 +278,20 @@ if (!FIRESTORE_EMULATOR_HOST) {
       invitationPolicy: "owner_only", taskEnabled: false, createdAt: 1, updatedAt: 1,
       deletedAt: null,
     };
-    const projectBatch = writeBatch(aliceDb);
-    projectBatch.set(doc(aliceDb, "projects", "project-1"), project);
-    projectBatch.set(doc(aliceDb, "projects", "project-1", "members", "alice"), {
-      userId: "alice", role: "owner", invitationId: null, joinedAt: 1, updatedAt: 1,
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.collection("projects").doc("project-1").set(project);
+      await db.collection("projects").doc("project-1").collection("members").doc("alice").set({
+        userId: "alice", role: "owner", invitationId: null, joinedAt: 1, updatedAt: 1,
+      });
+      await db.collection("projectMemberships").doc("project-1__alice").set({
+        id: "project-1__alice", projectId: "project-1", userId: "alice", role: "owner", updatedAt: 1,
+      });
     });
-    projectBatch.set(doc(aliceDb, "projectMemberships", "project-1__alice"), {
-      id: "project-1__alice", projectId: "project-1", userId: "alice", role: "owner", updatedAt: 1,
-    });
-    await assertSucceeds(projectBatch.commit());
+    await seedFreeProjectAccess("alice", "project-1");
     await assertSucceeds(aliceDb.collection("projectNotes").doc("note-1").set({
       id: "note-1", ownerUserId: "alice", projectId: "project-1", sourceNoteId: "local-1",
+      creatorDisplayName: "Alice", creatorAnonymizedAt: null, anonymizedReason: null,
       title: "Shared", body: "only members", updatedAt: 1,
     }));
     await assertFails(bobDb.collection("projectNotes").doc("note-1").get());
@@ -268,6 +299,91 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await assertSucceeds(
       aliceDb.collection("projectMemberships").where("userId", "==", "alice").get(),
     );
+  });
+
+  test("server-owned quota state and membership changes cannot be forged by clients", async () => {
+    const aliceDb = env.authenticatedContext("alice", createAppleToken()).firestore();
+    await assertFails(aliceDb.collection("temisAccessStates").doc("alice").set({
+      userId: "alice", tier: "plus", verifiedUntil: Date.now() + 60_000,
+    }));
+    await assertFails(aliceDb.collection("projectAccessStates").doc("alice").set({
+      userId: "alice", status: "ready", membershipCount: 0, freeProjectId: null,
+    }));
+    await assertFails(aliceDb.collection("temisAIWeeklyUsage").doc("alice__week").set({
+      userId: "alice", used: 0,
+    }));
+    await assertFails(aliceDb.collection("projectMemberships").doc("p__alice").set({
+      id: "p__alice", projectId: "p", userId: "alice", role: "owner", updatedAt: 1,
+    }));
+  });
+
+  test("anonymous notes belong to the project owner and anonymous tasks remain member-editable but owner-deletable", async () => {
+    const ownerDb = env.authenticatedContext("owner", createGoogleToken()).firestore();
+    const memberDb = env.authenticatedContext("member", createAppleToken()).firestore();
+    const projectId = "anon-project";
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.collection("projects").doc(projectId).set({
+        id: projectId, name: "Anon", description: null, ownerUserId: "owner", icon: null,
+        tags: [], visibility: "private", joinPolicy: "invitation_only", invitationPolicy: "owner_only",
+        taskEnabled: true, createdAt: 1, updatedAt: 1, deletedAt: null,
+      });
+      for (const [userId, role] of [["owner", "owner"], ["member", "member"]] as const) {
+        await db.collection("projects").doc(projectId).collection("members").doc(userId).set({
+          userId, role, invitationId: null, joinedAt: 1, updatedAt: 1,
+        });
+        await db.collection("projectMemberships").doc(`${projectId}__${userId}`).set({
+          id: `${projectId}__${userId}`, projectId, userId, role, updatedAt: 1,
+        });
+      }
+      await db.collection("projectNotes").doc("anon-note").set({
+        id: "anon-note", ownerUserId: null, sourceNoteId: null, projectId,
+        creatorDisplayName: "匿名ユーザー", creatorAnonymizedAt: 2,
+        anonymizedReason: "project_exit", title: "残る題名", body: "残る本文", updatedAt: 2,
+      });
+      await db.collection("projectTasks").doc("anon-task").set({
+        id: "anon-task", ownerUserId: null, creatorUserId: null, assigneeUserId: null,
+        creatorDisplayName: "匿名ユーザー", creatorAnonymizedAt: 2,
+        anonymizedReason: "project_exit", projectId, kind: "task", title: "残るタスク",
+        description: "残る説明", status: "todo", tags: [], estimateMinutes: 25,
+        isArchived: false, priority: null, dueAt: null, privateDate: null,
+        privateSlotKey: null, relatedMemoId: null, createdAt: 1, updatedAt: 2,
+        completedAt: null, deletedAt: null,
+      });
+    });
+    await seedFreeProjectAccess("owner", projectId);
+    await seedFreeProjectAccess("member", projectId);
+
+    const ownerNote = ownerDb.collection("projectNotes").doc("anon-note");
+    const memberNote = memberDb.collection("projectNotes").doc("anon-note");
+    await assertSucceeds(ownerNote.update({ body: "所有者の編集", updatedAt: 3 }));
+    await assertFails(memberNote.update({ body: "メンバーの改ざん", updatedAt: 4 }));
+    await assertFails(ownerNote.update({ ownerUserId: "owner", creatorDisplayName: "Alice", updatedAt: 4 }));
+
+    const ownerTask = ownerDb.collection("projectTasks").doc("anon-task");
+    const memberTask = memberDb.collection("projectTasks").doc("anon-task");
+    await assertSucceeds(memberTask.update({ title: "メンバーが編集", updatedAt: 3 }));
+    await assertFails(memberTask.update({ creatorUserId: "member", updatedAt: 4 }));
+    await assertFails(memberTask.update({ deletedAt: 4, updatedAt: 4 }));
+    await assertSucceeds(ownerTask.update({ deletedAt: 4, updatedAt: 4 }));
+    await assertFails(memberNote.delete());
+    await assertSucceeds(ownerNote.delete());
+  });
+
+  test("selection_required blocks shared project data until a free project is chosen", async () => {
+    const aliceDb = env.authenticatedContext("alice", createGoogleToken()).firestore();
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.collection("projects").doc("overflow").set({ id: "overflow", visibility: "private" });
+      await db.collection("projects").doc("overflow").collection("members").doc("alice").set({ userId: "alice", role: "member" });
+      await db.collection("projectNotes").doc("overflow-note").set({ projectId: "overflow", ownerUserId: "alice" });
+      await db.collection("projectAccessStates").doc("alice").set({
+        userId: "alice", status: "selection_required", membershipCount: 2,
+        freeProjectId: null, pendingFreeProjectId: null, updatedAt: 1,
+      });
+    });
+    await assertFails(aliceDb.collection("projectNotes").doc("overflow-note").get());
+    await assertFails(aliceDb.collection("projects").doc("overflow").get());
   });
 
   test("unsupported account providers cannot create collaboration profiles", async () => {
@@ -340,6 +456,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
   });
 
   test("sync documents reject unknown fields, invalid types, and oversized values", async () => {
+    await seedPlusAccess("alice");
     const aliceDb = env.authenticatedContext(
       "alice",
       createGoogleToken({ email: "alice@example.com" }),
@@ -375,6 +492,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
   });
 
   test("sync documents reject stale updates and accept logical tombstones", async () => {
+    await seedPlusAccess("alice");
     const aliceDb = env.authenticatedContext(
       "alice",
       createGoogleToken({ email: "alice@example.com" }),
@@ -743,6 +861,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
       });
       await db.collection("projects").doc("commons-project").collection("members").doc("alice").set({ userId: "alice", role: "owner" });
     });
+    await seedFreeProjectAccess("alice", "commons-project");
     const invitation = {
       id: "scout-1", projectId: "commons-project", projectName: "Commons project",
       inviterUserId: "alice", inviteeUserId: "bob", role: "member", status: "pending",
@@ -754,7 +873,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
     assert.equal(inbox.docs[0].data().projectName, "Commons project");
     await assertFails(carolDb.collection("projectInvitations").where("inviteeUserId", "==", "bob").get());
     await assertFails(bobDb.collection("projects").doc("commons-project").get());
-    await assertSucceeds(bobDb.runTransaction(async (transaction) => {
+    await assertFails(bobDb.runTransaction(async (transaction) => {
       const ref = bobDb.collection("projectInvitations").doc(invitation.id);
       const snapshot = await transaction.get(ref);
       transaction.set(ref, { ...snapshot.data(), status: "accepted", updatedAt: 2 });
@@ -765,10 +884,21 @@ if (!FIRESTORE_EMULATOR_HOST) {
         id: "commons-project__bob", projectId: "commons-project", userId: "bob", role: "member", updatedAt: 2,
       });
     }));
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await db.collection("projectInvitations").doc(invitation.id).update({ status: "accepted", updatedAt: 2 });
+      await db.collection("projects").doc("commons-project").collection("members").doc("bob").set({
+        userId: "bob", role: "member", invitationId: invitation.id, joinedAt: 2, updatedAt: 2,
+      });
+      await db.collection("projectMemberships").doc("commons-project__bob").set({
+        id: "commons-project__bob", projectId: "commons-project", userId: "bob", role: "member", updatedAt: 2,
+      });
+    });
+    await seedFreeProjectAccess("bob", "commons-project");
     await assertSucceeds(bobDb.collection("projects").doc("commons-project").get());
     await assertSucceeds(bobDb.collection("projectMemberships").doc("commons-project__bob").get());
     await assertSucceeds(aliceDb.collection("projectInvitations").doc("scout-2").set({ ...invitation, id: "scout-2" }));
-    await assertSucceeds(bobDb.collection("projectInvitations").doc("scout-2").update({ status: "declined", updatedAt: 2 }));
+    await assertFails(bobDb.collection("projectInvitations").doc("scout-2").update({ status: "declined", updatedAt: 2 }));
   });
 
   test("Guild posts are public only while visible, owner-editable, and staff-moderated", async () => {
@@ -854,6 +984,118 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await assertFails(aliceDb.collection("guildPostAIIndex").doc("post-1").get());
     await assertFails(aliceDb.collection("guildPostAIIndex").doc("post-2").set({ postId: "post-2" }));
   });
+
+  test("backend quota transactions serialize concurrent project creation and AI reservations", async () => {
+    const { createRequire } = await import("node:module");
+    const require = createRequire(new URL("../functions/projectAccessCore.cjs", import.meta.url).href);
+    const { initializeApp, deleteApp } = require("firebase-admin/app");
+    const { getFirestore } = require("firebase-admin/firestore");
+    const { createProjectAccessService } = require("../functions/projectAccessCore.cjs");
+    const { createTemisAIUsageService } = require("../functions/temisAccessCore.cjs");
+    class TestHttpsError extends Error {
+      code: string;
+      constructor(code: string, message: string) {
+        super(message);
+        this.code = code;
+      }
+    }
+    const app = initializeApp({ projectId: "demo-wememo" }, "freemium-integration");
+    const db = getFirestore(app);
+    const freeAccess = async (uid: string) => ({ userId: uid, tier: "free", source: "none" });
+    const projects = createProjectAccessService({ db, HttpsError: TestHttpsError, getAccess: freeAccess });
+    const usage = createTemisAIUsageService({ db, HttpsError: TestHttpsError, getAccess: freeAccess });
+    try {
+      const creations = await Promise.allSettled([
+        projects.createProject("free-user", { name: "A", tags: [] }),
+        projects.createProject("free-user", { name: "B", tags: [] }),
+      ]);
+      assert.equal(creations.filter((result) => result.status === "fulfilled").length, 1);
+      assert.equal(creations.filter((result) => result.status === "rejected").length, 1);
+      const state = await db.doc("projectAccessStates/free-user").get();
+      assert.equal(state.data()?.membershipCount, 1);
+
+      const projectId = (creations.find((result) => result.status === "fulfilled") as PromiseFulfilledResult<{ id: string }>).value.id;
+      await db.doc("projects/another-project").set({ id: "another-project", ownerUserId: "other", deletedAt: null });
+      for (const [id, target] of [["invite-a", projectId], ["invite-b", "another-project"]]) {
+        await db.doc(`projectInvitations/${id}`).set({ projectId: target, inviteeUserId: "new-member", inviterUserId: "free-user", role: "member", status: "pending", expiresAt: Date.now() + 60000 });
+      }
+      const approvals = await Promise.allSettled([
+        projects.respondToInvitation("new-member", "invite-a", true),
+        projects.respondToInvitation("new-member", "invite-b", true),
+      ]);
+      assert.equal(approvals.filter((result) => result.status === "fulfilled").length, 1);
+      const acceptedId = approvals[0].status === "fulfilled" ? "invite-a" : "invite-b";
+      await projects.respondToInvitation("new-member", acceptedId, true);
+      assert.equal((await db.doc("projectAccessStates/new-member").get()).data()?.membershipCount, 1);
+      await db.doc("projectInvitations/decline-repeat").set({ projectId, inviteeUserId: "decliner", role: "viewer", status: "pending" });
+      await projects.respondToInvitation("decliner", "decline-repeat", false);
+      await projects.respondToInvitation("decliner", "decline-repeat", false);
+      assert.equal((await db.doc("projectInvitations/decline-repeat").get()).data()?.status, "declined");
+      const plusProjects = createProjectAccessService({ db, HttpsError: TestHttpsError, getAccess: async (uid: string) => ({ userId: uid, tier: "plus" }) });
+      await plusProjects.createProject("plus-user", { name: "Plus A", tags: [] });
+      await plusProjects.createProject("plus-user", { name: "Plus B", tags: [] });
+      assert.equal((await db.doc("projectAccessStates/plus-user").get()).data()?.membershipCount, 2);
+      await db.collection("projectNotes").doc("owned-note").set({
+        id: "owned-note", projectId, ownerUserId: "free-user", sourceNoteId: "local-note",
+        creatorDisplayName: "Original Name", title: "Keep title", body: "Keep body", updatedAt: 1,
+      });
+      await db.collection("projectTasks").doc("owned-task").set({
+        id: "owned-task", projectId, ownerUserId: "free-user", creatorUserId: "free-user",
+        assigneeUserId: "free-user", creatorDisplayName: "Original Name",
+        title: "Keep task", description: "Keep description", status: "todo", updatedAt: 1,
+      });
+      await db.collection("projectTasks").doc("assigned-task").set({
+        id: "assigned-task", projectId, ownerUserId: "another-user", creatorUserId: "another-user",
+        assigneeUserId: "free-user", creatorDisplayName: "Other Member",
+        title: "Assigned only", status: "todo", updatedAt: 1,
+      });
+      await projects.anonymizeProjectContent("free-user", projectId);
+      await projects.anonymizeProjectContent("free-user", projectId);
+      const [note, task, assignedTask] = await Promise.all([
+        db.collection("projectNotes").doc("owned-note").get(),
+        db.collection("projectTasks").doc("owned-task").get(),
+        db.collection("projectTasks").doc("assigned-task").get(),
+      ]);
+      assert.deepEqual(
+        { ownerUserId: note.data()?.ownerUserId, sourceNoteId: note.data()?.sourceNoteId, title: note.data()?.title, body: note.data()?.body, creatorDisplayName: note.data()?.creatorDisplayName },
+        { ownerUserId: null, sourceNoteId: null, title: "Keep title", body: "Keep body", creatorDisplayName: "匿名ユーザー" },
+      );
+      assert.equal(task.data()?.ownerUserId, null);
+      assert.equal(task.data()?.creatorUserId, null);
+      assert.equal(task.data()?.assigneeUserId, null);
+      assert.equal(task.data()?.title, "Keep task");
+      assert.equal(task.data()?.creatorDisplayName, "匿名ユーザー");
+      assert.equal(assignedTask.data()?.assigneeUserId, null);
+      assert.equal(assignedTask.data()?.ownerUserId, "another-user");
+      assert.equal(assignedTask.data()?.creatorDisplayName, "Other Member");
+      assert.equal(assignedTask.data()?.anonymizedReason, undefined);
+
+      const reservations = await Promise.allSettled(Array.from({ length: 11 }, (_, index) =>
+        usage.begin("ai-user", index % 2 === 0 ? "memo" : "commons", `request_${String(index).padStart(2, "0")}`)));
+      assert.equal(reservations.filter((result) => result.status === "fulfilled").length, 10);
+      assert.equal(reservations.filter((result) => result.status === "rejected").length, 1);
+      const repeated = await usage.begin("ai-user", "memo", "request_00");
+      assert.equal(repeated.used, 10);
+      assert.equal(repeated.reused, true);
+      await usage.claim("ai-user", "memo", "request_00");
+      await assert.rejects(() => usage.claim("ai-user", "memo", "request_00"));
+      await usage.cancel("ai-user", "request_00");
+      assert.equal((await usage.getUsage("ai-user")).used, 10);
+      await usage.refund("ai-user", "request_00");
+      assert.equal((await usage.getUsage("ai-user")).used, 9);
+      await usage.refund("ai-user", "request_00");
+      assert.equal((await usage.getUsage("ai-user")).used, 9);
+      await usage.begin("expired-user", "memo", "expired_request");
+      await db.doc("temisAIUsageReservations/expired-user__expired_request").update({ expiresAt: 1 });
+      await assert.rejects(() => usage.claim("expired-user", "memo", "expired_request"));
+      const unlimited = createTemisAIUsageService({ db, HttpsError: TestHttpsError, getAccess: async () => ({ tier: "plus" }) });
+      const unlimitedResults = await Promise.all(Array.from({ length: 12 }, (_, index) => unlimited.begin("plus-ai", "memo", `unlimited_${index}`)));
+      assert.ok(unlimitedResults.every((result: any) => result.unlimited === true));
+    } finally {
+      await deleteApp(app);
+    }
+  });
+
   test("DM connection rules reject self-approval, forged membership and unblock by the blocked user", async () => {
     const a = env.authenticatedContext('dm-a', createAppleToken()).firestore();
     const b = env.authenticatedContext('dm-b', createGoogleToken()).firestore();

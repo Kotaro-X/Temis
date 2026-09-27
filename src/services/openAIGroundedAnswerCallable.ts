@@ -14,6 +14,7 @@ type GroundedAnswerCallableRequest = {
   question: string;
   evidence: GroundedAnswerEvidence[];
   logSummaryText?: string;
+  requestId?: string;
 };
 
 export const requestOpenAIGroundedAnswer = async (

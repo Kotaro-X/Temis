@@ -61,6 +61,9 @@ export type SettingsScreenProps = {
   googleAccountEmail?: string | null;
   googleAccountName?: string | null;
   username?: string | null;
+  profileStatus?: "loading" | "signed_out" | "ready" | "error";
+  profileError?: string | null;
+  onRetryProfile?: () => Promise<void>;
   onSaveUsername?: (username: string) => Promise<void>;
   displayName?: string | null;
   onSaveDisplayName?: (displayName: string) => Promise<void>;
@@ -131,6 +134,9 @@ const SettingsScreen = ({
   googleAccountEmail = null,
   googleAccountName = null,
   username = null,
+  profileStatus = "ready",
+  profileError = null,
+  onRetryProfile,
   onSaveUsername,
   displayName = null,
   onSaveDisplayName,
@@ -542,8 +548,8 @@ const SettingsScreen = ({
         ) : null}
         {syncError ? <Text accessibilityRole="alert" style={styles.syncErrorText}>{syncError}</Text> : null}
         {googleAuthStatus === "signedIn" && cloudSyncEntitled && onSyncNow ? (
-          <Pressable accessibilityRole="button" onPress={onSyncNow} disabled={syncStatus === "syncing"} style={styles.googleAuthButtonSecondary}>
-            <Text style={styles.linkText}>{language === "ja" ? "同期を再実行" : "Retry sync"}</Text>
+          <Pressable accessibilityRole="button" onPress={onSyncNow} disabled={syncStatus === "syncing"} style={[styles.googleAuthButton, styles.googleAuthButtonSecondary, syncStatus === "syncing" && styles.syncButtonDisabled]}>
+            <Text style={[styles.googleAuthButtonText, styles.googleAuthButtonTextSecondary]}>{language === "ja" ? "同期を再実行" : "Retry sync"}</Text>
           </Pressable>
         ) : null}
         <View style={styles.accountLegalLinks}>
@@ -928,11 +934,21 @@ const SettingsScreen = ({
                 {t(language, "settings.section.account")}
               </Text>
               {renderGoogleAccountCard()}
-              {googleAuthStatus === "signedIn" && username !== null ? (
+              {googleAuthStatus === "signedIn" && profileStatus === "ready" ? (
                 <>
                   <View style={styles.nestedSection}>{renderUsernameCard()}</View>
                   <View style={styles.nestedSection}>{renderDisplayNameCard()}</View>
                 </>
+              ) : googleAuthStatus === "signedIn" ? (
+                <View style={[styles.syncCard, styles.nestedSection]}>
+                  <Text style={styles.usernameTitle}>ユーザーネーム・表示名</Text>
+                  {profileStatus === "loading" ? <Text style={styles.usernameDescription}>プロフィールを読み込んでいます…</Text> : <>
+                    <Text accessibilityRole="alert" style={styles.syncErrorText}>{profileError ?? "プロフィールを読み込めませんでした。"}</Text>
+                    <Pressable accessibilityRole="button" onPress={() => void onRetryProfile?.()} style={[styles.googleAuthButton, styles.googleAuthButtonSecondary]}>
+                      <Text style={[styles.googleAuthButtonText, styles.googleAuthButtonTextSecondary]}>再試行</Text>
+                    </Pressable>
+                  </>}
+                </View>
               ) : null}
             </>
           )}

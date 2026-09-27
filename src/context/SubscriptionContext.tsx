@@ -33,6 +33,7 @@ import {
   type CloudSyncAccessGrant,
 } from "../services/subscription/cloudSyncAccess";
 import { isSyncFirebaseUser } from "../services/auth/syncUser";
+import { refreshTemisAccess } from "../services/freemium/temisFreemiumService";
 import type { CloudSyncPlanDetails } from "../services/subscription/revenueCat";
 
 type SubscriptionStatus = "idle" | "loading" | "ready" | "purchasing" | "error";
@@ -148,6 +149,7 @@ export const SubscriptionProvider = ({
       // Store metadata failures must not revoke an already purchased entitlement.
       const nextCustomerInfo = await getCustomerInfo();
       await refreshAccessGrant(firebaseUser);
+      if (firebaseUser && isSyncFirebaseUser(firebaseUser)) await refreshTemisAccess();
       return applyCustomerInfo(nextCustomerInfo);
     } catch (refreshError) {
       await refreshAccessGrant(firebaseUser);
@@ -177,6 +179,7 @@ export const SubscriptionProvider = ({
             }
           : undefined,
       );
+      if (purchaseUser) await refreshTemisAccess();
       return applyCustomerInfo(nextCustomerInfo);
     } catch (purchaseError) {
       if (isRevenueCatPurchaseCancelledError(purchaseError)) {
@@ -201,6 +204,7 @@ export const SubscriptionProvider = ({
         await logInRevenueCatUser(restoreUser.uid);
       }
       const nextCustomerInfo = await restorePurchases();
+      if (restoreUser) await refreshTemisAccess();
       return applyCustomerInfo(nextCustomerInfo);
     } catch (restoreError) {
       setStatus("error");
@@ -224,6 +228,7 @@ export const SubscriptionProvider = ({
           code,
         );
         setAccessGrant(nextGrant);
+        await refreshTemisAccess();
         setInviteStatus("idle");
         return nextGrant;
       } catch (redeemError) {

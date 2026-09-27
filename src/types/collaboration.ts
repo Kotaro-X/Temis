@@ -129,10 +129,12 @@ export type ProjectTaskKind = "task" | "todo";
 
 export type ProjectTask = {
   id: string;
-  ownerUserId: string;
-  creatorUserId: string;
+  ownerUserId: string | null;
+  creatorUserId: string | null;
   /** Snapshot for project members who cannot read a private profile later. */
   creatorDisplayName?: string | null;
+  creatorAnonymizedAt?: number | null;
+  anonymizedReason?: "project_exit" | null;
   assigneeUserId?: string | null;
   projectId: string;
   /** Older shared tasks are treated as `task` for backwards compatibility. */
@@ -163,11 +165,13 @@ export type ProjectTask = {
 
 export type ProjectSharedNote = {
   id: string;
-  ownerUserId: string;
+  ownerUserId: string | null;
   /** Snapshot of the owner name at the time this shared note was created. */
   creatorDisplayName?: string | null;
+  creatorAnonymizedAt?: number | null;
+  anonymizedReason?: "project_exit" | null;
   projectId: string;
-  sourceNoteId: string;
+  sourceNoteId: string | null;
   title: string | null;
   body: string;
   updatedAt: number;
@@ -227,3 +231,7 @@ export const isProjectContentCreatedBy = (
   content.ownerUserId === userId ||
   ("creatorUserId" in content && content.creatorUserId === userId)
 );
+
+export const isAnonymizedProjectContent = (
+  content: Pick<ProjectSharedNote | ProjectTask, "creatorAnonymizedAt" | "anonymizedReason">,
+): boolean => content.anonymizedReason === "project_exit" && content.creatorAnonymizedAt != null;

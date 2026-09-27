@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { useCollaboration } from "../../context/CollaborationContext";
+import { projectInvitationErrorMessage } from "../../services/freemium/freemiumErrors";
 import {
   getProfile,
   respondToConnectionRequest,
@@ -80,12 +81,13 @@ export default function CommonsRequestsButton() {
       } else {
         await respondToProjectInvitation(id, accept);
         if (mounted.current) setInvitations((items) => items.filter((item) => item.id !== id));
+        void refresh();
       }
       if (!mounted.current) return;
       Alert.alert(accept ? (kind === "connection" ? "繋がりを承認しました" : "プロジェクトに参加しました") : "辞退しました");
       // Refresh project membership when the inbox closes, keeping other requests visible.
     } catch (cause) {
-      if (mounted.current) Alert.alert("応答できません", cause instanceof Error ? cause.message : "もう一度お試しください。");
+      if (mounted.current) Alert.alert("応答できません", kind === "invitation" ? projectInvitationErrorMessage(cause) : "通信状態と申請の状態を確認して再試行してください。");
     } finally {
       locked.current = false;
       if (mounted.current) setBusy(null);

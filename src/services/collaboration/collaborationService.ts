@@ -15,6 +15,10 @@ import {
 
 import { getFirebaseAuth, getFirebaseFirestore } from "../sync/firebaseApp";
 import { unpublishGuildPostsForProfile, updateGuildPostAuthorSnapshot } from "../guild/guildService";
+import {
+  createProjectWithQuota,
+  respondToProjectInvitationWithQuota,
+} from "../freemium/temisFreemiumService";
 import type { SyncUser } from "../auth/syncUser";
 import {
   USERNAME_CHANGE_INTERVAL_MS,
@@ -51,8 +55,6 @@ const connectionRef = (leftUserId: string, rightUserId: string) =>
 const projectRef = (projectId: string) => doc(db(), "projects", projectId);
 const memberRef = (projectId: string, userId: string) =>
   doc(db(), "projects", projectId, "members", userId);
-const membershipRef = (projectId: string, userId: string) =>
-  doc(db(), "projectMemberships", `${projectId}__${userId}`);
 const invitationRef = (invitationId: string) => doc(db(), "projectInvitations", invitationId);
 const projectTaskRef = (taskId: string) => doc(db(), "projectTasks", taskId);
 const sharedNoteRef = (noteId: string) => doc(db(), "projectNotes", noteId);
@@ -241,9 +243,9 @@ export const getProfile = async (userId: string): Promise<UserProfile | null> =>
 
 /** Resolves display names for project content without failing on private profiles. */
 export const listProjectCreatorProfiles = async (
-  userIds: string[],
+  userIds: (string | null | undefined)[],
 ): Promise<UserProfile[]> => {
-  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  const uniqueIds = [...new Set(userIds.filter((value): value is string => Boolean(value)))];
   const profiles = await Promise.all(uniqueIds.map(async (userId) => {
     try {
       return await getProfile(userId);
@@ -344,25 +346,8 @@ export const setConnectionBlocked = async (otherUserId: string, blocked: boolean
 };
 
 export const createProject = async (input: Pick<Project, "name" | "description" | "icon" | "tags">): Promise<Project> => {
-  const ownerUserId = requireCurrentUserId();
-  const id = nanoid();
-  const timestamp = now();
-  const project: Project = {
-    id, name: input.name.trim(), description: input.description?.trim() || null,
-    icon: input.icon ?? null, tags: input.tags, ownerUserId,
-    visibility: "invite_only", joinPolicy: "invitation_only", invitationPolicy: "owner_only",
-    taskEnabled: false, createdAt: timestamp, updatedAt: timestamp, deletedAt: null,
-  };
-  await runTransaction(db(), async (transaction) => {
-    transaction.set(projectRef(id), project);
-    transaction.set(memberRef(id, ownerUserId), {
-      userId: ownerUserId, role: "owner", invitationId: null, joinedAt: timestamp, updatedAt: timestamp,
-    } satisfies ProjectMember);
-    transaction.set(membershipRef(id, ownerUserId), {
-      id: `${id}__${ownerUserId}`, projectId: id, userId: ownerUserId, role: "owner", updatedAt: timestamp,
-    } satisfies ProjectMembership);
-  });
-  return project;
+  requireCurrentUserId();
+  return createProjectWithQuota(input);
 };
 
 export const listMyProjects = async (): Promise<Project[]> => {
@@ -448,27 +433,8 @@ export const listMyPendingInvitations = async (): Promise<ProjectInvitation[]> =
 };
 
 export const respondToProjectInvitation = async (invitationId: string, accept: boolean): Promise<void> => {
-  const userId = requireCurrentUserId();
-  await runTransaction(db(), async (transaction) => {
-    const invitationSnapshot = await transaction.get(invitationRef(invitationId));
-    if (!invitationSnapshot.exists()) throw new Error("招待が見つかりません。");
-    const invitation = invitationSnapshot.data() as ProjectInvitation;
-    if (invitation.inviteeUserId !== userId || invitation.status !== "pending") {
-      throw new Error("この招待には応答できません。");
-    }
-    const timestamp = now();
-    if (accept && invitation.expiresAt != null && invitation.expiresAt <= timestamp) {
-      throw new Error("この招待は有効期限が切れています。");
-    }
-    transaction.set(invitationRef(invitationId), { ...invitation, status: accept ? "accepted" : "declined", updatedAt: timestamp });
-    if (accept) transaction.set(memberRef(invitation.projectId, userId), {
-      userId, role: invitation.role, invitationId, joinedAt: timestamp, updatedAt: timestamp,
-    } satisfies ProjectMember);
-    if (accept) transaction.set(membershipRef(invitation.projectId, userId), {
-      id: `${invitation.projectId}__${userId}`, projectId: invitation.projectId,
-      userId, role: invitation.role, updatedAt: timestamp,
-    } satisfies ProjectMembership);
-  });
+  requireCurrentUserId();
+  await respondToProjectInvitationWithQuota(invitationId, accept);
 };
 
 export const setProjectTaskEnabled = async (projectId: string, enabled: boolean): Promise<void> => {
@@ -503,11 +469,31 @@ export const setProjectGuildVisibility = async (projectId: string, isPublic: boo
 
 export const upsertProjectSharedNote = async (note: ProjectSharedNote): Promise<void> => {
   const userId = requireCurrentUserId();
-  if (note.ownerUserId !== userId) throw new Error("自分のメモだけを共有できます。");
   await runTransaction(db(), async (transaction) => {
-    const member = await transaction.get(memberRef(note.projectId, userId));
+    const [member, existing] = await Promise.all([
+      transaction.get(memberRef(note.projectId, userId)),
+      transaction.get(sharedNoteRef(note.id)),
+    ]);
     if (!member.exists() || member.data()?.role === "viewer") throw new Error("このプロジェクトへメモを共有する権限がありません。");
-    transaction.set(sharedNoteRef(note.id), note);
+    const previous = existing.exists() ? existing.data() as ProjectSharedNote : null;
+    if (previous?.anonymizedReason === "project_exit" || previous?.ownerUserId == null) {
+      if (member.data()?.role !== "owner") throw new Error("匿名メモを編集できるのはプロジェクト所有者だけです。");
+      transaction.set(sharedNoteRef(note.id), {
+        ...previous,
+        title: note.title,
+        body: note.body,
+        updatedAt: note.updatedAt,
+      });
+      return;
+    }
+    if (note.ownerUserId !== userId || (previous && previous.ownerUserId !== userId)) {
+      throw new Error("自分のメモだけを共有できます。");
+    }
+    transaction.set(sharedNoteRef(note.id), {
+      ...note,
+      creatorAnonymizedAt: null,
+      anonymizedReason: null,
+    });
   });
 };
 
@@ -515,7 +501,13 @@ export const removeProjectSharedNote = async (noteId: string): Promise<void> => 
   const userId = requireCurrentUserId();
   await runTransaction(db(), async (transaction) => {
     const snapshot = await transaction.get(sharedNoteRef(noteId));
-    if (!snapshot.exists() || snapshot.data()?.ownerUserId !== userId) throw new Error("このメモの共有を解除する権限がありません。");
+    if (!snapshot.exists()) throw new Error("共有メモが見つかりません。");
+    const note = snapshot.data() as ProjectSharedNote;
+    const membership = await transaction.get(memberRef(note.projectId, userId));
+    const anonymous = note.anonymizedReason === "project_exit" || note.ownerUserId == null;
+    if ((anonymous && membership.data()?.role !== "owner") || (!anonymous && note.ownerUserId !== userId)) {
+      throw new Error("このメモの共有を解除する権限がありません。");
+    }
     transaction.delete(sharedNoteRef(noteId));
   });
 };
@@ -543,6 +535,8 @@ export const createProjectTask = async (input: ProjectTaskInput): Promise<Projec
   const task = normalizeProjectTask({
     ...input, kind: input.kind ?? "task", id, ownerUserId: userId, creatorUserId: userId, createdAt: timestamp,
     creatorDisplayName: creatorProfile?.displayName?.trim() || (creatorProfile?.username ? `@${creatorProfile.username}` : null),
+    creatorAnonymizedAt: null,
+    anonymizedReason: null,
     updatedAt: timestamp, completedAt: input.status === "completed" ? timestamp : null,
     deletedAt: null,
   });
@@ -602,7 +596,9 @@ export const deleteProjectTask = async (taskId: string): Promise<void> => {
     const existing = normalizeProjectTask(taskSnapshot.data() as ProjectTask);
     const membershipSnapshot = await transaction.get(memberRef(existing.projectId, userId));
     const role = membershipSnapshot.data()?.role as ProjectRole | undefined;
-    const canEdit = role === "owner" || role === "member"
+    const anonymous = existing.anonymizedReason === "project_exit"
+      || (existing.ownerUserId == null && existing.creatorUserId == null);
+    const canEdit = anonymous ? role === "owner" : role === "owner" || role === "member"
       || existing.ownerUserId === userId || existing.creatorUserId === userId || existing.assigneeUserId === userId;
     if (!canEdit) throw new Error("この共有タスクを消去する権限がありません。");
     transaction.set(projectTaskRef(taskId), {

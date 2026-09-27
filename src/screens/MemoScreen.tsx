@@ -45,8 +45,10 @@ import {
 import BracketToolbar from "../components/BracketToolbar";
 import AIAnswerEvidencePanel from "../components/ai/AIAnswerEvidencePanel";
 import TemisAIDock from "../components/ai/TemisAIDock";
+import MemoListCard from "../components/memo/MemoListCard";
 import { AppLanguage, t } from "../i18n";
 import { useAI } from "../hooks/useAI";
+import { formatTemisAIUsageLabel, useTemisAIUsage } from "../context/TemisAIUsageContext";
 import type { MemoWorkspaceTabKey } from "../types/appNavigation";
 import type { AIEvidence } from "../types";
 
@@ -322,6 +324,7 @@ const MemoScreen = ({
   const [searchSelectionOverride, setSearchSelectionOverride] = useState<Selection | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const aiUsage = useTemisAIUsage();
   const listRef = useRef<SectionList<MemoItem>>(null);
   const qaAccessoryId = useMemo(
     () => `qa-toolbar-${Math.random().toString(36).slice(2, 10)}`,
@@ -349,7 +352,7 @@ const MemoScreen = ({
     searchTimeoutError: tr("memo.qaErrorSearchTimeout"),
     answerError: tr("memo.qaErrorAnswer"),
     answerTimeoutError: tr("memo.qaErrorAnswerTimeout"),
-  });
+  }, { begin: aiUsage.begin, refresh: aiUsage.refresh });
 
   const loadItems = useCallback(() => {
     let active = true;
@@ -868,10 +871,15 @@ const MemoScreen = ({
             renderItem={({ item }) => {
               const isDeleting = deletingMemoKeys.includes(item.key);
               return (
-                <View style={styles.item}>
-                  <Pressable
-                    style={styles.itemContent}
-                    onPress={() => {
+                <MemoListCard
+                  title={normalizeUiText(item.memoTitle)}
+                  meta={[
+                    `${normalizeUiText(sourceLabel(item.source))} · ${normalizeUiText(
+                      item.taskTitle || "メモ",
+                    )}${item.scope === "project" ? " · プロジェクト" : ""}`,
+                    ...(item.source === "todo" && item.tags?.length ? [item.tags.join(" · ")] : []),
+                  ]}
+                  onPress={() => {
                       if (item.source === "todo") {
                         Keyboard.dismiss();
                         if (!item.todoId) return;
@@ -880,29 +888,9 @@ const MemoScreen = ({
                         });
                       } else openMemoDetail(item.memoId);
                     }}
-                    disabled={isDeleting}
-                  >
-                    <Text style={styles.itemTitle}>{normalizeUiText(item.memoTitle)}</Text>
-                    <Text style={styles.itemMeta}>
-                      {`${normalizeUiText(sourceLabel(item.source))} · ${normalizeUiText(
-                        item.taskTitle || "メモ",
-                      )}${item.scope === "project" ? " · プロジェクト" : ""}`}
-                    </Text>
-                    {item.source === "todo" && item.tags?.length ? (
-                      <Text style={styles.itemMeta}>{item.tags.join(" · ")}</Text>
-                    ) : null}
-                  </Pressable>
-                  {item.source !== "todo" ? <Pressable
-                    style={[
-                      styles.itemDeleteButton,
-                      isDeleting && styles.itemDeleteButtonDisabled,
-                    ]}
-                    onPress={() => handleDeleteMemo(item)}
-                    disabled={isDeleting}
-                  >
-                    <Ionicons name="trash-outline" size={16} color="#111827" />
-                  </Pressable> : null}
-                </View>
+                  onDelete={item.source !== "todo" ? () => handleDeleteMemo(item) : undefined}
+                  deleting={isDeleting}
+                />
               );
             }}
             ListEmptyComponent={
@@ -925,6 +913,7 @@ const MemoScreen = ({
         onChangeQuery={setQaQuery}
         onSearch={handleSearchEvidence}
         onToggle={() => setQaOpen((prev) => !prev)}
+        badge={<Pressable disabled={aiUsage.status !== "error"} onPress={() => void aiUsage.refresh()} accessibilityRole="button"><Text style={styles.aiUsageBadge}>{formatTemisAIUsageLabel(aiUsage.usage, aiUsage.status)}{aiUsage.status === "error" ? "・再試行" : ""}</Text></Pressable>}
         inputProps={{
           selection: qaSelectionOverride ?? undefined,
           onSelectionChange: handleQaSelectionChange,
@@ -940,6 +929,8 @@ const MemoScreen = ({
               <Text style={styles.qaHelperText}>{tr("memo.aiSearchingEvidence")}</Text>
             ) : qaAnswerLoading ? (
               <Text style={styles.qaHelperText}>{tr("memo.aiGeneratingAnswer")}</Text>
+            ) : qaAnswerError ? (
+              <Text accessibilityRole="alert" style={styles.qaHelperText}>{qaAnswerError}</Text>
             ) : qaSearched && qaResults.length === 0 ? (
               <Text style={styles.qaHelperText}>{tr("memo.aiNoRelated")}</Text>
             ) : (
@@ -1031,6 +1022,11 @@ const MemoScreen = ({
 };
 
 const styles = StyleSheet.create({
+  aiUsageBadge: {
+    color: "#6b7280",
+    fontSize: 11,
+    fontWeight: "600",
+  },
   container: {
     flex: 1,
     backgroundColor: "#ffffff",

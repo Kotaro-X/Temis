@@ -23,30 +23,20 @@ const BracketToolbar = ({
   onSelectionChange,
 }: Props) => {
   const safeSelection = selection ?? { start: value.length, end: value.length };
+  const selectionStart = Math.max(
+    0,
+    Math.min(safeSelection.start, safeSelection.end, value.length),
+  );
+  const selectionEnd = Math.max(
+    selectionStart,
+    Math.min(Math.max(safeSelection.start, safeSelection.end), value.length),
+  );
 
-  const applyInsertion = (insertText: string, atStart: boolean) => {
-    const insertIndex = atStart ? safeSelection.start : safeSelection.end;
+  const applyInsertion = (insertText: string) => {
     const nextValue =
-      value.slice(0, insertIndex) + insertText + value.slice(insertIndex);
-    const delta = insertText.length;
-
-    let nextSelection: Selection;
-    if (atStart) {
-      nextSelection = {
-        start: safeSelection.start + delta,
-        end: safeSelection.end + delta,
-      };
-    } else if (safeSelection.start === safeSelection.end) {
-      nextSelection = {
-        start: safeSelection.start + delta,
-        end: safeSelection.end + delta,
-      };
-    } else {
-      nextSelection = {
-        start: safeSelection.start,
-        end: safeSelection.end,
-      };
-    }
+      value.slice(0, selectionStart) + insertText + value.slice(selectionEnd);
+    const cursor = selectionStart + insertText.length;
+    const nextSelection = { start: cursor, end: cursor };
 
     onChangeText(nextValue);
     onSelectionChange(nextSelection);
@@ -57,14 +47,14 @@ const BracketToolbar = ({
       <View style={styles.spacer} />
       <Pressable
         style={styles.button}
-        onPress={() => applyInsertion(OPEN_BRACKETS, true)}
+        onPress={() => applyInsertion(OPEN_BRACKETS)}
         accessibilityLabel="（（ を挿入"
       >
         <Text style={styles.buttonText}>{OPEN_BRACKETS}</Text>
       </Pressable>
       <Pressable
         style={[styles.button, styles.buttonLast]}
-        onPress={() => applyInsertion(CLOSE_BRACKETS, false)}
+        onPress={() => applyInsertion(CLOSE_BRACKETS)}
         accessibilityLabel="）） を挿入"
       >
         <Text style={styles.buttonText}>{CLOSE_BRACKETS}</Text>

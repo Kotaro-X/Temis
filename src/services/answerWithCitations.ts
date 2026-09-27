@@ -655,7 +655,7 @@ const parseAnswerJson = (raw: string): ParsedJsonResult => {
   const cleaned = stripCodeFence(raw);
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
-  const candidates: Array<{ branch: "direct" | "brace"; text: string }> = [
+  const candidates: { branch: "direct" | "brace"; text: string }[] = [
     { branch: "direct", text: cleaned },
   ];
   if (firstBrace >= 0 && lastBrace > firstBrace) {
@@ -944,6 +944,7 @@ export const answerWithCitations = async (
   evidence: AnswerEvidence[],
   logSummaryText?: string,
   llmProvider?: LLMProvider,
+  requestId?: string,
 ): Promise<AnswerWithCitationsResult> => {
   const trimmedQuestion = question.trim();
   if (!trimmedQuestion) {
@@ -979,6 +980,7 @@ export const answerWithCitations = async (
             linkPath: item.linkPath?.every((token) => token.length <= 200) ? item.linkPath : undefined,
           })),
           logSummaryText: logSummaryText?.slice(0, 500),
+          requestId,
         },
         runtimeConfig.openAiFunctionRegion,
       );

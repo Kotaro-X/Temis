@@ -31,12 +31,11 @@ const AppContent = () => {
     openSettingsHome,
     openMemoSearch,
     openMenu,
-    openPrivateWorkspace,
     workspaceScope,
     activeProjectId,
     selectProject,
   } = useAppUI();
-  const { isCloudSyncEntitled, accessGrant } = useSubscription();
+  const { accessGrant } = useSubscription();
   const hasGuildAdminAccess = hasStaffFreeAccess(accessGrant);
   const activeTab: AppChromeTab | null =
     rootScreen === "dm" ? null : rootScreen === "memos" ? "memos" : rootScreen === "todo" ? "todo" : rootScreen === "projects" ? "projects" : rootScreen === "guild" ? "guild" : "tasks";
@@ -46,12 +45,6 @@ const AppContent = () => {
   // extra 16px content inset.
   const workspaceContentPaddingTop = insets.top;
   const isPrivateWorkspace = workspaceScope === "private";
-
-  useEffect(() => {
-    if (!isCloudSyncEntitled && workspaceScope === "projects") {
-      openPrivateWorkspace();
-    }
-  }, [isCloudSyncEntitled, openPrivateWorkspace, workspaceScope]);
 
   useEffect(() => {
     if (!hasGuildAdminAccess && rootScreen === "guildAdmin") {
@@ -128,8 +121,7 @@ const AppContent = () => {
                     >
                       {(settingsWorkspace) => settingsWorkspace}
                     </SettingsShell>
-                    {isCloudSyncEntitled ? (
-                      <>
+                    <>
                         <ProjectsScreen
                           visible={workspaceScope === "projects" && rootScreen === "projects"}
                           contentPaddingTop={workspaceContentPaddingTop}
@@ -152,8 +144,7 @@ const AppContent = () => {
                           tab="memos"
                           contentPaddingTop={workspaceContentPaddingTop}
                         />
-                      </>
-                    ) : null}
+                    </>
                     <GuildScreen
                       visible={workspaceScope === "private" && rootScreen === "guild"}
                       contentPaddingTop={workspaceContentPaddingTop}

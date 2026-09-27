@@ -20,6 +20,7 @@ type Props = {
   onSearch: () => void;
   onToggle: () => void;
   badge?: React.ReactNode;
+  controls?: React.ReactNode;
   inputProps?: Omit<TextInputProps, "onChangeText" | "placeholder" | "value">;
   children?: React.ReactNode;
 };
@@ -35,6 +36,7 @@ export default function TemisAIDock({
   onSearch,
   onToggle,
   badge,
+  controls,
   inputProps,
   children,
 }: Props) {
@@ -52,6 +54,7 @@ export default function TemisAIDock({
         </View>
         <Ionicons name={expanded ? "chevron-down" : "chevron-up"} size={16} color="#111827" />
       </Pressable>
+      {controls ? <View style={styles.controls}>{controls}</View> : null}
       <View style={styles.inputRow}>
         <TextInput
           {...inputProps}
@@ -105,6 +108,7 @@ const styles = StyleSheet.create({
   },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   title: { fontSize: 14, fontWeight: "700", color: "#111827" },
+  controls: { marginBottom: 8 },
   inputRow: { flexDirection: "row", alignItems: "center" },
   input: {
     flex: 1,

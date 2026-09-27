@@ -2,6 +2,9 @@ import { useCallback, useRef, useState } from "react";
 
 import { searchAndGenerateAnswer } from "../ai/aiService";
 import type { AIEvidence } from "../types";
+import type { EvidenceInput } from "../services/aiEvidence";
+import { createAIRequestId } from "../services/freemium/temisFreemiumService";
+import { TemisUsageError } from "../services/freemium/freemiumErrors";
 
 const DEFAULT_SEARCH_TIMEOUT_MS = 15_000;
 const DEFAULT_ANSWER_TIMEOUT_MS = 45_000;
@@ -31,6 +34,11 @@ export const useAI = (messages: {
   searchTimeoutError: string;
   answerError: string;
   answerTimeoutError: string;
+}, usage?: {
+  begin: (surface: "memo", requestId: string) => Promise<unknown>;
+  refresh: () => Promise<void>;
+}, options?: {
+  retrieveEvidence?: (query: string, options: { topK: number; topN: number }) => Promise<EvidenceInput[]>;
 }) => {
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
@@ -63,8 +71,13 @@ export const useAI = (messages: {
 
       setSearchLoading(true);
       try {
+        const quotaRequestId = createAIRequestId("memo");
+        await usage?.begin("memo", quotaRequestId);
         const result = await withTimeout(
-          searchAndGenerateAnswer(runQuery),
+          searchAndGenerateAnswer(runQuery, {
+            requestId: quotaRequestId,
+            retrieveEvidence: options?.retrieveEvidence,
+          }),
           DEFAULT_SEARCH_TIMEOUT_MS + DEFAULT_ANSWER_TIMEOUT_MS,
           "ai",
         );
@@ -94,11 +107,12 @@ export const useAI = (messages: {
         }
         setCitedEvidenceKeys(normalizedAnswer.citedEvidenceKeys);
       } catch (caughtError) {
+        if (requestIdRef.current !== requestId) return;
         const message =
           caughtError instanceof Error ? caughtError.message : String(caughtError);
         setAllEvidence([]);
         setError(
-          message.includes("timeout")
+          caughtError instanceof TemisUsageError ? caughtError.message : message.includes("timeout")
             ? message.includes("answer")
               ? messages.answerTimeoutError
               : messages.searchTimeoutError
@@ -107,14 +121,28 @@ export const useAI = (messages: {
               : messages.searchError,
         );
       } finally {
+        void usage?.refresh().catch(() => undefined);
         if (requestIdRef.current === requestId) {
           setSearchLoading(false);
           setAnswerLoading(false);
         }
       }
     },
-    [messages, query],
+    [messages, options?.retrieveEvidence, query, usage],
   );
+
+  const reset = useCallback(() => {
+    requestIdRef.current += 1;
+    lastRunQueryRef.current = "";
+    setSearched(false);
+    setSearchLoading(false);
+    setAnswerLoading(false);
+    setAnswerText("");
+    setError(null);
+    setAllEvidence([]);
+    setCitedEvidenceKeys([]);
+    setShowAllEvidence(false);
+  }, []);
 
   const stopGeneration = useCallback(() => {
     requestIdRef.current += 1;
@@ -141,5 +169,6 @@ export const useAI = (messages: {
     run,
     stopGeneration,
     retryGeneration,
+    reset,
   };
 };

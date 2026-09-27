@@ -70,6 +70,24 @@ test("Firestore indexes support filtered Guild vector search", () => {
   assert.deepEqual(vectorIndex.fields, [
     { fieldPath: "status", order: "ASCENDING" },
     { fieldPath: "moderationVisibility", order: "ASCENDING" },
+    { fieldPath: "__name__", order: "ASCENDING" },
     { fieldPath: "embedding", vectorConfig: { dimension: 1536, flat: {} } },
+  ]);
+});
+
+test("Firestore indexes support loading project join requests in newest-first order", () => {
+  const config = JSON.parse(readFileSync(indexPath, "utf8")) as {
+    indexes: {
+      collectionGroup: string;
+      fields: { fieldPath: string; order: string }[];
+    }[];
+  };
+  const joinRequests = config.indexes.find(
+    (entry) => entry.collectionGroup === "projectJoinRequests",
+  );
+  assert.ok(joinRequests, "missing project join-request index");
+  assert.deepEqual(joinRequests.fields, [
+    { fieldPath: "projectId", order: "ASCENDING" },
+    { fieldPath: "createdAt", order: "DESCENDING" },
   ]);
 });

@@ -56,10 +56,13 @@ const ProjectsScreen = ({
   const {
     profile,
     projects,
-    status,
-    error,
+    projectStatus: status,
+    projectError: error,
     refresh,
     saveUsername,
+    projectAccess,
+    overflowProjects,
+    resolveOverflow,
   } = useCollaboration();
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<Project | null>(null);
@@ -73,6 +76,52 @@ const ProjectsScreen = ({
   const [pendingInvitations, setPendingInvitations] = useState<ProjectInvitation[]>([]);
   const [inviting, setInviting] = useState(false);
   const [joinRequests, setJoinRequests] = useState<ProjectJoinRequest[]>([]);
+  const [keepProjectId, setKeepProjectId] = useState<string | null>(null);
+  const [ownerResolution, setOwnerResolution] = useState<Record<string, string>>( {} );
+  const [resolvingOverflow, setResolvingOverflow] = useState(false);
+
+  useEffect(() => {
+    if (projectAccess?.status !== "selection_required") {
+      setKeepProjectId(null);
+      setOwnerResolution({});
+    }
+  }, [projectAccess?.status]);
+
+  const handleResolveOverflow = async () => {
+    if (!keepProjectId || resolvingOverflow) return;
+    const resolutions = overflowProjects
+      .filter((item) => item.project.id !== keepProjectId)
+      .map((item) => {
+        if (item.role !== "owner") return { projectId: item.project.id, action: "leave" as const };
+        const choice = ownerResolution[item.project.id];
+        if (choice === "delete") return { projectId: item.project.id, action: "delete" as const };
+        return { projectId: item.project.id, action: "transfer" as const, transferToUserId: choice };
+      });
+    const unresolvedOwner = overflowProjects.some((item) =>
+      item.project.id !== keepProjectId && item.role === "owner" && !ownerResolution[item.project.id]);
+    if (unresolvedOwner) {
+      Alert.alert("移譲先を選択してください", "所有中のプロジェクトは、メンバーへ移譲するか削除する必要があります。");
+      return;
+    }
+    Alert.alert(
+      "無料枠をこの1件に整理しますか？",
+      "退出するプロジェクトの共有メモ・共有タスクは削除せず、作成者を「匿名ユーザー」にして残します。本文とタイトル自体はそのまま残り、元アカウントとの紐付けと編集権限は失われます。この処理は元に戻せません。",
+      [
+        { text: "キャンセル", style: "cancel" },
+        {
+          text: "整理する",
+          style: "destructive",
+          onPress: () => {
+            setResolvingOverflow(true);
+            void resolveOverflow(keepProjectId, resolutions)
+              .then(() => Alert.alert("無料枠の整理が完了しました"))
+              .catch((cause) => Alert.alert("整理を完了できません", cause instanceof Error ? cause.message : "もう一度お試しください。"))
+              .finally(() => setResolvingOverflow(false));
+          },
+        },
+      ],
+    );
+  };
 
   const loadProject = useCallback(
     async (project: Project) => {
@@ -294,8 +343,8 @@ const ProjectsScreen = ({
             <>
               <Text style={styles.sectionTitle}>Commons公開</Text>
               <View style={styles.surfaceRow}>
-                <View><Text style={styles.rowTitle}>{selected.visibility === "public" ? "公開・承認制" : "非公開"}</Text><Text style={styles.caption}>公開しても、メモ・タスク・メンバー一覧はCommonsには公開されません。</Text></View>
-                <Pressable style={styles.inviteButton} onPress={() => void handleProjectVisibility(selected.visibility !== "public")}><Text style={styles.inviteButtonText}>{selected.visibility === "public" ? "非公開にする" : "公開する"}</Text></Pressable>
+                <View style={styles.visibilityCopy}><Text style={styles.rowTitle}>{selected.visibility === "public" ? "公開・承認制" : "非公開"}</Text><Text style={styles.caption}>公開しても、メモ・タスク・メンバー一覧はCommonsには公開されません。</Text></View>
+                <Pressable style={[styles.inviteButton, styles.visibilityButton]} onPress={() => void handleProjectVisibility(selected.visibility !== "public")}><Text numberOfLines={1} style={styles.inviteButtonText}>{selected.visibility === "public" ? "非公開にする" : "公開する"}</Text></Pressable>
               </View>
               {joinRequests.filter((request) => request.status === "pending").length > 0 ? <>
                 <Text style={styles.sectionTitle}>参加申請</Text>
@@ -380,7 +429,7 @@ const ProjectsScreen = ({
           <Pressable
             style={styles.addButton}
             onPress={() => setCreating(true)}
-            disabled={status !== "ready"}
+            disabled={status !== "ready" || projectAccess?.status === "selection_required"}
           >
             <Ionicons name="add" size={18} color="#111827" />
             <Text style={styles.addButtonText}>作成</Text>
@@ -409,6 +458,47 @@ const ProjectsScreen = ({
               </View>
             ) : null}
             {error ? <Text style={styles.error}>{error}</Text> : null}
+            {projectAccess?.status === "selection_required" ? (
+              <View style={styles.overflowSurface}>
+                <Text style={styles.overflowTitle}>無料で利用する1件を選択</Text>
+                <Text style={styles.caption}>
+                  残さないプロジェクトからは退出します。本人作成の共有メモ・共有タスクは削除されず「匿名ユーザー」のコンテンツとして残ります。本文とタイトルに自分で書いた氏名などは自動で消去されません。
+                </Text>
+                {overflowProjects.map((item) => {
+                  const selectedToKeep = keepProjectId === item.project.id;
+                  const exits = keepProjectId != null && !selectedToKeep;
+                  return (
+                    <View key={item.project.id} style={styles.overflowProject}>
+                      <Pressable style={styles.overflowKeepRow} onPress={() => setKeepProjectId(item.project.id)}>
+                        <Ionicons name={selectedToKeep ? "radio-button-on" : "radio-button-off"} size={20} color="#111827" />
+                        <View style={styles.rowBody}>
+                          <Text style={styles.rowTitle}>{item.project.name}</Text>
+                          <Text style={styles.caption}>
+                            匿名化対象: 共有メモ {item.ownedNoteCount}件・共有タスク {item.ownedTaskCount}件
+                          </Text>
+                        </View>
+                      </Pressable>
+                      {exits && item.role === "owner" ? (
+                        <View style={styles.ownerChoice}>
+                          <Text style={styles.caption}>所有権の移譲先、またはプロジェクト削除を選択</Text>
+                          {item.transferCandidates.map((candidate) => (
+                            <Pressable key={candidate.userId} style={styles.choiceButton} onPress={() => setOwnerResolution((current) => ({ ...current, [item.project.id]: candidate.userId }))}>
+                              <Text style={styles.choiceText}>{ownerResolution[item.project.id] === candidate.userId ? "✓ " : ""}{candidate.label}へ移譲</Text>
+                            </Pressable>
+                          ))}
+                          <Pressable style={styles.deleteChoiceButton} onPress={() => setOwnerResolution((current) => ({ ...current, [item.project.id]: "delete" }))}>
+                            <Text style={styles.deleteChoiceText}>{ownerResolution[item.project.id] === "delete" ? "✓ " : ""}プロジェクトを削除</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </View>
+                  );
+                })}
+                <Pressable style={[styles.resolveButton, (!keepProjectId || resolvingOverflow) && styles.disabledButton]} disabled={!keepProjectId || resolvingOverflow} onPress={() => void handleResolveOverflow()}>
+                  <Text style={styles.resolveButtonText}>{resolvingOverflow ? "整理中…" : "選択した1件に整理する"}</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {profile ? (
               <View style={styles.profileSurface}>
                 <Text style={styles.profileLabel}>あなたの公開ユーザーID</Text>
@@ -529,6 +619,18 @@ const styles = StyleSheet.create({
   listContent: { paddingHorizontal: 16, paddingBottom: 24 },
   detailContent: { paddingHorizontal: 16, paddingBottom: 28 },
   loading: { marginVertical: 8 },
+  overflowSurface: { borderWidth: 1, borderColor: "#f59e0b", backgroundColor: "#fffbeb", borderRadius: 12, padding: 14, marginBottom: 12 },
+  overflowTitle: { color: "#92400e", fontSize: 16, fontWeight: "700" },
+  overflowProject: { marginTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#f59e0b", paddingTop: 10 },
+  overflowKeepRow: { flexDirection: "row", alignItems: "center" },
+  ownerChoice: { marginLeft: 32, gap: 6 },
+  choiceButton: { alignSelf: "flex-start", borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#ffffff" },
+  choiceText: { color: "#374151", fontSize: 12, fontWeight: "600" },
+  deleteChoiceButton: { alignSelf: "flex-start", borderWidth: 1, borderColor: "#fca5a5", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#fff1f2" },
+  deleteChoiceText: { color: "#b91c1c", fontSize: 12, fontWeight: "600" },
+  resolveButton: { marginTop: 14, borderRadius: 9, paddingVertical: 11, alignItems: "center", backgroundColor: "#111827" },
+  resolveButtonText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
+  disabledButton: { opacity: 0.45 },
   projectOverview: {
     flexDirection: "row",
     alignItems: "center",
@@ -570,13 +672,15 @@ const styles = StyleSheet.create({
   },
   surfaceRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     borderWidth: 1,
     borderColor: "#e5e7eb",
     borderRadius: 10,
     padding: 12,
   },
+  visibilityCopy: { flex: 1, minWidth: 0, paddingRight: 12 },
+  visibilityButton: { flexShrink: 0 },
   rowBody: { flex: 1, marginLeft: 12 },
   rowBodyNoMargin: { flex: 1 },
   rowTitle: { color: "#111827", fontSize: 15, fontWeight: "600" },

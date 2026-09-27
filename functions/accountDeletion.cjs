@@ -201,7 +201,18 @@ const deleteCoreAccountData = async (uid) => {
       await firestore.doc(`profiles/${uid}`).delete();
     }],
     ["cloud_data", () => firestore.recursiveDelete(firestore.doc(`users/${uid}`))],
-    ["subscription_access", () => firestore.doc(`subscriptionAccess/${uid}`).delete()],
+    ["subscription_access", async () => {
+      const [weeklyUsage, reservations] = await Promise.all([
+        firestore.collection("temisAIWeeklyUsage").where("userId", "==", uid).get(),
+        firestore.collection("temisAIUsageReservations").where("userId", "==", uid).get(),
+      ]);
+      await Promise.all([
+        deleteDocuments([...weeklyUsage.docs, ...reservations.docs]),
+        firestore.doc(`subscriptionAccess/${uid}`).delete(),
+        firestore.doc(`temisAccessStates/${uid}`).delete(),
+        firestore.doc(`projectAccessStates/${uid}`).delete(),
+      ]);
+    }],
     ["firebase_auth", async () => {
       try { await getAuth().deleteUser(uid); } catch (error) {
         if (error.code !== "auth/user-not-found") throw error;
@@ -387,7 +398,10 @@ const deleteProjectOwnedContent = async (uid, projectId) => {
   });
 };
 
-const leaveProjectForAccountDeletion = async (uid, projectId) => {
+const leaveProjectForAccountDeletion = async (uid, projectId, contentPolicy) => {
+  if (contentPolicy !== "delete") {
+    throw new HttpsError("invalid-argument", "Account deletion requires the delete content policy.");
+  }
   const firestore = getFirestore();
   const [project, membership] = await Promise.all([
     firestore.doc(`projects/${projectId}`).get(),
@@ -455,7 +469,7 @@ const deleteProjectForAccountDeletion = async (uid, projectId) => {
 const resolveAccountDeletionBlocker = async (uid, data) => {
   const action = typeof data?.action === "string" ? data.action : "";
   if (action === "leave_project") {
-    await leaveProjectForAccountDeletion(uid, requireProjectId(data));
+    await leaveProjectForAccountDeletion(uid, requireProjectId(data), "delete");
   } else if (action === "transfer_project_ownership") {
     await transferProjectOwnershipForAccountDeletion(uid, requireProjectId(data), data.targetUserId);
   } else if (action === "delete_project") {

@@ -24,7 +24,7 @@ import TemisAIDock from "../components/ai/TemisAIDock";
 import MemoTextEditor from "../components/inputs/MemoTextEditor";
 import TokenChips from "../components/TokenChips";
 import { useCollaboration } from "../context/CollaborationContext";
-import { useSubscription } from "../context/SubscriptionContext";
+import { formatTemisAIUsageLabel, useTemisAIUsage } from "../context/TemisAIUsageContext";
 import { useAppUI } from "../context/AppUIContext";
 import {
   createProjectJoinRequest,
@@ -49,6 +49,7 @@ import { getConnectionWithUser, getProjectMember, inviteToProject, sendConnectio
 import { getConnectionStatus, type ConnectionStatus } from "../types/collaboration";
 import { extractGuildTags, type GuildFeedKind, type GuildFeedPost, type GuildPost, type OwnedGuildFeedCursor } from "../types/guild";
 import { extractTokens, normalizeParens } from "../utils/wikiLink";
+import { createAIRequestId } from "../services/freemium/temisFreemiumService";
 
 type Props = {
   visible: boolean;
@@ -69,10 +70,10 @@ const FEEDS: { key: GuildView; label: string }[] = [
 
 const formatDate = (value: number | null) => value ? new Date(value).toLocaleDateString("ja-JP", { month: "short", day: "numeric" }) : "";
 
-const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
-  const { profile, inviteableProjects, status, error, refresh } = useCollaboration();
+const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
+  const { profile, inviteableProjects, status, error, refreshProfile: refresh, projectStatus, projectError, refreshProjects } = useCollaboration();
   const { openMemoDetail } = useAppUI();
-  const { isCloudSyncEntitled } = useSubscription();
+  const aiUsage = useTemisAIUsage();
   const [feed, setFeed] = useState<GuildView>("recommended");
   const [search, setSearch] = useState("");
   const [aiQuery, setAIQuery] = useState("");
@@ -91,7 +92,7 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
     setShowAllAIEvidence(false);
     setAIOpen(false);
     return () => { aiRequestRef.current += 1; };
-  }, [profile?.userId, isCloudSyncEntitled]);
+  }, [profile?.userId]);
   const [posts, setPosts] = useState<GuildDisplayPost[]>([]);
   const [cursor, setCursor] = useState<{ publishedAt: number; id: string } | OwnedGuildFeedCursor | null>(null);
   const [loading, setLoading] = useState(false);
@@ -283,16 +284,14 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
   };
 
   const handleJoin = async () => {
-    if (!selectedPost?.projectId) return;
-    if (!isCloudSyncEntitled) { Alert.alert("Temis Plus限定", "プロジェクト参加申請にはTemis Plusが必要です。"); return; }
+    if (!selectedPost?.projectId || projectStatus !== "ready") return;
     try { await createProjectJoinRequest({ projectId: selectedPost.projectId }); Alert.alert("参加申請を送信しました", "オーナーの承認をお待ちください。"); }
     catch (cause) { Alert.alert("申請できません", cause instanceof Error ? cause.message : "もう一度お試しください。"); }
   };
 
   const handleScout = async () => {
     if (!selectedPost) return;
-    if (!isCloudSyncEntitled) { Alert.alert("Temis Plus限定", "スカウト送信にはTemis Plusが必要です。"); return; }
-    if (!profile || !inviteableProjects.length) return;
+    if (!profile || !inviteableProjects.length || projectStatus !== "ready") return;
     Alert.alert("プロジェクトへスカウト", "招待先を選択してください。", [
       ...inviteableProjects.map((project) => ({
         text: project.name,
@@ -321,17 +320,13 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
   const handleAISearch = async () => {
     const question = aiQuery.trim();
     if (!question || aiSearching) return;
-    if (!isCloudSyncEntitled) {
-      Alert.alert("Temis Plus限定", "CommonsのTemis AIはTemis Plusで利用できます。");
-      return;
-    }
     const requestId = ++aiRequestRef.current;
     setAISearching(true);
     setAIError(null);
     setAIResult(null);
     setShowAllAIEvidence(false);
     try {
-      const result = await searchGuildPostsWithAI(question);
+      const result = await searchGuildPostsWithAI(question, createAIRequestId("commons"));
       if (requestId === aiRequestRef.current) setAIResult(result);
     } catch (cause) {
       if (requestId !== aiRequestRef.current) return;
@@ -341,6 +336,7 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
           : "Temis AIの検索を実行できませんでした。しばらくしてからもう一度お試しください。",
       );
     } finally {
+      await aiUsage.refresh().catch(() => undefined);
       if (requestId === aiRequestRef.current) setAISearching(false);
     }
   };
@@ -376,13 +372,13 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
   }, [posts, search]);
 
   if (!visible) return null;
-  if (status === "loading") {
+  if (status === "loading" && !profile) {
     return <View style={[styles.screen, styles.center, { paddingTop: contentPaddingTop }]}><ActivityIndicator color="#2563eb" /></View>;
   }
   if (status === "signed_out") {
     return <View style={[styles.screen, { paddingTop: contentPaddingTop }]}><Text style={styles.signIn}>Commonsを利用するにはアカウントにログインしてください。</Text></View>;
   }
-  if (status === "error" || !profile) {
+  if (!profile) {
     return <View style={[styles.screen, styles.center, { paddingTop: contentPaddingTop }]}><Text style={styles.error}>{error ?? "プロフィールを読み込めませんでした。"}</Text><Pressable onPress={() => void refresh()}><Text style={styles.retry}>再試行</Text></Pressable></View>;
   }
 
@@ -429,7 +425,7 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
         onChangeQuery={setAIQuery}
         onSearch={() => void handleAISearch()}
         onToggle={() => setAIOpen((current) => !current)}
-        badge={!isCloudSyncEntitled ? <Text style={styles.plusBadge}>Temis Plus</Text> : null}
+        badge={<Pressable disabled={aiUsage.status !== "error"} onPress={() => void aiUsage.refresh()} accessibilityRole="button"><Text style={styles.plusBadge}>{formatTemisAIUsageLabel(aiUsage.usage, aiUsage.status)}{aiUsage.status === "error" ? "・再試行" : ""}</Text></Pressable>}
         inputProps={{ onFocus: () => setAIOpen(true) }}
       >
         {aiSearching ? <Text style={styles.aiHelperText}>根拠を検索中...</Text> : null}
@@ -506,7 +502,8 @@ const GuildScreen = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
                           : connectionState === "incoming_pending"
                             ? "つながる"
                             : "つながり申請"}</Text></Pressable> : null}
-              {selectedPost.projectId ? <Pressable style={styles.action} onPress={() => void handleJoin()}><Text style={styles.actionText}>参加を申請</Text></Pressable> : null}
+              {selectedPost.projectId && projectStatus !== "ready" ? <View><Text style={styles.error}>{projectError ?? "プロジェクトの利用状態を確認中です。"}</Text>{projectStatus === "error" ? <Pressable onPress={() => void refreshProjects()}><Text style={styles.retry}>再試行</Text></Pressable> : null}</View> : null}
+              {selectedPost.projectId ? <Pressable disabled={projectStatus !== "ready"} style={styles.action} onPress={() => void handleJoin()}><Text style={styles.actionText}>参加を申請</Text></Pressable> : null}
               {inviteableProjects.length ? <Pressable style={styles.action} onPress={() => void handleScout()}><Text style={styles.actionText}>プロジェクトへスカウト</Text></Pressable> : null}
               <Pressable style={styles.report} onPress={() => void handleReport()} disabled={reporting}><Text style={styles.reportText}>通報</Text></Pressable>
             </View> : <View style={styles.actions}>
@@ -544,5 +541,11 @@ const styles = StyleSheet.create({
   feedList: { flex: 1 },
   feedTabs: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 8 }, feedTab: { flexShrink: 0, minHeight: 34, justifyContent: "center", borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: "#e5e7eb" }, feedTabActive: { backgroundColor: "#dbeafe" }, feedTabText: { color: "#4b5563", fontSize: 12 }, feedTabTextActive: { color: "#1d4ed8", fontWeight: "800" }, search: { flexShrink: 0, marginHorizontal: 16, marginBottom: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 }, list: { padding: 16, paddingBottom: 132, gap: 10 }, emptyList: { flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: 132 }, card: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 12, padding: 14, gap: 8 }, cardMeta: { flexDirection: "row", justifyContent: "space-between", gap: 12 }, cardTitle: { color: "#111827", fontSize: 16, fontWeight: "800" }, author: { fontSize: 14, color: "#111827", fontWeight: "800" }, date: { fontSize: 12, color: "#6b7280" }, statusBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, fontSize: 11, fontWeight: "800" }, statusPublished: { color: "#166534", backgroundColor: "#dcfce7" }, statusUnpublished: { color: "#92400e", backgroundColor: "#fef3c7" }, body: { color: "#1f2937", lineHeight: 21, fontSize: 14 }, tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 }, tag: { color: "#2563eb", fontSize: 12 }, projectLabel: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, color: "#166534", backgroundColor: "#dcfce7", fontSize: 11, fontWeight: "700" }, center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }, signIn: { margin: 24, color: "#4b5563", textAlign: "center" }, empty: { color: "#6b7280", textAlign: "center" }, error: { color: "#b91c1c", textAlign: "center" }, retry: { color: "#2563eb", fontWeight: "700", padding: 8 }, footer: { alignSelf: "center", marginVertical: 14 }, detail: { flex: 1, backgroundColor: "#fff" }, detailKeyboard: { flex: 1 }, detailScroll: { flex: 1 }, detailBack: { width: 64, minHeight: 44, justifyContent: "center" }, detailBackText: { color: "#2563eb", fontSize: 12 }, detailHeader: { flexShrink: 0, minHeight: 44, paddingHorizontal: 16, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, detailContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 36, gap: 12 }, detailTitle: { color: "#111827", fontSize: 16, fontWeight: "700" }, scopeBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, fontWeight: "700" }, fieldLabel: { color: "#6b7280", fontSize: 12, fontWeight: "700" }, detailInput: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: "#111827", fontSize: 16 }, detailBodyInput: { minHeight: 160, fontSize: 14, lineHeight: 20 }, detailBodySurface: { minHeight: 160, borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, padding: 10 }, detailBody: { color: "#111827", fontSize: 14, lineHeight: 20 }, wikiSection: { marginTop: 8, gap: 8 }, wikiSectionTitle: { color: "#6b7280", fontSize: 13, fontWeight: "700" }, actions: { gap: 9 }, action: { borderRadius: 9, paddingVertical: 11, paddingHorizontal: 14, backgroundColor: "#eff6ff", borderWidth: 1, borderColor: "#bfdbfe" }, actionText: { color: "#1d4ed8", fontWeight: "700", textAlign: "center" }, report: { alignSelf: "flex-start", paddingVertical: 10 }, reportText: { color: "#b91c1c", fontWeight: "700" },
 });
+
+const GuildScreen = (props: Props) => {
+  const { profile } = useCollaboration();
+  // Feed, private post drafts and detail state belong to one account only.
+  return <GuildScreenContent key={profile?.userId ?? "signed-out"} {...props} />;
+};
 
 export default GuildScreen;
