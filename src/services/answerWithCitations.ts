@@ -17,6 +17,7 @@ export type AnswerWithCitationsResult = {
   answerText: string;
   citedEvidenceKeys: string[];
   errorText?: string;
+  insufficientEvidence?: boolean;
 };
 
 export type LabeledEvidence = AnswerEvidence & {
@@ -228,7 +229,7 @@ const debugLog = (message: string): void => {
 };
 
 const isInsufficientText = (text: string): boolean =>
-  /情報不足|見つかりません/.test(text);
+  /情報不足|情報(?:が|は)?(?:ありません|ない)|(?:記載|根拠)(?:が|は)?(?:ありません|ない)|(?:記載|言及)されていません|見つかりません|回答できません|不明です/i.test(text);
 
 const missesQuestionTopic = (
   answerText: string,
@@ -989,6 +990,14 @@ export const answerWithCitations = async (
         generated.citedEvidenceKeys,
         promptEvidence,
       );
+      if (guarded.ok && isInsufficientText(guarded.answerText)) {
+        debugLog("final route=openai-insufficient-evidence");
+        return {
+          answerText: "",
+          citedEvidenceKeys: [],
+          insufficientEvidence: true,
+        };
+      }
       if (!guarded.ok || citedEvidenceKeys.length === 0) {
         debugLog("final route=openai-invalid -> retrieval fallback");
         return buildRetrievalOnlyFallback(promptEvidence);

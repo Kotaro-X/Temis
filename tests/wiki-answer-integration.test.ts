@@ -24,15 +24,22 @@ function loadModule(path: string, dependencies: Record<string, unknown>) {
 
 test("real token-index queries bound distinct IDs, exclude visited docs and load complete Wiki tokens", async () => {
   const db = new DatabaseSync(":memory:");
-  db.exec("CREATE TABLE token_index (memo_id TEXT, token TEXT, updated_at INTEGER)");
-  const insert = db.prepare("INSERT INTO token_index VALUES (?, ?, ?)");
+  db.exec("CREATE TABLE token_index (memo_id TEXT, token TEXT, created_at INTEGER DEFAULT 0, updated_at INTEGER, positions TEXT, snippet TEXT)");
+  const insert = db.prepare("INSERT INTO token_index (memo_id, token, updated_at) VALUES (?, ?, ?)");
   for (let n = 0; n < 400; n++) insert.run(`m${n}`, "医療", n);
   insert.run("multi", "医療", 0); insert.run("multi", "風の谷", 0);
+  insert.run("generic", "必要", 500);
   const repo = loadModule("../src/db/tokenIndexRepo.ts", {
     "nanoid/non-secure": {}, "../utils/wikiLink": wiki,
     "./sqlite": { ensureDbReady: async () => {}, executeSql: async (sql: string, args: unknown[]) => ({ rows: { _array: db.prepare(sql).all(...args) } }) },
   });
   try {
+    const naturalQueryHits = await repo.searchByQueryTextTokens("風の谷を作るには何が必要？");
+    assert.deepEqual(
+      Array.from(new Set(naturalQueryHits.map((hit: { token: string }) => hit.token))),
+      ["風の谷", "必要"],
+    );
+    assert.equal(naturalQueryHits[0]?.memoId, "multi");
     const ids = await repo.findWikiLinkedMemoIds(["医療", "風の谷"], ["m399"]);
     assert.equal(ids.length, 300);
     assert.equal(ids[0], "multi");
@@ -84,4 +91,15 @@ test("invalid answers use citations for the actual fallback blocks, and empty ev
   const result = await empty.service.answerWithCitations("質問", []);
   assert.equal(result.citedEvidenceKeys.length, 0);
   assert.equal(empty.getSent(), null);
+});
+
+test("an OpenAI no-information answer is not shown with unrelated citations", async () => {
+  const f = answerFixture({
+    answerText: "根拠には『風の谷』の作り方に関する情報がありません。",
+    citedEvidenceKeys: ["E1", "E2"],
+  });
+  const answer = await f.service.answerWithCitations("風の谷を作るには何が必要？", evidence());
+  assert.equal(answer.answerText, "");
+  assert.deepEqual(Array.from(answer.citedEvidenceKeys), []);
+  assert.equal(answer.insufficientEvidence, true);
 });

@@ -4,6 +4,13 @@ const compare = (a, b) =>
   a.depth - b.depth || b.document.semanticScore - a.document.semanticScore ||
   b.document.updatedAt - a.document.updatedAt || a.document.memoId.localeCompare(b.document.memoId);
 
+/** Prefer direct Wiki-token matches over unrelated semantic neighbours. */
+const selectWikiAnswerSeedIds = (hits, limit = 60) => {
+  const directMatches = hits.filter((hit) => hit.queryTokenMatched);
+  const source = directMatches.length ? directMatches : hits;
+  return Array.from(new Set(source.map((hit) => hit.memoId))).slice(0, limit);
+};
+
 /** Gather windows throughout the document, not just its first chunk. */
 const buildWikiAnswerExcerpt = (body, question, links, semanticText = "") => {
   const text = body.replace(/\s+/g, " ").trim();
@@ -117,4 +124,8 @@ const retrieveWikiAnswerEvidence = async (
   }));
 };
 
-module.exports = { buildWikiAnswerExcerpt, retrieveWikiAnswerEvidence };
+module.exports = {
+  buildWikiAnswerExcerpt,
+  retrieveWikiAnswerEvidence,
+  selectWikiAnswerSeedIds,
+};

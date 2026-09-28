@@ -23,3 +23,4 @@ export type WikiAnswerEvidence = {
 };
 export function buildWikiAnswerExcerpt(body: string, question: string, links: string[], semanticText?: string): string;
 export function retrieveWikiAnswerEvidence(question: string, seedIds: string[], deps: WikiRetrievalDependencies, maxMemos?: number): Promise<WikiAnswerEvidence[]>;
+export function selectWikiAnswerSeedIds(hits: Array<{ memoId: string; queryTokenMatched?: boolean }>, limit?: number): string[];

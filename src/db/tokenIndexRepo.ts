@@ -167,6 +167,36 @@ export const searchByTokens = async (
   }));
 };
 
+const MIN_QUERY_TOKEN_LENGTH = 2;
+const MAX_QUERY_TOKEN_HITS = 300;
+
+/**
+ * Finds authored Wiki tokens mentioned inside a natural-language question.
+ * This lets `風の谷を作るには？` match a stored `((風の谷))` without
+ * requiring Wiki parentheses in the search box.
+ */
+export const searchByQueryTextTokens = async (
+  queryText: string,
+): Promise<TokenIndexHit[]> => {
+  await ensureDbReady();
+  const normalizedQuery = normalizeParens(queryText).trim().toLowerCase();
+  if (!normalizedQuery) {
+    return [];
+  }
+  const result = await executeSql(
+    "SELECT token, memo_id, created_at, updated_at, positions, snippet FROM token_index WHERE length(trim(token)) >= ? AND instr(?, lower(trim(token))) > 0 ORDER BY length(trim(token)) DESC, updated_at DESC, memo_id ASC LIMIT ?",
+    [MIN_QUERY_TOKEN_LENGTH, normalizedQuery, MAX_QUERY_TOKEN_HITS],
+  );
+  return (result.rows._array as TokenIndexRow[]).map((row) => ({
+    token: row.token,
+    memoId: row.memo_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    positions: parsePositions(row.positions),
+    snippet: row.snippet,
+  }));
+};
+
 export const getTokenIndexCountByDocumentId = async (
   documentId: string,
 ): Promise<number> => {

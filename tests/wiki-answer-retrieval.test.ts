@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { retrieveWikiAnswerEvidence, buildWikiAnswerExcerpt, type WikiAnswerDocument } from "../src/services/wikiAnswerRetrievalCore.ts";
+import {
+  retrieveWikiAnswerEvidence,
+  buildWikiAnswerExcerpt,
+  selectWikiAnswerSeedIds,
+  type WikiAnswerDocument,
+} from "../src/services/wikiAnswerRetrievalCore.ts";
 import { labelAnswerEvidence } from "../src/services/aiEvidence.ts";
 import { extractTokens } from "../src/utils/wikiLink.ts";
 
@@ -94,4 +99,19 @@ test("evidence labels preserve retrieval order and map E15 to the selected memo"
   assert.equal(labeled[14].evidenceKey, "E15");
   assert.equal(labeled[14].memoId, "m14");
   assert.deepEqual(labelAnswerEvidence(labeled).map((e) => e.key), labeled.map((e) => e.key));
+});
+
+test("direct natural-language Wiki matches replace unrelated semantic roots", () => {
+  const hits = [
+    { memoId: "unrelated-high-score", queryTokenMatched: false },
+    { memoId: "valley", queryTokenMatched: true },
+    { memoId: "unrelated-second", queryTokenMatched: false },
+    { memoId: "valley", queryTokenMatched: true },
+    { memoId: "valley-linked", queryTokenMatched: true },
+  ];
+  assert.deepEqual(selectWikiAnswerSeedIds(hits), ["valley", "valley-linked"]);
+  assert.deepEqual(
+    selectWikiAnswerSeedIds(hits.map((hit) => ({ ...hit, queryTokenMatched: false }))),
+    ["unrelated-high-score", "valley", "unrelated-second", "valley-linked"],
+  );
 });

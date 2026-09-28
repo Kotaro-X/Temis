@@ -1,4 +1,5 @@
-import React from "react";
+import React, { forwardRef } from "react";
+import type { ForwardedRef } from "react";
 import {
   StyleSheet,
   TextInput,
@@ -26,7 +27,7 @@ const HighlightEditor = ({
   linkStyle,
   placeholder,
   ...rest
-}: Props) => {
+}: Props, ref: ForwardedRef<TextInput>) => {
   const flattened = StyleSheet.flatten(textStyle) || {};
   const overlayStyle: TextStyle = {
     ...flattened,
@@ -47,6 +48,7 @@ const HighlightEditor = ({
         <LinkText body={value} style={overlayStyle} linkStyle={linkStyle} />
       </View>
       <TextInput
+        ref={ref}
         {...rest}
         style={[styles.input, textStyle]}
         value={value}
@@ -60,6 +62,9 @@ const HighlightEditor = ({
     </View>
   );
 };
+
+const ForwardedHighlightEditor = forwardRef(HighlightEditor);
+ForwardedHighlightEditor.displayName = "HighlightEditor";
 
 const styles = StyleSheet.create({
   container: {
@@ -80,4 +85,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default HighlightEditor;
+export default ForwardedHighlightEditor;

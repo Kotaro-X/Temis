@@ -65,6 +65,12 @@ export const searchAndGenerateAnswer = async (
   if (options?.requestId) {
     await completeTemisAIUsage(options.requestId);
   }
+  if (answered.insufficientEvidence) {
+    return {
+      answer: parseAIResponse({ answerText: "", citedEvidenceKeys: [] }),
+      allEvidence: [],
+    };
+  }
   return {
     answer: parseAIResponse(answered),
     allEvidence,

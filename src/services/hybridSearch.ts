@@ -4,7 +4,11 @@ import {
   searchTopChunksByEmbedding,
   getChunksByMemoIds,
 } from "../db/chunkIndexRepo";
-import { searchByTokens } from "../db/tokenIndexRepo";
+import {
+  searchByQueryTextTokens,
+  searchByTokens,
+  type TokenIndexHit,
+} from "../db/tokenIndexRepo";
 import { getEmbeddingProvider } from "./EmbeddingProvider";
 import { extractTokens, normalizeParens } from "../utils/wikiLink";
 
@@ -17,6 +21,7 @@ export type HybridSearchResult = {
   tokensHit: string[];
   queryTokenMatched: boolean;
   queryTokenHitCount: number;
+  queryTokenSpecificity: number;
 };
 
 type HybridSearchOptions = {
@@ -32,6 +37,7 @@ const TOKEN_CHUNK_BOOST = 0.25;
 const TOKEN_ONLY_BASE_SCORE = 0.35;
 const EXPLICIT_TOKEN_MATCH_BOOST = 1.1;
 const EXPLICIT_TOKEN_MISS_PENALTY = 0.25;
+const TOKEN_SPECIFICITY_BOOST = 0.08;
 const MIN_EMBEDDING_SIMILARITY = 0.12;
 const EMBEDDING_RELATIVE_CUTOFF = 0.82;
 const CACHE_TTL_MS = 30_000;
@@ -63,6 +69,19 @@ const intersectTokens = (left: string[], right: string[]): string[] => {
 };
 
 const mergeTokens = (tokens: string[]): string[] => Array.from(new Set(tokens));
+
+const tokenSpecificity = (tokens: string[]): number =>
+  tokens.reduce((total, token) => total + Array.from(token.trim()).length, 0);
+
+const mergeTokenHits = (hits: TokenIndexHit[]): TokenIndexHit[] => {
+  const seen = new Set<string>();
+  return hits.filter((hit) => {
+    const key = `${hit.memoId}\u0000${hit.token}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 
 const filterEmbeddingHits = (
   hits: ChunkSimilarityHit[],
@@ -100,13 +119,15 @@ const resolveScore = (params: {
   semanticScore: number;
   memoTokensHitCount: number;
   chunkTokensHitCount: number;
-  hasExplicitQueryTokens: boolean;
+  queryTokenSpecificity: number;
+  hasQueryTokens: boolean;
 }): number => {
   const {
     semanticScore,
     memoTokensHitCount,
     chunkTokensHitCount,
-    hasExplicitQueryTokens,
+    queryTokenSpecificity,
+    hasQueryTokens,
   } = params;
   let score = semanticScore;
   if (memoTokensHitCount > 0) {
@@ -115,9 +136,10 @@ const resolveScore = (params: {
   if (chunkTokensHitCount > 0) {
     score += TOKEN_CHUNK_BOOST + chunkTokensHitCount * 0.3;
   }
-  if (hasExplicitQueryTokens) {
+  if (hasQueryTokens) {
     if (chunkTokensHitCount > 0) {
       score += EXPLICIT_TOKEN_MATCH_BOOST + chunkTokensHitCount * 0.35;
+      score += Math.min(queryTokenSpecificity, 20) * TOKEN_SPECIFICITY_BOOST;
     } else {
       score -= EXPLICIT_TOKEN_MISS_PENALTY;
     }
@@ -142,12 +164,14 @@ export const hybridSearch = async (
     return cached.results;
   }
 
-  const queryTokens = extractTokens(normalizedQuery);
-  const hasExplicitQueryTokens = queryTokens.length > 0;
+  const explicitQueryTokens = extractTokens(normalizedQuery);
   const embeddingProvider = getEmbeddingProvider();
 
-  const [tokenHits, embeddingHits] = await Promise.all([
-    queryTokens.length > 0 ? searchByTokens(queryTokens) : Promise.resolve([]),
+  const [explicitTokenHits, naturalQueryTokenHits, embeddingHits] = await Promise.all([
+    explicitQueryTokens.length > 0
+      ? searchByTokens(explicitQueryTokens)
+      : Promise.resolve([]),
+    searchByQueryTextTokens(normalizedQuery),
     (options.queryEmbedding
       ? Promise.resolve(options.queryEmbedding)
       : embeddingProvider.embed(normalizedQuery))
@@ -158,6 +182,15 @@ export const hybridSearch = async (
         }),
       ),
   ]);
+  const tokenHits = mergeTokenHits([
+    ...explicitTokenHits,
+    ...naturalQueryTokenHits,
+  ]);
+  const queryTokens = mergeTokens([
+    ...explicitQueryTokens,
+    ...naturalQueryTokenHits.map((hit) => hit.token),
+  ]);
+  const hasQueryTokens = queryTokens.length > 0;
   const filteredEmbeddingHits = filterEmbeddingHits(embeddingHits);
 
   const tokenSetByMemoId = new Map<string, Set<string>>();
@@ -183,11 +216,13 @@ export const hybridSearch = async (
     const memoTokensHit = Array.from(tokenSetByMemoId.get(hit.memoId) ?? []);
     const chunkTokensHit = intersectTokens(hit.tags, queryTokens);
     const tokensHit = mergeTokens([...memoTokensHit, ...chunkTokensHit]);
+    const matchedTokenSpecificity = tokenSpecificity(chunkTokensHit);
     const scored = resolveScore({
       semanticScore: hit.similarity,
       memoTokensHitCount: memoTokensHit.length,
       chunkTokensHitCount: chunkTokensHit.length,
-      hasExplicitQueryTokens,
+      queryTokenSpecificity: matchedTokenSpecificity,
+      hasQueryTokens,
     });
     evidenceByChunkId.set(hit.chunkId, {
       memoId: hit.memoId,
@@ -198,6 +233,7 @@ export const hybridSearch = async (
       tokensHit,
       queryTokenMatched: chunkTokensHit.length > 0,
       queryTokenHitCount: chunkTokensHit.length,
+      queryTokenSpecificity: matchedTokenSpecificity,
     });
   }
 
@@ -224,11 +260,13 @@ export const hybridSearch = async (
       if (chunkTokensHit.length === 0) {
         continue;
       }
+      const matchedTokenSpecificity = tokenSpecificity(chunkTokensHit);
       const score = Number(
         (
           TOKEN_ONLY_BASE_SCORE +
           memoTokensHit.length * 0.5 +
-          chunkTokensHit.length * 0.3
+          chunkTokensHit.length * 0.3 +
+          Math.min(matchedTokenSpecificity, 20) * TOKEN_SPECIFICITY_BOOST
         ).toFixed(6),
       );
       const existing = evidenceByChunkId.get(selectedChunk.chunkId);
@@ -245,6 +283,7 @@ export const hybridSearch = async (
           tokensHit: chunkTokensHit,
           queryTokenMatched: true,
           queryTokenHitCount: chunkTokensHit.length,
+          queryTokenSpecificity: matchedTokenSpecificity,
         });
       } else {
         const mergedTokens = mergeTokens([...existing.tokensHit, ...chunkTokensHit]);
@@ -256,6 +295,10 @@ export const hybridSearch = async (
             existing.queryTokenHitCount,
             chunkTokensHit.length,
           ),
+          queryTokenSpecificity: Math.max(
+            existing.queryTokenSpecificity,
+            matchedTokenSpecificity,
+          ),
         });
       }
     }
@@ -263,10 +306,14 @@ export const hybridSearch = async (
 
   const results = Array.from(evidenceByChunkId.values())
     .sort((a, b) => {
-      if (hasExplicitQueryTokens) {
+      if (hasQueryTokens) {
         const matchedDiff = Number(b.queryTokenMatched) - Number(a.queryTokenMatched);
         if (matchedDiff !== 0) {
           return matchedDiff;
+        }
+        const specificityDiff = b.queryTokenSpecificity - a.queryTokenSpecificity;
+        if (specificityDiff !== 0) {
+          return specificityDiff;
         }
         const tokenHitDiff = b.queryTokenHitCount - a.queryTokenHitCount;
         if (tokenHitDiff !== 0) {

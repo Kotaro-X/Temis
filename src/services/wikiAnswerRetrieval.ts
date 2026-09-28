@@ -6,7 +6,11 @@ import { cosineSimilarity } from "../utils/similarity";
 import { getEmbeddingProvider } from "./EmbeddingProvider";
 import { hybridSearch } from "./hybridSearch";
 import { listResearchNotes } from "./researchNoteService";
-import { retrieveWikiAnswerEvidence, type WikiAnswerDocument } from "./wikiAnswerRetrievalCore";
+import {
+  retrieveWikiAnswerEvidence,
+  selectWikiAnswerSeedIds,
+  type WikiAnswerDocument,
+} from "./wikiAnswerRetrievalCore";
 
 export const searchWikiAnswerEvidence = async (
   query: string,
@@ -18,7 +22,7 @@ export const searchWikiAnswerEvidence = async (
   const provider = getEmbeddingProvider();
   const queryEmbedding = await provider.embed(query);
   const hits = await hybridSearch(query, { topK: 60, topN: 60, queryEmbedding });
-  const seedIds = Array.from(new Set(hits.map((hit) => hit.memoId)));
+  const seedIds = selectWikiAnswerSeedIds(hits);
   return retrieveWikiAnswerEvidence(query, seedIds, {
     findLinkedMemoIds: findWikiLinkedMemoIds,
     loadDocuments: async (ids) => {
