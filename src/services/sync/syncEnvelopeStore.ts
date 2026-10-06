@@ -1,3 +1,4 @@
+import { getFirebaseAuth, isFirebaseConfigured } from "./firebaseApp";
 import { nanoid } from "nanoid/non-secure";
 
 import {
@@ -109,6 +110,11 @@ export const persistAndEnqueueSyncEnvelope = async <
 >(
   envelope: SyncEntityEnvelope<TType>,
 ): Promise<void> => {
+  const publicationUid = isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
   await persistSyncEnvelope(envelope);
   await enqueueSyncEnvelope(envelope);
+  if (envelope.entityType === 'memo') {
+    const { enqueuePublicationEnvelope } = await import('../guild/guildPublicationQueue');
+    if (publicationUid) await enqueuePublicationEnvelope(envelope as SyncEntityEnvelope<'memo'>, publicationUid);
+  }
 };

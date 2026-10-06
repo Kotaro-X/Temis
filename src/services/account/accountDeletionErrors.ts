@@ -1,4 +1,6 @@
 const STAGES: Record<string, string> = {
+  guild_author: "Commonsの投稿者情報",
+  profile_photos: "プロフィール写真",
   direct_messages: "DM履歴・通知情報",
   invitations: "招待履歴", profile: "プロフィール", cloud_data: "クラウドデータ",
   subscription_access: "クラウド利用権", firebase_auth: "Firebaseアカウント",

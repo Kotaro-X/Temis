@@ -1,0 +1,19 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Public avatars contain no private memo data. Only the owner can write.
+    match /profilePhotos/{userId}/{filename} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if resource == null && request.auth != null && request.auth.uid == userId
+        && filename.matches('[a-zA-Z0-9-]+[.]jpg')
+        && request.resource.size > 0 && request.resource.size <= 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow update: if false;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

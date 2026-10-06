@@ -32,6 +32,7 @@ const runRulesAssertions = () => {
       "--experimental-specifier-resolution=node",
       "--test",
       "tests/firestore-rules.test.ts",
+      "tests/storage-rules.test.ts",
     ],
     { cwd: projectRoot, env: process.env, stdio: "inherit" },
   );
@@ -108,6 +109,7 @@ const assertPortAvailable = (port, label) =>
 
 try {
   await assertPortAvailable(8080, "Firestore Emulator");
+  await assertPortAvailable(9199, "Storage Emulator");
   await assertPortAvailable(4400, "Emulator Hub");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -115,7 +117,7 @@ try {
 }
 
 console.info(
-  "[firestore-rules][emulator-start] Starting Firestore Emulator for project demo-wememo.",
+  "[firestore-rules][emulator-start] Starting Firestore and Storage Emulators for project demo-wememo.",
 );
 const firebaseResult = spawnSync(
   firebaseBinary,
@@ -124,7 +126,7 @@ const firebaseResult = spawnSync(
     "--project",
     "demo-wememo",
     "--only",
-    "firestore",
+    "firestore,storage",
     "--log-verbosity",
     "INFO",
     "node scripts/run-firestore-rules-tests.mjs --run-tests",

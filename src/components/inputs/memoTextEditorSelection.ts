@@ -34,3 +34,13 @@ export const shouldAcceptNativeSelection = (
   next: EditorSelection,
   pending: PendingSelectionRequest | null,
 ) => !pending || selectionsMatch(next, pending.selection);
+
+export const getEditorSelectionOverride = (
+  value: string,
+  pending: PendingSelectionRequest | null,
+) => {
+  if (!pending || pending.expectedValue !== value) {
+    return undefined;
+  }
+  return clampEditorSelection(pending.selection, value.length);
+};

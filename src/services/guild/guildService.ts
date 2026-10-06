@@ -1,3 +1,5 @@
+import { resolveGuildAuthors } from "./guildAuthorService";
+import { publishSource } from "./guildPublicationQueue";
 import { nanoid } from "nanoid/non-secure";
 import {
   collection,
@@ -44,8 +46,6 @@ import {
 const db = () => getFirebaseFirestore();
 const now = () => Date.now();
 const postRef = (id: string) => doc(db(), "guildPosts", id);
-const projectRef = (id: string) => doc(db(), "projects", id);
-const memberRef = (projectId: string, userId: string) => doc(db(), "projects", projectId, "members", userId);
 const reportRef = (id: string) => doc(db(), "guildReports", id);
 const requireUserId = () => {
   const userId = getFirebaseAuth().currentUser?.uid;
@@ -123,7 +123,7 @@ export const listGuildPosts = async ({
 
   const tail = snapshot.docs.at(-1)?.data() as GuildPost | undefined;
   return {
-    posts: posts.map(omitSource),
+    posts: await resolveGuildAuthors(posts.map(omitSource)),
     cursor: tail?.publishedAt ? { publishedAt: tail.publishedAt, id: tail.id } : null,
   };
 };
@@ -136,7 +136,7 @@ export const getGuildPost = async (postId: string): Promise<GuildFeedPost | null
   if (post.status !== "published" || post.moderation.visibility !== "visible") return null;
   const relationships = await loadViewerRelationships(userId);
   if (relationships.blockedUserIds.has(post.authorUserId)) return null;
-  return omitSource(post);
+  return (await resolveGuildAuthors([omitSource(post)]))[0];
 };
 
 export const listMyGuildPosts = async (
@@ -150,55 +150,32 @@ export const listMyGuildPosts = async (
   ];
   if (cursor) constraints.push(startAfter(cursor.updatedAt, cursor.id));
   constraints.push(limit(24));
-  const snapshot = await getDocs(query(collection(db(), "guildPosts"), ...constraints));
+  const snapshot = await getDocsFromServer(query(collection(db(), "guildPosts"), ...constraints));
   const posts = snapshot.docs.map((item) => item.data() as GuildPost);
   const tail = posts.at(-1);
   return {
-    posts,
+    posts: await resolveGuildAuthors(posts),
     cursor: tail ? { updatedAt: tail.updatedAt, id: tail.id } : null,
   };
 };
 
 export const getOwnedGuildPost = async (postId: string): Promise<GuildPost | null> => {
   const userId = requireUserId();
-  const snapshot = await getDoc(postRef(postId));
+  const snapshot = await getDocFromServer(postRef(postId));
   if (!snapshot.exists()) return null;
   const post = snapshot.data() as GuildPost;
-  return post.authorUserId === userId ? post : null;
+  return post.authorUserId === userId ? (await resolveGuildAuthors([post]))[0] : null;
 };
 
 export const createGuildPost = async (
   input: GuildPostInput,
   author: Pick<GuildPost, "authorUserId" | "authorDisplayName" | "authorPhotoUrl">,
 ): Promise<GuildPost> => {
-  const userId = requireUserId();
-  if (author.authorUserId !== userId) throw new Error("投稿者が一致しません。");
-  const error = validateGuildPostInput(input);
-  if (error) throw new Error(error);
+  if (requireUserId() !== author.authorUserId) throw new Error('アカウントが切り替わりました。');
+  const validation = validateGuildPostInput(input);
+  if (validation) throw new Error(validation);
   assertPostBytes(input);
-  const timestamp = now();
-  const post: GuildPost = {
-    id: nanoid(), authorUserId: userId,
-    authorDisplayName: author.authorDisplayName.trim() || "Temisユーザー",
-    authorPhotoUrl: author.authorPhotoUrl ?? null,
-    title: input.title?.trim() || null,
-    body: input.body.trim(), tags: extractGuildTags(input.body), type: input.type,
-    projectId: input.projectId, source: input.source, status: "published",
-    moderation: { visibility: "visible", hiddenByUserId: null, hiddenAt: null, reason: null },
-    createdAt: timestamp, updatedAt: timestamp, publishedAt: timestamp,
-  };
-  await runTransaction(db(), async (transaction) => {
-    if (post.projectId) {
-      const [project, member] = await Promise.all([
-        transaction.get(projectRef(post.projectId)), transaction.get(memberRef(post.projectId, userId)),
-      ]);
-      if (!project.exists() || !member.exists() || member.data()?.role === "viewer") {
-        throw new Error("このプロジェクトのメモを投稿する権限がありません。");
-      }
-    }
-    transaction.set(postRef(post.id), post);
-  });
-  return post;
+  return publishSource(input);
 };
 
 export const updateGuildPost = async (postId: string, input: Pick<GuildPostInput, "title" | "body" | "type" | "projectId">): Promise<void> => {

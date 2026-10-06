@@ -55,6 +55,14 @@
         {
           "iosUrlScheme": "com.googleusercontent.apps.9459134170-t4lm1mns4hv6qli65jatpac757pbf4gf"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "プロフィール写真を選択するために写真ライブラリを使用します。",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
       ]
     ],
     "extra": {

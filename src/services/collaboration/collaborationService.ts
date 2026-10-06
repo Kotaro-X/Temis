@@ -1,8 +1,11 @@
+import { saveProfileSetupTransaction } from "./profileSetupTransaction";
+import { assertUsernameAvailable, assertUsernameChangeAllowed, validateDisplayName } from "./profilePolicy";
 import { nanoid } from "nanoid/non-secure";
 import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   limit,
   orderBy,
@@ -14,14 +17,13 @@ import {
 } from "firebase/firestore";
 
 import { getFirebaseAuth, getFirebaseFirestore } from "../sync/firebaseApp";
-import { unpublishGuildPostsForProfile, updateGuildPostAuthorSnapshot } from "../guild/guildService";
+import { unpublishGuildPostsForProfile } from "../guild/guildService";
 import {
   createProjectWithQuota,
   respondToProjectInvitationWithQuota,
 } from "../freemium/temisFreemiumService";
 import type { SyncUser } from "../auth/syncUser";
 import {
-  USERNAME_CHANGE_INTERVAL_MS,
   USERNAME_RELEASE_RESERVATION_MS,
   canInviteToProject,
   connectionIdFor,
@@ -84,6 +86,8 @@ const profileDefaults = (user: SyncUser, username: string, timestamp: number): U
   createdAt: timestamp,
   updatedAt: timestamp,
   usernameChangedAt: null,
+  profileCompletedAt: null,
+  photoStoragePath: null,
 });
 
 type ProjectTaskInput = Omit<
@@ -120,7 +124,7 @@ const normalizeProjectTask = (task: ProjectTask): ProjectTask => ({
 
 /** Creates one signed-in user profile and atomically claims its temporary public ID. */
 export const ensureUserProfile = async (user: SyncUser): Promise<UserProfile> => {
-  const existing = await getDoc(profileRef(user.id));
+  const existing = await getDocFromServer(profileRef(user.id));
   if (existing.exists()) return existing.data() as UserProfile;
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -159,23 +163,12 @@ export const updateUsername = async (input: string): Promise<UserProfile> => {
     if (!profileSnapshot.exists()) throw new Error("プロフィールが見つかりません。");
     const profile = profileSnapshot.data() as UserProfile;
     if (profile.username === username) return profile;
-    if (
-      profile.usernameChangedAt &&
-      timestamp - profile.usernameChangedAt < USERNAME_CHANGE_INTERVAL_MS
-    ) {
-      throw new Error("ユーザーIDは30日に1回まで変更できます。");
-    }
     const nextClaimSnapshot = await transaction.get(usernameRef(username));
     const nextClaim = nextClaimSnapshot.exists()
       ? (nextClaimSnapshot.data() as UsernameClaim)
       : null;
-    if (
-      nextClaim &&
-      nextClaim.userId !== userId &&
-      (nextClaim.reservedUntil === null || nextClaim.reservedUntil > timestamp)
-    ) {
-      throw new Error("このユーザーIDはすでに使用されています。");
-    }
+    assertUsernameAvailable(userId, nextClaim, timestamp);
+    assertUsernameChangeAllowed(profile, username, timestamp);
     const updated: UserProfile = {
       ...profile, username, usernameChangedAt: timestamp, updatedAt: timestamp,
     };
@@ -192,10 +185,40 @@ export const updateUsername = async (input: string): Promise<UserProfile> => {
   });
 };
 
+/** Initial setup commits names, ID ownership and completion together. */
+export const completeUserProfile = async (input: { displayName: string; username: string }): Promise<UserProfile> => {
+  const userId = requireCurrentUserId();
+  return runTransaction(db(), (transaction) => saveProfileSetupTransaction({
+    readProfile: async () => {
+      const snapshot = await transaction.get(profileRef(userId));
+      return snapshot.exists() ? snapshot.data() as UserProfile : null;
+    },
+    readClaim: async (username) => {
+      const snapshot = await transaction.get(usernameRef(username));
+      return snapshot.exists() ? snapshot.data() as UsernameClaim : null;
+    },
+    writeClaim: (claim) => transaction.set(usernameRef(claim.username), claim),
+    writeProfile: (profile) => { transaction.set(profileRef(userId), profile); },
+  }, userId, input, now()));
+};
+
+/** Never overwrite another profile edit while uploading a photo. */
+export const updateProfilePhoto = async (userId: string, photoUrl: string | null, photoStoragePath: string | null): Promise<UserProfile> => {
+  if (requireCurrentUserId() !== userId) throw new Error("アカウントが切り替わりました。もう一度お試しください。");
+  return runTransaction(db(), async (transaction) => {
+    if (requireCurrentUserId() !== userId) throw new Error("アカウントが切り替わりました。");
+    const snapshot = await transaction.get(profileRef(userId));
+    if (!snapshot.exists()) throw new Error("プロフィールが見つかりません。");
+    const updated: UserProfile = { ...snapshot.data() as UserProfile, photoUrl, photoStoragePath, updatedAt: now() };
+    transaction.set(profileRef(userId), updated);
+    return updated;
+  });
+};
+
 export const updateDisplayName = async (input: string): Promise<UserProfile> => {
   const displayName = input.trim();
-  if (!displayName) throw new Error("表示名を入力してください。");
-  if (displayName.length > 50) throw new Error("表示名は50文字以内で入力してください。");
+  const validationError = validateDisplayName(displayName);
+  if (validationError) throw new Error(validationError);
 
   const userId = requireCurrentUserId();
   const updated = await runTransaction(db(), async (transaction) => {
@@ -209,7 +232,6 @@ export const updateDisplayName = async (input: string): Promise<UserProfile> => 
     transaction.set(profileRef(userId), updated);
     return updated;
   });
-  await updateGuildPostAuthorSnapshot({ displayName: updated.displayName, photoUrl: updated.photoUrl ?? null });
   return updated;
 };
 
@@ -221,7 +243,6 @@ export const updateUserProfile = async (
   if (input.profileVisibility !== "public") {
     await unpublishGuildPostsForProfile();
   }
-  await updateGuildPostAuthorSnapshot({ displayName: input.displayName, photoUrl: input.photoUrl ?? null });
 };
 
 export const searchProfiles = async (input: string): Promise<UserProfile[]> => {
@@ -495,6 +516,10 @@ export const upsertProjectSharedNote = async (note: ProjectSharedNote): Promise<
       anonymizedReason: null,
     });
   });
+  if (note.ownerUserId === userId && note.sourceNoteId && !note.anonymizedReason) {
+    const { enqueuePublicationContent } = await import('../guild/guildPublicationQueue');
+    await enqueuePublicationContent({ sourceId: `note:${note.sourceNoteId}`, title: note.title, body: note.body, updatedAt: note.updatedAt, deviceId: '', deleted: false }, 'sync', undefined, userId);
+  }
 };
 
 export const removeProjectSharedNote = async (noteId: string): Promise<void> => {

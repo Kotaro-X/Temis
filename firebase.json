@@ -18,11 +18,17 @@
     },
     "ui": {
       "enabled": true
+    },
+    "storage": {
+      "port": 9199
     }
   },
   "react-native": {
     "crashlytics_auto_collection_enabled": true,
     "crashlytics_debug_enabled": false,
     "crashlytics_javascript_exception_handler_chaining_enabled": false
+  },
+  "storage": {
+    "rules": "storage.rules"
   }
 }

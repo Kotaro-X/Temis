@@ -6,6 +6,7 @@ const projectRoot = new URL("../", import.meta.url);
 const testsDirectory = new URL("../tests/", import.meta.url);
 const excludedTests = new Set([
   "firestore-rules.test.ts",
+  "storage-rules.test.ts",
   "migrations.test.ts",
 ]);
 const testFiles = readdirSync(testsDirectory)

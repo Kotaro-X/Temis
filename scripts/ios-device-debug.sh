@@ -33,6 +33,7 @@ if [[ "${1:-}" == "--detect-device" ]]; then
 fi
 
 echo "Using device: $DEVICE_ID"
+node "$ROOT_DIR/scripts/check-ios-profile-native.mjs"
 echo "Building Debug app..."
 
 pushd "$IOS_DIR" >/dev/null

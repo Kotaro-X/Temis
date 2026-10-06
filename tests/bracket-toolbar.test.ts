@@ -144,3 +144,21 @@ test("brackets append when selection information is unavailable", () => {
     },
   );
 });
+
+test("opening and closing brackets can be inserted consecutively", () => {
+  const opening = pressBracket({
+    value: "あいう",
+    selection: { start: 1, end: 1 },
+    accessibilityLabel: "（（ を挿入",
+  });
+  const closing = pressBracket({
+    value: opening.nextValue,
+    selection: opening.nextSelection,
+    accessibilityLabel: "）） を挿入",
+  });
+
+  assert.deepEqual(closing, {
+    nextValue: "あ（（））いう",
+    nextSelection: { start: 5, end: 5 },
+  });
+});

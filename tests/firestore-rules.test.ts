@@ -1,3 +1,5 @@
+import { saveProfileSetupTransaction } from "../src/services/collaboration/profileSetupTransaction.ts";
+import type { UserProfile } from "../src/types/collaboration.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -9,7 +11,7 @@ import {
   type RulesTestEnvironment,
   type TokenOptions,
 } from "@firebase/rules-unit-testing";
-import { doc, writeBatch } from "firebase/firestore";
+import { doc, writeBatch, runTransaction, getDoc, updateDoc } from "firebase/firestore";
 
 const FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST;
 const REQUIRE_FIRESTORE_EMULATOR =
@@ -1222,6 +1224,148 @@ if (!FIRESTORE_EMULATOR_HOST) {
       assert.equal((await db.collection('dmNotificationJobs').where('senderUserId', '==', a).get()).size, 0);
       await conn.update({ status: 'connected' });
       await assert.rejects(service.send(b, { recipientUserId: a, clientMessageId: 'after-delete', text: 'no' }), { code: 'failed-precondition' });
+    } finally { await deleteApp(app); }
+  });
+
+  test("profile setup commits atomically, concurrent duplicate IDs report a conflict, and photo metadata is owner-only", async () => {
+    const makeProfile = (uid: string): UserProfile => ({
+      userId: uid, username: `user_${uid}`, displayName: uid, photoUrl: null, bio: null,
+      interestTags: [], skillTags: [], affiliation: null, profileVisibility: 'public', connectionRequestPolicy: 'everyone',
+      createdAt: 1, updatedAt: 1, usernameChangedAt: null, profileCompletedAt: null, photoStoragePath: null,
+    });
+    const clients = ['alice', 'bob'].map((uid, index) => env.authenticatedContext(uid, index ? createGoogleToken() : createAppleToken()).firestore());
+    for (const [index, uid] of ['alice', 'bob'].entries()) {
+      const batch = writeBatch(clients[index]);
+      batch.set(doc(clients[index], 'profiles', uid), makeProfile(uid));
+      batch.set(doc(clients[index], 'usernames', `user_${uid}`), { userId: uid, username: `user_${uid}`, reservedUntil: null, updatedAt: 1 });
+      await assertSucceeds(batch.commit());
+    }
+    const complete = (index: number, uid: string, username: string) => runTransaction(clients[index], (tx) => saveProfileSetupTransaction({
+      readProfile: async () => { const s = await tx.get(doc(clients[index], 'profiles', uid)); return s.exists() ? s.data() as UserProfile : null; },
+      readClaim: async (id) => { const s = await tx.get(doc(clients[index], 'usernames', id)); return s.exists() ? s.data() as any : null; },
+      writeProfile: (p) => { tx.set(doc(clients[index], 'profiles', uid), p); },
+      writeClaim: (c) => { tx.set(doc(clients[index], 'usernames', c.username), c); },
+    }, uid, { displayName: ` ${uid} `, username }, 100));
+    const results = await Promise.allSettled([complete(0, 'alice', 'shared_id'), complete(1, 'bob', 'shared_id')]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+    const loser = results[0].status === 'rejected' ? 0 : 1;
+    const rejected = results[loser] as PromiseRejectedResult;
+    assert.match(rejected.reason.message, /すでに使用されています。別のユーザーID/);
+    const uid = loser ? 'bob' : 'alice';
+    const unchanged = (await getDoc(doc(clients[loser], 'profiles', uid))).data()!;
+    assert.equal(unchanged.username, `user_${uid}`);
+    assert.equal(unchanged.profileCompletedAt, null);
+    await assertSucceeds(complete(loser, uid, 'another_id'));
+    const p = doc(clients[loser], 'profiles', uid);
+    await assertSucceeds(updateDoc(p, { photoUrl: 'https://example.com/avatar.jpg', photoStoragePath: `profilePhotos/${uid}/photo.jpg`, updatedAt: 101 }));
+    await assertFails(updateDoc(doc(clients[1 - loser], 'profiles', uid), { photoUrl: null, photoStoragePath: null, updatedAt: 102 }));
+    await assertFails(updateDoc(p, { photoStoragePath: 'profilePhotos/outsider/photo.jpg', updatedAt: 102 }));
+    await assertFails(updateDoc(p, { profileCompletedAt: 'invalid', updatedAt: 102 }));
+  });
+
+  test("profile identity retries use current data and never undo deleted DM identities", async () => {
+    const { createRequire } = await import('node:module');
+    const require = createRequire(new URL('../functions/profileIdentityCore.cjs', import.meta.url).href);
+    const { initializeApp, deleteApp } = require('firebase-admin/app');
+    const { getFirestore } = require('firebase-admin/firestore');
+    const { syncProfileIdentity } = require('../functions/profileIdentityCore.cjs');
+    const app = initializeApp({ projectId: 'demo-wememo' }, 'profile-integration');
+    const db = getFirestore(app);
+    try {
+      const profile = db.doc('profiles/alice');
+      const post = db.doc('guildPosts/profile-post');
+      const thread = db.doc('dmConversations/profile-thread');
+      await profile.set({ displayName: 'Old', photoUrl: 'old.jpg', profileVisibility: 'public' });
+      await post.set({ authorUserId: 'alice', body: 'retained', authorDisplayName: 'Old' });
+      const postsBatch = db.batch();
+      for (let i = 0; i < 105; i++) postsBatch.set(db.doc(`guildPosts/page-${String(i).padStart(3, '0')}`), { authorUserId: 'alice', body: 'retained' });
+      await postsBatch.commit();
+      await thread.set({ userIds: ['alice', 'bob'], memberProfiles: { alice: { displayName: 'Old', photoUrl: null } }, sequence: 7 });
+      await profile.update({ displayName: 'Latest', photoUrl: 'latest.jpg' });
+      await syncProfileIdentity(db, 'alice');
+      await syncProfileIdentity(db, 'alice');
+      assert.equal((await post.get()).data().authorPhotoUrl, 'latest.jpg');
+      assert.equal((await post.get()).data().body, 'retained');
+      const allPosts = await db.collection('guildPosts').where('authorUserId', '==', 'alice').get();
+      assert.equal(allPosts.size, 106);
+      assert.ok(allPosts.docs.every((item: any) => item.data().authorPhotoUrl === 'latest.jpg'));
+      assert.deepEqual((await db.doc('guildAuthors/alice').get()).data(), { displayName: 'Latest', photoUrl: 'latest.jpg', deleted: false });
+      assert.equal((await thread.get()).data().memberProfiles.alice.displayName, 'Latest');
+      assert.equal((await thread.get()).data().sequence, 7);
+      await thread.update({ deletedUserIds: ['alice'], closed: true, 'memberProfiles.alice': { displayName: '削除されたユーザー', photoUrl: null } });
+      await profile.update({ displayName: 'Changed again' });
+      await syncProfileIdentity(db, 'alice');
+      assert.equal((await thread.get()).data().memberProfiles.alice.displayName, '削除されたユーザー');
+      await profile.delete();
+      await syncProfileIdentity(db, 'alice');
+      assert.equal((await thread.get()).data().memberProfiles.alice.photoUrl, null);
+      assert.deepEqual((await db.doc('guildAuthors/alice').get()).data(), { displayName: '匿名ユーザー', photoUrl: null, deleted: true });
+      await profile.set({ displayName: 'Must not restore', photoUrl: 'old.jpg' });
+      await syncProfileIdentity(db, 'alice');
+      assert.equal((await db.doc('guildAuthors/alice').get()).data().deleted, true);
+    } finally { await deleteApp(app); }
+  });
+
+  test('Commons author projections are readable without private profile access and remain server-owned', async () => {
+    await env.withSecurityRulesDisabled(async context => {
+      await context.firestore().doc('guildAuthors/alice').set({ displayName: 'Alice', photoUrl: 'avatar.jpg', deleted: false });
+      await context.firestore().doc('profiles/alice').set({ profileVisibility: 'private', bio: 'secret' });
+      await context.firestore().doc('guildPublicationStates/state').set({ userId: 'alice' });
+    });
+    const bob = env.authenticatedContext('bob', createAppleToken()).firestore();
+    const alice = env.authenticatedContext('alice', createGoogleToken()).firestore();
+    await assertSucceeds(bob.doc('guildAuthors/alice').get());
+    await assertFails(bob.doc('profiles/alice').get());
+    await assertFails(alice.doc('guildAuthors/alice').set({ displayName: 'Forged' }));
+    await assertFails(bob.collection('guildAuthors').get());
+    await assertFails(env.unauthenticatedContext().firestore().doc('guildAuthors/alice').get());
+    await assertFails(alice.doc('guildPublicationStates/state').get());
+    await assertFails(alice.doc('guildPublicationStates/state').set({ userId: 'alice' }));
+  });
+
+  test('publication backend unifies legacy duplicates, preserves moderation and rejects stale or foreign updates', async () => {
+    const { createRequire } = await import('node:module');
+    const require = createRequire(new URL('../functions/guildPublication.cjs', import.meta.url).href);
+    const { initializeApp, deleteApp } = require('firebase-admin/app');
+    const { getFirestore } = require('firebase-admin/firestore');
+    const { updatePublication } = require('../functions/guildPublication.cjs');
+    const app = initializeApp({ projectId: 'demo-wememo' }, 'publication-integration');
+    const db = getFirestore(app);
+    const input = { userId: 'alice', sourceId: 'note:source', operation: 'publish', title: 'Memo title', body: 'Source body #TAG', version: { updatedAt: 10, deviceId: 'a' }, scope: 'personal', type: 'personal', projectId: null };
+    try {
+      await db.doc('profiles/alice').set({ displayName: 'Alice', photoUrl: null, profileVisibility: 'public' });
+      const concurrent = await Promise.all([updatePublication(db, 'alice', input), updatePublication(db, 'alice', input)]);
+      assert.equal(concurrent[0].posts[0].id, concurrent[1].posts[0].id);
+      const initial = concurrent[0].posts[0];
+      await db.doc('guildPosts/legacy').set({ ...initial, id: 'legacy', source: { scope: 'personal', memoId: 'source' }, status: 'unpublished', publishedAt: null, moderation: { ...initial.moderation, visibility: 'hidden' } });
+      await db.doc('guildPosts/foreign').set({ ...initial, id: 'foreign', authorUserId: 'bob' });
+      const updated = await updatePublication(db, 'alice', { ...input, operation: 'sync', body: 'Edited source #NEW', version: { updatedAt: 20, deviceId: 'a' } });
+      assert.equal(updated.posts.length, 2);
+      assert.ok(updated.posts.every((post: any) => post.body === 'Edited source #NEW'));
+      const legacy = (await db.doc('guildPosts/legacy').get()).data();
+      assert.equal(legacy.status, 'unpublished'); assert.equal(legacy.moderation.visibility, 'hidden');
+      assert.equal((await db.doc(`guildPosts/${initial.id}`).get()).data().publishedAt, initial.publishedAt);
+      assert.equal((await db.doc('guildPosts/foreign').get()).data().body, initial.body);
+      await assert.rejects(updatePublication(db, 'alice', { ...input, version: { updatedAt: 15, deviceId: 'a' } }), (e: any) => e.code === 'aborted');
+      await assert.rejects(updatePublication(db, 'bob', input), (e: any) => e.code === 'permission-denied');
+      await updatePublication(db, 'alice', { ...input, operation: 'delete', body: '', version: { updatedAt: 30, deviceId: 'a' } });
+      assert.equal((await db.doc(`guildPosts/${initial.id}`).get()).data().status, 'unpublished');
+      await assert.rejects(updatePublication(db, 'alice', { ...input, body: '' }), (e: any) => e.code === 'invalid-argument');
+      await db.doc('projects/project').set({ id: 'project' });
+      await db.doc('projects/project/members/alice').set({ role: 'viewer' });
+      await db.doc('projectAccessStates/alice').set({ status: 'ready', freeProjectId: 'project' });
+      const projectInput = { ...input, sourceId: 'note:project-source', scope: 'project', projectId: 'project', version: { updatedAt: 40, deviceId: 'a' } };
+      await assert.rejects(updatePublication(db, 'alice', projectInput), (e: any) => e.code === 'permission-denied');
+      await db.doc('projects/project/members/alice').update({ role: 'member' });
+      await updatePublication(db, 'alice', projectInput);
+      await db.doc('projects/project/members/alice').delete();
+      await assert.rejects(updatePublication(db, 'alice', { ...projectInput, operation: 'sync', version: { updatedAt: 50, deviceId: 'a' } }), (e: any) => e.code === 'permission-denied');
+      const removed = await updatePublication(db, 'alice', { ...projectInput, operation: 'unpublish', body: '', version: { updatedAt: 50, deviceId: 'a' } });
+      assert.equal(removed.posts[0].status, 'unpublished');
+      await db.doc('profiles/alice').update({ profileVisibility: 'private' });
+      const hidden = await updatePublication(db, 'alice', { ...input, operation: 'sync', body: 'Private profile content', version: { updatedAt: 60, deviceId: 'a' } });
+      assert.ok(hidden.posts.every((post: any) => post.status === 'unpublished'));
+      await assert.rejects(updatePublication(db, 'alice', { ...input, version: { updatedAt: 70, deviceId: 'a' } }), (e: any) => e.code === 'failed-precondition');
     } finally { await deleteApp(app); }
   });
 

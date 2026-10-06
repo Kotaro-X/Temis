@@ -1,3 +1,4 @@
+import { resolveGuildAuthors } from "./guildAuthorService";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { getFirebaseApp } from "../sync/firebaseApp";
@@ -8,6 +9,7 @@ export type GuildAIEvidencePost = {
   id: string;
   authorUserId: string;
   authorDisplayName: string;
+  authorPhotoUrl?: string | null;
   title: string | null;
   body: string;
   publishedAt: number | null;
@@ -39,7 +41,8 @@ export const searchGuildPostsWithAI = async (
   try {
     // A deployed legacy search endpoint must not bypass the new quota service.
     await getTemisAIUsage();
-    return (await callable({ question, requestId })).data;
+    const result = (await callable({ question, requestId })).data;
+    return { ...result, evidencePosts: await resolveGuildAuthors(result.evidencePosts) };
   } catch (cause) {
     const code = (cause as { code?: string })?.code;
     const messages: Record<string, string> = {

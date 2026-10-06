@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   clampEditorSelection,
+  getEditorSelectionOverride,
   shouldAcceptNativeSelection,
 } from "../src/components/inputs/memoTextEditorSelection.ts";
 import type { PendingSelectionRequest } from "../src/components/inputs/memoTextEditorSelection.ts";
@@ -30,6 +31,14 @@ test("normal native caret movement resumes after the pending request clears", ()
   assert.equal(
     shouldAcceptNativeSelection({ start: 1, end: 1 }, null),
     true,
+  );
+});
+
+test("selection override is active only after the expected memo value arrives", () => {
+  assert.equal(getEditorSelectionOverride("あいう", pendingInsertion), undefined);
+  assert.deepEqual(
+    getEditorSelectionOverride("あ（（いう", pendingInsertion),
+    { start: 3, end: 3 },
   );
 });
 

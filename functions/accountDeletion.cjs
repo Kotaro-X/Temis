@@ -2,6 +2,7 @@ const { createHash } = require("node:crypto");
 
 const { getApp, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
+const { getStorage } = require("firebase-admin/storage");
 const { getFirestore } = require("firebase-admin/firestore");
 const { logger } = require("firebase-functions");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
@@ -195,6 +196,8 @@ const deleteCoreAccountData = async (uid) => {
     // Fail the indexed query before deleting other data. Every step is retryable.
     ["invitations", () => deleteRedemptionRecords(uid)],
     ["direct_messages", () => require("./directMessagesCore.cjs").createDMService(firestore).deleteAccountMessages(uid)],
+    ["guild_author", async () => { await firestore.doc(`guildAuthors/${uid}`).set({ displayName: "匿名ユーザー", photoUrl: null, deleted: true }); await deleteDocuments((await queryByUser("guildPublicationStates", "userId", "==", uid)).docs); }],
+    ["profile_photos", () => require("./profileIdentityCore.cjs").deleteAccountPhotos(getStorage().bucket(), uid)],
     ["profile", async () => {
       const usernames = await firestore.collection("usernames").where("userId", "==", uid).get();
       for (const document of usernames.docs) await document.ref.delete();

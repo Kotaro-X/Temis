@@ -23,6 +23,7 @@ import BracketToolbar from "../BracketToolbar";
 import HighlightEditor from "../HighlightEditor";
 import {
   clampEditorSelection,
+  getEditorSelectionOverride,
   shouldAcceptNativeSelection,
 } from "./memoTextEditorSelection";
 import type {
@@ -54,22 +55,25 @@ const MemoTextEditor = ({
   linkStyle,
 }: Props) => {
   const [selection, setSelection] = useState<EditorSelection | null>(null);
+  const [selectionRequest, setSelectionRequest] =
+    useState<PendingSelectionRequest | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [toolbarHeight, setToolbarHeight] = useState(0);
-  const inputRef = useRef<TextInput | null>(null);
   const pendingToolbarValueRef = useRef<string | null>(null);
   const pendingSelectionRef = useRef<PendingSelectionRequest | null>(null);
   const accessoryId = useMemo(
     () => `memo-toolbar-${Math.random().toString(36).slice(2, 10)}`,
     [],
   );
+  // The iOS TextInput patch uses this ID to preserve the visible memo position.
+  const memoInputNativeId = `memo-editor-${accessoryId}`;
 
   useEffect(() => {
     const showEvent =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent =
       Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const showSub = Keyboard.addListener(showEvent, (event) => {
+    const showSub = Keyboard.addListener(showEvent, () => {
       setKeyboardVisible(true);
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
@@ -93,32 +97,33 @@ const MemoTextEditor = ({
       }
       return next;
     });
+
+    const pending = pendingSelectionRef.current;
+    if (pending && pending.expectedValue !== value) {
+      pendingSelectionRef.current = null;
+      setSelectionRequest((current) =>
+        current === pending ? null : current,
+      );
+    }
   }, [value]);
 
   useLayoutEffect(() => {
-    const pending = pendingSelectionRef.current;
-    if (!pending) {
+    if (!selectionRequest || selectionRequest.expectedValue !== value) {
       return;
     }
-    if (pending.expectedValue !== value) {
-      pendingSelectionRef.current = null;
-      return;
-    }
-
-    const next = clampEditorSelection(pending.selection, value.length);
-    setSelection(next);
-    inputRef.current?.setSelection(next.start, next.end);
 
     const frame = requestAnimationFrame(() => {
-      if (pendingSelectionRef.current !== pending) {
+      if (pendingSelectionRef.current !== selectionRequest) {
         return;
       }
-      inputRef.current?.setSelection(next.start, next.end);
       pendingSelectionRef.current = null;
+      setSelectionRequest((current) =>
+        current === selectionRequest ? null : current,
+      );
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [value]);
+  }, [selectionRequest, value]);
 
   const handleSelectionChange = (
     event: NativeSyntheticEvent<TextInputSelectionChangeEventData>,
@@ -130,6 +135,9 @@ const MemoTextEditor = ({
     }
     if (pending) {
       pendingSelectionRef.current = null;
+      setSelectionRequest((current) =>
+        current === pending ? null : current,
+      );
     }
     setSelection(next);
   };
@@ -137,6 +145,7 @@ const MemoTextEditor = ({
   const handleInputChangeText = (nextValue: string) => {
     pendingToolbarValueRef.current = null;
     pendingSelectionRef.current = null;
+    setSelectionRequest(null);
     onChangeText(nextValue);
   };
 
@@ -149,12 +158,19 @@ const MemoTextEditor = ({
     const expectedValue = pendingToolbarValueRef.current ?? value;
     const next = clampEditorSelection(nextSelection, expectedValue.length);
     pendingToolbarValueRef.current = null;
-    pendingSelectionRef.current = {
+    const request = {
       expectedValue,
       selection: next,
     };
+    pendingSelectionRef.current = request;
+    setSelectionRequest(request);
     setSelection(next);
   };
+
+  const selectionOverride = getEditorSelectionOverride(
+    value,
+    selectionRequest,
+  );
 
   const flattenedInput = (StyleSheet.flatten([
     styles.input,
@@ -188,7 +204,6 @@ const MemoTextEditor = ({
     <View style={[styles.container, style]}>
       {enableHighlight ? (
         <HighlightEditor
-          ref={inputRef}
           value={value}
           onChangeText={handleInputChangeText}
           placeholder={placeholder}
@@ -201,12 +216,13 @@ const MemoTextEditor = ({
             inputPaddingStyle,
           ]) as TextStyle}
           linkStyle={linkStyle}
+          nativeID={memoInputNativeId}
           inputAccessoryViewID={Platform.OS === "ios" ? accessoryId : undefined}
+          selection={selectionOverride}
           onSelectionChange={handleSelectionChange}
         />
       ) : (
         <TextInput
-          ref={inputRef}
           style={[styles.input, inputStyle, inputPaddingStyle]}
           value={value}
           onChangeText={handleInputChangeText}
@@ -214,11 +230,13 @@ const MemoTextEditor = ({
           placeholderTextColor="#9ca3af"
           editable={editable}
           autoFocus={autoFocus}
+          nativeID={memoInputNativeId}
           inputAccessoryViewID={Platform.OS === "ios" ? accessoryId : undefined}
           multiline
           textAlignVertical="top"
           selectionColor="#111827"
           scrollEnabled
+          selection={selectionOverride}
           onSelectionChange={handleSelectionChange}
         />
       )}

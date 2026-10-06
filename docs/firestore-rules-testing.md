@@ -1,6 +1,6 @@
-# Firestore Rules Emulatorテスト
+# Firestore・Storage Rules Emulatorテスト
 
-最終更新: 2026-07-15
+最終更新: 2026-10-04
 
 ## 目的
 
@@ -10,18 +10,18 @@
 
 - `npm ci`を実行済み（local `firebase-tools`を使用）
 - Java 17以上
-- 8080番と4400番が空いていること
+- 8080番・9199番・4400番が空いていること
 - 初回のEmulator binary取得時にネットワークへ接続できること
 
 ## Emulatorの起動とテスト実行
 
-手動でEmulatorを起動し続ける必要はない。次のコマンドが、`demo-wememo` project IDでFirestore Emulatorを起動し、終了後に停止する。
+手動でEmulatorを起動し続ける必要はない。次のコマンドが、`demo-wememo` project IDでFirestore・Storage Emulatorを起動し、終了後に停止する。
 
 ```bash
 npm run test:rules
 ```
 
-この処理はJava、local Firebase CLI、ポートを確認してから、`FIRESTORE_EMULATOR_HOST`が設定された子プロセスで`tests/firestore-rules.test.ts`を実行する。`npm run test:all`にも含まれる。互換名の`npm run test:firestore-rules`も同じ処理を実行する。
+この処理はJava、local Firebase CLI、ポートを確認してから、`FIRESTORE_EMULATOR_HOST`が設定された子プロセスで`tests/firestore-rules.test.ts`と`tests/storage-rules.test.ts`を実行する。`npm run test:all`にも含まれる。互換名の`npm run test:firestore-rules`も同じ処理を実行する。
 
 ## 対象ルールと代表ケース
 
@@ -33,6 +33,8 @@ npm run test:rules
 - 未許可subcollectionや未知フィールドを拒否する
 - 不正な型・過大値・不正な更新形式を拒否する
 - 論理削除、staff grant、invite redemptionの許可条件を検証する
+- プロフィール必須設定の一括保存・IDの同時取得・他人による写真更新の拒否
+- Storageの本人限定アップロード／削除、公開写真の取得、画像形式・容量・上書き制限
 
 ## よくある失敗
 
@@ -40,7 +42,7 @@ npm run test:rules
 |---|---|---|
 | `[java-error]` | Java不足またはversion不適合 | Java 17以上を導入する |
 | `[firebase-cli-error]` | local Firebase CLIなし | `npm ci`を再実行する |
-| `[port-conflict]` | 8080/4400番が使用中 | 残存Emulatorや該当processを停止する |
+| `[port-conflict]` | 8080/9199/4400番が使用中 | 残存Emulatorや該当processを停止する |
 | `[configuration-error]` | Emulator host未設定 | `npm run test:rules`経由で実行する |
 | `[emulator-startup-error]` | Emulator起動・download・CLI環境の失敗 | Java、ネットワーク、Firebase debug logを確認する |
 | `[assertion-failure]` | Emulator起動後にRules assertionが失敗 | `firestore.rules`と該当テストを修正する |

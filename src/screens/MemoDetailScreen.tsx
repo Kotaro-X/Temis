@@ -1,3 +1,4 @@
+import MemoPublicationControls from "../components/guild/MemoPublicationControls";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -44,7 +45,6 @@ import {
   WikiReferenceItem,
 } from "../services/wikiReferenceService";
 import { extractTokens } from "../utils/wikiLink";
-import { unpublishGuildPostsForSource } from "../services/guild/guildService";
 import { AppLanguage, t } from "../i18n";
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
@@ -296,6 +296,8 @@ const MemoDetailScreen = ({
     if (snapshot && hasChanges(snapshot, lastSavedRef.current)) {
       await saveDraft(snapshot);
     }
+    // A save may have queued a newer draft while the previous write was in flight.
+    while (savingPromiseRef.current) await savingPromiseRef.current;
   };
 
   const handleTitleChange = (text: string) => {
@@ -560,16 +562,13 @@ const MemoDetailScreen = ({
         }
       }
       if (detail.kind === "task") {
-        if (profile) await unpublishGuildPostsForSource(detail.memoId);
         await deleteMemo(detail.memoId);
       } else if (detail.kind === "note") {
-        if (profile) await unpublishGuildPostsForSource(detail.memoId);
         if (detail.scope === "project") {
           await removeProjectSharedNote(detail.noteId);
         }
         await deleteNoteById(detail.noteId);
       } else {
-        if (profile) await unpublishGuildPostsForSource(detail.memoId);
         await deleteResearchNoteById(detail.tankyuId);
       }
       if (historyStack.length > 0) {
@@ -654,13 +653,6 @@ const MemoDetailScreen = ({
                 : tr("memo.detailTitle")}
           </Text>
           <Pressable
-            style={[styles.guildButton, (loading || !detail) && styles.deleteButtonDisabled]}
-            onPress={() => setGuildComposerOpen(true)}
-            disabled={loading || !detail}
-          >
-            <Text style={styles.guildButtonText}>Commonsに投稿</Text>
-          </Pressable>
-          <Pressable
             style={[
               styles.deleteButton,
               (deleting || loading || !detail) && styles.deleteButtonDisabled,
@@ -673,6 +665,7 @@ const MemoDetailScreen = ({
             </Text>
           </Pressable>
         </View>
+        {detail ? <MemoPublicationControls sourceId={detail.memoId} flushDraft={flushDraft} onCreate={() => setGuildComposerOpen(true)} /> : null}
         <View style={styles.container}>
           {loading ? (
             <Text style={styles.helperText}>{tr("common.loading")}</Text>

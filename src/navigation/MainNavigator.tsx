@@ -1,3 +1,5 @@
+import CommunityAccessBoundary from "../components/CommunityAccessBoundary";
+import ProfileSetupBoundary from "../screens/ProfileSetupScreen";
 import React, { useEffect } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -121,7 +123,7 @@ const AppContent = () => {
                     >
                       {(settingsWorkspace) => settingsWorkspace}
                     </SettingsShell>
-                    <>
+                    <CommunityAccessBoundary visible={workspaceScope === "projects" && ["projects", "tasks", "todo", "memos"].includes(rootScreen)} title="プロジェクト" contentPaddingTop={workspaceContentPaddingTop}>
                         <ProjectsScreen
                           visible={workspaceScope === "projects" && rootScreen === "projects"}
                           contentPaddingTop={workspaceContentPaddingTop}
@@ -144,18 +146,22 @@ const AppContent = () => {
                           tab="memos"
                           contentPaddingTop={workspaceContentPaddingTop}
                         />
-                    </>
+                    </CommunityAccessBoundary>
+                    <CommunityAccessBoundary visible={workspaceScope === "private" && rootScreen === "guild"} title="Commons" contentPaddingTop={workspaceContentPaddingTop}>
                     <GuildScreen
                       visible={workspaceScope === "private" && rootScreen === "guild"}
                       contentPaddingTop={workspaceContentPaddingTop}
                       onOpenMenu={openMenu}
                     />
+                    </CommunityAccessBoundary>
                     {rootScreen === "dm" ? <DirectMessagesScreen contentPaddingTop={workspaceContentPaddingTop} /> : null}
+                    <CommunityAccessBoundary visible={hasGuildAdminAccess && workspaceScope === "private" && rootScreen === "guildAdmin"} title="Commons" contentPaddingTop={workspaceContentPaddingTop}>
                     <GuildAdminScreen
                       visible={hasGuildAdminAccess && workspaceScope === "private" && rootScreen === "guildAdmin"}
                       contentPaddingTop={workspaceContentPaddingTop}
                       onBack={openGuild}
                     />
+                    </CommunityAccessBoundary>
                   </>
                 </AppChromeShell>
               )}
@@ -170,7 +176,7 @@ const AppContent = () => {
 export default function MainNavigator() {
   return (
     <AppProviders>
-      <AppContent />
+      <ProfileSetupBoundary><AppContent /></ProfileSetupBoundary>
     </AppProviders>
   );
 }

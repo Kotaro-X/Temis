@@ -30,6 +30,9 @@ function lifecycle(options: { apple?: boolean; cancel?: boolean; localFailure?: 
     },
     "../services/auth/syncUser": { isSyncFirebaseUser: Boolean, toSyncUser: (value: unknown) => value },
     "../services/sync/firebaseApp": { getFirebaseAuth: () => ({ currentUser: user }) },
+    "../services/collaboration/profileCompletionCache": { clearCompletedProfile: async (uid: string) => {
+      assert.equal(uid, 'test-user'); events.push('profile-cache-clear');
+    } },
     "../services/account/accountDeletion": {
       deleteCurrentCloudAccount: async () => {
         events.push("cloud-delete");
@@ -78,7 +81,7 @@ test("keeping local data still signs out and persists the completed deletion sta
   const fixture = lifecycle();
   const result = await fixture.hook.deleteAccount({ deleteLocalData: false });
   assert.equal(result.deleted, true);
-  assert.deepEqual(fixture.events, ["pending", "cloud-delete", "billing-sign-out", "sign-out", "deleted"]);
+  assert.deepEqual(fixture.events, ["pending", "cloud-delete", "profile-cache-clear", "billing-sign-out", "sign-out", "deleted"]);
   assert.equal(fixture.state(), "deleted");
 });
 

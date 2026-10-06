@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -41,10 +41,11 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
   const [body, setBody] = useState(initialBody);
   const [type, setType] = useState<GuildPostType>(source?.scope === "project" ? "project_activity" : "personal");
   const [projectId, setProjectId] = useState<string | null>(source?.projectId ?? null);
+  const createdSourceId = useRef<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) { createdSourceId.current = null; return; }
     setTitle(initialTitle);
     setBody(initialBody);
     setType(source?.scope === "project" ? "project_activity" : "personal");
@@ -91,7 +92,8 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
           profile,
         });
       }
-      const createdSource = source ? null : await upsertFreeNote({ title: title.trim() || null, body });
+      const createdSource = source ? null : await upsertFreeNote({ id: createdSourceId.current ?? undefined, title: title.trim() || null, body });
+      if (createdSource) createdSourceId.current = createdSource.id;
       const resolvedSource = source ?? {
         scope: "personal" as const,
         memoId: `note:${createdSource!.id}`,

@@ -1,3 +1,4 @@
+import UserAvatar from "../components/UserAvatar";
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View, type ViewToken } from 'react-native';
 import * as Crypto from 'expo-crypto';
@@ -105,9 +106,12 @@ const Conversation = ({ userId, recipient, thread }: { userId: string; recipient
       renderItem={({ item }) => {
         const mine = item.senderUserId === userId;
         const deleted = item.deleted || thread?.deletedUserIds?.includes(item.senderUserId);
-        return <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
+        return <View style={[styles.messageRow, mine && { justifyContent: "flex-end" }]}>
+          {!mine ? <UserAvatar photoUrl={deleted ? null : recipient.photoUrl} size={28} /> : null}
+          <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
           <Text selectable style={styles.body}>{deleted ? '削除されたメッセージ' : item.text}</Text>
           <Text style={styles.time}>{displayTime(item.createdAt)}</Text>
+          </View>
         </View>;
       }}
     />
@@ -150,6 +154,7 @@ function DirectMessagesContent({ contentPaddingTop }: { contentPaddingTop: numbe
   return <View style={[styles.root, { paddingTop: contentPaddingTop }]}>
     <View style={styles.header}>
       {showConversation || choosing ? <Action text="戻る" onPress={back} /> : <Pressable accessibilityLabel="メニュー" accessibilityRole="button" onPress={openMenu} style={styles.action}><Ionicons name="menu" size={24} /></Pressable>}
+      {showConversation && recipient ? <UserAvatar photoUrl={recipient.photoUrl} /> : null}
       <Text numberOfLines={1} style={styles.title}>{showConversation ? recipient?.displayName || 'DM' : choosing ? '送信先を選択' : 'DM'}</Text>
     </View>
     {!userId ? <View style={styles.notice}><Text>AppleまたはGoogleでログインすると、繋がりのあるユーザーとDMを利用できます。</Text><Action text="アカウント設定" onPress={openSettingsAccount} /></View>
@@ -163,7 +168,7 @@ function DirectMessagesContent({ contentPaddingTop }: { contentPaddingTop: numbe
             const existing = conversations.find((candidate) => candidate.userIds.includes(item.userId));
             setChoosing(false);
             if (existing) openDM(existing.id); else setDraftRecipient(item);
-          }}><Text style={styles.name}>{item.displayName}</Text></Pressable>} />
+          }}><View style={styles.identity}><UserAvatar photoUrl={item.photoUrl} /><Text style={styles.name}>{item.displayName}</Text></View></Pressable>} />
       </View> : <View style={styles.flex}>
         <View style={styles.toolbar}><Action text="新しいメッセージ" onPress={() => setChoosing(true)} />
           <Action text={pushBusy ? '設定中…' : pushEnabled ? 'DM通知をオフ' : 'DM通知をオン'} disabled={pushBusy} onPress={() => {
@@ -178,7 +183,7 @@ function DirectMessagesContent({ contentPaddingTop }: { contentPaddingTop: numbe
             const other = item.userIds.find((id) => id !== userId) || '';
             const unread = unreadMessages(item, userId);
             return <Pressable style={styles.row} onPress={() => openDM(item.id)}>
-              <View style={styles.rowTop}><Text style={styles.name}>{item.memberProfiles[other]?.displayName || 'Temisユーザー'}</Text>
+              <View style={styles.rowTop}><UserAvatar photoUrl={item.deletedUserIds?.includes(other) ? null : item.memberProfiles[other]?.photoUrl} /><Text style={styles.name}>{item.memberProfiles[other]?.displayName || 'Temisユーザー'}</Text>
                 {unread > 0 ? <Text style={styles.badge}>{unread > 99 ? '99+' : unread}</Text> : null}</View>
               <Text numberOfLines={1} style={styles.preview}>{item.lastMessage.text}</Text><Text style={styles.time}>{displayTime(item.updatedAt)}</Text>
             </Pressable>;
@@ -187,6 +192,8 @@ function DirectMessagesContent({ contentPaddingTop }: { contentPaddingTop: numbe
   </View>;
 }
 const styles = StyleSheet.create({
+  messageRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  identity: { flexDirection: "row", alignItems: "center", gap: 10 },
   root: { flex: 1, backgroundColor: '#ffffff' }, flex: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, minHeight: 56, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb' },
   title: { flex: 1, fontSize: 21, fontWeight: '700', color: '#111827', marginLeft: 8 },
@@ -194,7 +201,7 @@ const styles = StyleSheet.create({
   actionText: { color: '#2563eb', fontWeight: '600', fontSize: 15 }, disabled: { opacity: 0.4 },
   toolbar: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', padding: 8 },
   row: { padding: 18, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb' },
-  rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  rowTop: { gap: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   name: { flexShrink: 1, fontSize: 16, fontWeight: '600', color: '#111827' },
   preview: { color: '#4b5563', marginVertical: 6 }, badge: { color: 'white', backgroundColor: '#2563eb', borderRadius: 12, paddingHorizontal: 7, paddingVertical: 2, overflow: 'hidden' },
   empty: { color: '#6b7280', padding: 28, textAlign: 'center', lineHeight: 23 },

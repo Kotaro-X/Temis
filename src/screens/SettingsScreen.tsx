@@ -1,3 +1,4 @@
+import ProfilePhotoEditor from "../components/ProfilePhotoEditor";
 import React, { useEffect, useRef, useState } from "react";
 import SocialSignInButtons from "../components/settings/SocialSignInButtons";
 import MenuButton from "../components/common/MenuButton";
@@ -936,6 +937,7 @@ const SettingsScreen = ({
               {renderGoogleAccountCard()}
               {googleAuthStatus === "signedIn" && profileStatus === "ready" ? (
                 <>
+                  <View style={styles.nestedSection}><ProfilePhotoEditor /></View>
                   <View style={styles.nestedSection}>{renderUsernameCard()}</View>
                   <View style={styles.nestedSection}>{renderDisplayNameCard()}</View>
                 </>

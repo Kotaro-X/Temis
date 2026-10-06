@@ -1,3 +1,5 @@
+import { resolveGuildAuthors } from "../services/guild/guildAuthorService";
+import UserAvatar from "../components/UserAvatar";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -21,7 +23,6 @@ import CommonsRequestsButton from "../components/guild/CommonsRequestsButton";
 import GuildPostComposerModal from "../components/guild/GuildPostComposerModal";
 import AIAnswerEvidencePanel from "../components/ai/AIAnswerEvidencePanel";
 import TemisAIDock from "../components/ai/TemisAIDock";
-import MemoTextEditor from "../components/inputs/MemoTextEditor";
 import TokenChips from "../components/TokenChips";
 import { useCollaboration } from "../context/CollaborationContext";
 import { formatTemisAIUsageLabel, useTemisAIUsage } from "../context/TemisAIUsageContext";
@@ -33,18 +34,13 @@ import {
   listGuildPosts,
   listMyGuildPosts,
   reportGuildPost,
-  setGuildPostStatus,
 } from "../services/guild/guildService";
 import {
   searchGuildPostsWithAI,
   type GuildAISearchResult,
   type GuildAIEvidencePost,
 } from "../services/guild/guildAISearch";
-import {
-  republishOwnedGuildPost,
-  resolveGuildSourceMemoId,
-  updateOwnedGuildPostAndSource,
-} from "../services/guild/guildOwnedPostService";
+import { readGuildSourceContent } from "../services/guild/guildSourceReader";
 import { getConnectionWithUser, getProjectMember, inviteToProject, sendConnectionRequest } from "../services/collaboration/collaborationService";
 import { getConnectionStatus, type ConnectionStatus } from "../types/collaboration";
 import { extractGuildTags, type GuildFeedKind, type GuildFeedPost, type GuildPost, type OwnedGuildFeedCursor } from "../types/guild";
@@ -103,10 +99,6 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
   const [selectedPost, setSelectedPost] = useState<GuildDisplayPost | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [reporting, setReporting] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
-  const [bodyDraft, setBodyDraft] = useState("");
-  const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionActionState>("loading");
   const tags = useMemo(() => extractGuildTags(search), [search]);
@@ -114,6 +106,24 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
     () => extractTokens(selectedPost?.body ?? ""),
     [selectedPost?.body],
   );
+
+  const displayedAuthors = useRef({ selectedPost, aiResult, uid: profile?.userId });
+  displayedAuthors.current = { selectedPost, aiResult, uid: profile?.userId };
+  const authorRefreshGeneration = useRef(0);
+  const refreshDisplayedAuthors = useCallback(async () => {
+    const generation = ++authorRefreshGeneration.current;
+    const snapshot = displayedAuthors.current;
+    const records = [...snapshot.aiResult?.evidencePosts ?? [], ...snapshot.selectedPost ? [snapshot.selectedPost] : []];
+    if (!records.length) return;
+    const resolved = await resolveGuildAuthors(records);
+    if (generation !== authorRefreshGeneration.current || snapshot.uid !== displayedAuthors.current.uid) return;
+    const identity = (id: string) => {
+      const author = resolved.find(post => post.id === id);
+      return author ? { authorDisplayName: author.authorDisplayName, authorPhotoUrl: author.authorPhotoUrl ?? null } : {};
+    };
+    setSelectedPost(current => current ? { ...current, ...identity(current.id) } : null);
+    setAIResult(current => current ? { ...current, evidencePosts: current.evidencePosts.map(post => ({ ...post, ...identity(post.id) })) } : null);
+  }, []);
 
   const loadFirst = useCallback(async (refresh = false) => {
     if (!profile) return;
@@ -132,13 +142,14 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
         : await listGuildPosts({ feed, tags });
       setPosts(page.posts);
       setCursor(page.cursor);
+      await refreshDisplayedAuthors();
     } catch (cause) {
       setLoadError(cause instanceof Error ? cause.message : "投稿を読み込めませんでした。");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [feed, profile, tags]);
+  }, [feed, profile, tags, refreshDisplayedAuthors]);
 
   useEffect(() => {
     if (!visible || !profile) return;
@@ -192,9 +203,6 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
         : await getGuildPost(post.id);
       if (!detail) throw new Error("この投稿は現在表示できません。");
       setSelectedPost(detail);
-      setTitleDraft(detail.title ?? detail.body.split("\n").find(Boolean) ?? "");
-      setBodyDraft(detail.body);
-      setEditing(false);
     } catch (cause) {
       if (!isOwnedPost) {
         setPosts((current) => current.filter((item) => item.id !== post.id));
@@ -210,56 +218,12 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
     finally { setDetailLoading(false); }
   };
 
-  const updateSelectedPost = (next: GuildPost) => {
-    setSelectedPost(next);
-    setPosts((current) => current.map((post) => post.id === next.id ? next : post));
-  };
-
-  const handleSaveOwnedPost = async () => {
-    if (!selectedPost || !("source" in selectedPost) || !profile || saving) return;
-    setSaving(true);
-    try {
-      const updated = await updateOwnedGuildPostAndSource({
-        postId: selectedPost.id,
-        profile,
-        input: { title: titleDraft.trim() || null, body: bodyDraft, type: selectedPost.type, projectId: selectedPost.projectId },
-      });
-      updateSelectedPost(updated);
-      setEditing(false);
-    } catch (cause) {
-      Alert.alert("更新できません", cause instanceof Error ? cause.message : "もう一度お試しください。");
-    } finally { setSaving(false); }
-  };
-
-  const handleVisibility = async () => {
-    if (!selectedPost || !("source" in selectedPost) || !profile || saving) return;
-    if (selectedPost.status === "unpublished") {
-      Alert.alert("再公開しますか？", "Commons側のタイトルと本文で元メモを上書きしてから再公開します。", [
-        { text: "キャンセル", style: "cancel" },
-        { text: "再公開する", onPress: () => {
-          setSaving(true);
-          void republishOwnedGuildPost({ postId: selectedPost.id, profile })
-            .then(updateSelectedPost)
-            .catch((cause) => Alert.alert("再公開できません", cause instanceof Error ? cause.message : "もう一度お試しください。"))
-            .finally(() => setSaving(false));
-        } },
-      ]);
-      return;
-    }
-    setSaving(true);
-    try {
-      await setGuildPostStatus(selectedPost.id, "unpublished");
-      updateSelectedPost({ ...selectedPost, status: "unpublished", publishedAt: null, updatedAt: Date.now() });
-    } catch (cause) {
-      Alert.alert("非公開にできません", cause instanceof Error ? cause.message : "もう一度お試しください。");
-    } finally { setSaving(false); }
-  };
-
   const handleOpenSourceMemo = async () => {
     if (!selectedPost || !("source" in selectedPost)) return;
     try {
-      const sourceId = await resolveGuildSourceMemoId(selectedPost.source.memoId);
-      openMemoDetail(sourceId);
+      const content = await readGuildSourceContent(selectedPost.source.memoId);
+      if (!content) throw new Error("元メモがこの端末にありません。同期後にもう一度お試しください。");
+      openMemoDetail(content.sourceId);
       setSelectedPost(null);
     } catch (cause) {
       Alert.alert("元メモを開けません", cause instanceof Error ? cause.message : "もう一度お試しください。");
@@ -347,9 +311,6 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
       const detail = await getGuildPost(evidence.id);
       if (!detail) throw new Error("この投稿は現在表示できません。");
       setSelectedPost(detail);
-      setTitleDraft(detail.title ?? detail.body.split("\n").find(Boolean) ?? "");
-      setBodyDraft(detail.body);
-      setEditing(false);
     } catch (cause) {
       Alert.alert(
         "投稿を開けません",
@@ -414,7 +375,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
       </View>
       <ScrollView horizontal style={styles.feedTabsViewport} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedTabs}>{FEEDS.map((item) => <Pressable key={item.key} style={[styles.feedTab, feed === item.key && styles.feedTabActive]} onPress={() => setFeed(item.key)}><Text style={[styles.feedTabText, feed === item.key && styles.feedTabTextActive]}>{item.label}</Text></Pressable>)}</ScrollView>
       <TextInput value={search} onChangeText={setSearch} style={styles.search} placeholder="投稿・#タグ・((Wikiリンク)) を検索" />
-      {loading ? <View style={styles.center}><ActivityIndicator color="#2563eb" /></View> : loadError && !posts.length ? <View style={styles.center}><Text style={styles.error}>{loadError}</Text><Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>再試行</Text></Pressable></View> : <FlatList style={styles.feedList} data={visiblePosts} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadFirst(true)} />} onEndReached={() => void loadMore()} onEndReachedThreshold={0.6} contentContainerStyle={visiblePosts.length ? styles.list : styles.emptyList} renderItem={({ item }) => <Pressable style={styles.card} onPress={() => void openDetail(item)}><View style={styles.cardMeta}><Text style={styles.author}>{item.authorDisplayName}</Text><Text style={styles.date}>{formatDate(item.publishedAt ?? item.updatedAt)}</Text></View>{feed === "mine" ? <Text style={[styles.statusBadge, item.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>{item.status === "published" ? "公開中" : "非公開"}</Text> : null}<Text style={styles.cardTitle} numberOfLines={2}>{item.title?.trim() || item.body.split("\n").find(Boolean) || "無題"}</Text><Text style={styles.body} numberOfLines={5}>{item.body}</Text><View style={styles.tagRow}>{item.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>{item.projectId ? <Text style={styles.projectLabel}>関連プロジェクト</Text> : null}</Pressable>} ListEmptyComponent={<View style={styles.center}><Text style={styles.empty}>{feed === "mine" ? "自分の投稿はまだありません" : tags.length ? "タグに合う投稿がまだありません" : "公開投稿はまだありません"}</Text><Pressable onPress={() => setComposerOpen(true)}><Text style={styles.retry}>最初の投稿を作成</Text></Pressable></View>} ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} color="#2563eb" /> : loadError && posts.length ? <Pressable style={styles.footer} onPress={() => void loadMore()}><Text style={styles.retry}>追加読み込みを再試行</Text></Pressable> : null} />}
+      {loading ? <View style={styles.center}><ActivityIndicator color="#2563eb" /></View> : loadError && !posts.length ? <View style={styles.center}><Text style={styles.error}>{loadError}</Text><Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>再試行</Text></Pressable></View> : <FlatList style={styles.feedList} data={visiblePosts} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadFirst(true)} />} onEndReached={() => void loadMore()} onEndReachedThreshold={0.6} contentContainerStyle={visiblePosts.length ? styles.list : styles.emptyList} renderItem={({ item }) => <Pressable style={styles.card} onPress={() => void openDetail(item)}><View style={styles.cardMeta}><UserAvatar photoUrl={item.authorPhotoUrl} size={30} /><Text style={styles.author}>{item.authorDisplayName}</Text><Text style={styles.date}>{formatDate(item.publishedAt ?? item.updatedAt)}</Text></View>{feed === "mine" ? <Text style={[styles.statusBadge, item.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>{item.status === "published" ? "公開中" : "非公開"}</Text> : null}<Text style={styles.cardTitle} numberOfLines={2}>{item.title?.trim() || item.body.split("\n").find(Boolean) || "無題"}</Text><Text style={styles.body} numberOfLines={5}>{item.body}</Text><View style={styles.tagRow}>{item.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>{item.projectId ? <Text style={styles.projectLabel}>関連プロジェクト</Text> : null}</Pressable>} ListEmptyComponent={<View style={styles.center}><Text style={styles.empty}>{feed === "mine" ? "自分の投稿はまだありません" : tags.length ? "タグに合う投稿がまだありません" : "公開投稿はまだありません"}</Text><Pressable onPress={() => setComposerOpen(true)}><Text style={styles.retry}>最初の投稿を作成</Text></Pressable></View>} ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} color="#2563eb" /> : loadError && posts.length ? <Pressable style={styles.footer} onPress={() => void loadMore()}><Text style={styles.retry}>追加読み込みを再試行</Text></Pressable> : null} />}
       <TemisAIDock
         expanded={aiOpen}
         expandedTop={headerBottomY > 0 ? headerBottomY : undefined}
@@ -450,7 +411,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
                 <Text style={styles.aiEvidenceTitle} numberOfLines={2}>{post.title?.trim() || post.body.split("\n").find(Boolean) || "無題"}</Text>
                 <Text style={styles.aiEvidenceBody} numberOfLines={3}>{post.snippetText ?? post.body}</Text>
                 {post.linkPath?.length ? <Text style={styles.aiEvidenceMeta}>{post.linkPath.join(" → ")}経由</Text> : null}
-                <Text style={styles.aiEvidenceMeta}>{post.authorDisplayName}・{formatDate(post.publishedAt)}</Text>
+                <View style={styles.cardMeta}><UserAvatar photoUrl={post.authorPhotoUrl} size={24} /><Text style={styles.aiEvidenceMeta}>{post.authorDisplayName}・{formatDate(post.publishedAt)}</Text></View>
               </Pressable>}
             />
           </ScrollView> : null}
@@ -462,23 +423,14 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
           <View style={styles.detailHeader}>
             <Pressable style={styles.detailBack} onPress={() => setSelectedPost(null)}><Text style={styles.detailBackText}>‹ 戻る</Text></Pressable>
             <Text style={styles.title}>Note</Text>
-            <View style={styles.detailHeaderAction}>{selectedPost?.authorUserId === profile.userId ? <Pressable disabled={saving} onPress={() => editing ? void handleSaveOwnedPost() : setEditing(true)}><Text style={styles.headerActionText}>{editing ? "保存" : "編集"}</Text></Pressable> : null}</View>
+            <View style={styles.detailHeaderAction}>{selectedPost?.authorUserId === profile.userId ? <Pressable onPress={() => void handleOpenSourceMemo()}><Text style={styles.headerActionText}>編集</Text></Pressable> : null}</View>
           </View>
           {detailLoading ? <ActivityIndicator color="#2563eb" /> : selectedPost ? <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
             <Text style={styles.detailTitle}>{selectedPost.title?.trim() || selectedPost.body.split("\n").find(Boolean) || "無題"}</Text>
             <Text style={styles.date}>{formatDate(selectedPost.publishedAt ?? selectedPost.updatedAt)}</Text>
             <Text style={[styles.scopeBadge, selectedPost.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>Commons・{selectedPost.status === "published" ? "公開" : "非公開"}</Text>
-            <Text style={styles.author}>投稿者: {selectedPost.authorDisplayName}</Text>
-            {editing ? <>
-              <Text style={styles.fieldLabel}>タイトル</Text>
-              <TextInput style={styles.detailInput} value={titleDraft} onChangeText={setTitleDraft} />
-              <Text style={styles.fieldLabel}>本文</Text>
-              <MemoTextEditor
-                value={bodyDraft}
-                onChangeText={setBodyDraft}
-                inputStyle={[styles.detailInput, styles.detailBodyInput]}
-              />
-            </> : <View style={styles.detailBodySurface}><Text style={styles.detailBody}>{selectedPost.body}</Text></View>}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}><UserAvatar photoUrl={selectedPost.authorPhotoUrl} /><Text style={styles.author}>投稿者: {selectedPost.authorDisplayName}</Text></View>
+            <View style={styles.detailBodySurface}><Text style={styles.detailBody}>{selectedPost.body}</Text></View>
             <View style={styles.tagRow}>{selectedPost.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>
             <View style={styles.wikiSection}>
               <Text style={styles.wikiSectionTitle}>Wikiリンク</Text>
@@ -507,8 +459,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
               {inviteableProjects.length ? <Pressable style={styles.action} onPress={() => void handleScout()}><Text style={styles.actionText}>プロジェクトへスカウト</Text></Pressable> : null}
               <Pressable style={styles.report} onPress={() => void handleReport()} disabled={reporting}><Text style={styles.reportText}>通報</Text></Pressable>
             </View> : <View style={styles.actions}>
-              <Pressable style={styles.action} onPress={() => void handleOpenSourceMemo()}><Text style={styles.actionText}>元メモを見る</Text></Pressable>
-              <Pressable style={styles.action} onPress={() => void handleVisibility()} disabled={saving}><Text style={styles.actionText}>{selectedPost.status === "published" ? "非公開にする" : "再公開する"}</Text></Pressable>
+              <Pressable style={styles.action} onPress={() => void handleOpenSourceMemo()}><Text style={styles.actionText}>元メモで編集・公開管理</Text></Pressable>
             </View>}
           </ScrollView> : <Text style={styles.empty}>この投稿は表示できません。</Text>}
           </KeyboardAvoidingView>
@@ -539,7 +490,7 @@ const styles = StyleSheet.create({
   aiEvidenceBody: { color: "#1f2937", fontSize: 12, lineHeight: 17 },
   aiEvidenceMeta: { color: "#6b7280", fontSize: 11 },
   feedList: { flex: 1 },
-  feedTabs: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 8 }, feedTab: { flexShrink: 0, minHeight: 34, justifyContent: "center", borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: "#e5e7eb" }, feedTabActive: { backgroundColor: "#dbeafe" }, feedTabText: { color: "#4b5563", fontSize: 12 }, feedTabTextActive: { color: "#1d4ed8", fontWeight: "800" }, search: { flexShrink: 0, marginHorizontal: 16, marginBottom: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 }, list: { padding: 16, paddingBottom: 132, gap: 10 }, emptyList: { flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: 132 }, card: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 12, padding: 14, gap: 8 }, cardMeta: { flexDirection: "row", justifyContent: "space-between", gap: 12 }, cardTitle: { color: "#111827", fontSize: 16, fontWeight: "800" }, author: { fontSize: 14, color: "#111827", fontWeight: "800" }, date: { fontSize: 12, color: "#6b7280" }, statusBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, fontSize: 11, fontWeight: "800" }, statusPublished: { color: "#166534", backgroundColor: "#dcfce7" }, statusUnpublished: { color: "#92400e", backgroundColor: "#fef3c7" }, body: { color: "#1f2937", lineHeight: 21, fontSize: 14 }, tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 }, tag: { color: "#2563eb", fontSize: 12 }, projectLabel: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, color: "#166534", backgroundColor: "#dcfce7", fontSize: 11, fontWeight: "700" }, center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }, signIn: { margin: 24, color: "#4b5563", textAlign: "center" }, empty: { color: "#6b7280", textAlign: "center" }, error: { color: "#b91c1c", textAlign: "center" }, retry: { color: "#2563eb", fontWeight: "700", padding: 8 }, footer: { alignSelf: "center", marginVertical: 14 }, detail: { flex: 1, backgroundColor: "#fff" }, detailKeyboard: { flex: 1 }, detailScroll: { flex: 1 }, detailBack: { width: 64, minHeight: 44, justifyContent: "center" }, detailBackText: { color: "#2563eb", fontSize: 12 }, detailHeader: { flexShrink: 0, minHeight: 44, paddingHorizontal: 16, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, detailContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 36, gap: 12 }, detailTitle: { color: "#111827", fontSize: 16, fontWeight: "700" }, scopeBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, fontWeight: "700" }, fieldLabel: { color: "#6b7280", fontSize: 12, fontWeight: "700" }, detailInput: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: "#111827", fontSize: 16 }, detailBodyInput: { minHeight: 160, fontSize: 14, lineHeight: 20 }, detailBodySurface: { minHeight: 160, borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, padding: 10 }, detailBody: { color: "#111827", fontSize: 14, lineHeight: 20 }, wikiSection: { marginTop: 8, gap: 8 }, wikiSectionTitle: { color: "#6b7280", fontSize: 13, fontWeight: "700" }, actions: { gap: 9 }, action: { borderRadius: 9, paddingVertical: 11, paddingHorizontal: 14, backgroundColor: "#eff6ff", borderWidth: 1, borderColor: "#bfdbfe" }, actionText: { color: "#1d4ed8", fontWeight: "700", textAlign: "center" }, report: { alignSelf: "flex-start", paddingVertical: 10 }, reportText: { color: "#b91c1c", fontWeight: "700" },
+  feedTabs: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 8 }, feedTab: { flexShrink: 0, minHeight: 34, justifyContent: "center", borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: "#e5e7eb" }, feedTabActive: { backgroundColor: "#dbeafe" }, feedTabText: { color: "#4b5563", fontSize: 12 }, feedTabTextActive: { color: "#1d4ed8", fontWeight: "800" }, search: { flexShrink: 0, marginHorizontal: 16, marginBottom: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 }, list: { padding: 16, paddingBottom: 132, gap: 10 }, emptyList: { flexGrow: 1, justifyContent: "center", padding: 24, paddingBottom: 132 }, card: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 12, padding: 14, gap: 8 }, cardMeta: { flexDirection: "row", alignItems: "center", gap: 8 }, cardTitle: { color: "#111827", fontSize: 16, fontWeight: "800" }, author: { flexShrink: 1, fontSize: 14, color: "#111827", fontWeight: "800" }, date: { fontSize: 12, color: "#6b7280" }, statusBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, fontSize: 11, fontWeight: "800" }, statusPublished: { color: "#166534", backgroundColor: "#dcfce7" }, statusUnpublished: { color: "#92400e", backgroundColor: "#fef3c7" }, body: { color: "#1f2937", lineHeight: 21, fontSize: 14 }, tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 }, tag: { color: "#2563eb", fontSize: 12 }, projectLabel: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, color: "#166534", backgroundColor: "#dcfce7", fontSize: 11, fontWeight: "700" }, center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }, signIn: { margin: 24, color: "#4b5563", textAlign: "center" }, empty: { color: "#6b7280", textAlign: "center" }, error: { color: "#b91c1c", textAlign: "center" }, retry: { color: "#2563eb", fontWeight: "700", padding: 8 }, footer: { alignSelf: "center", marginVertical: 14 }, detail: { flex: 1, backgroundColor: "#fff" }, detailKeyboard: { flex: 1 }, detailScroll: { flex: 1 }, detailBack: { width: 64, minHeight: 44, justifyContent: "center" }, detailBackText: { color: "#2563eb", fontSize: 12 }, detailHeader: { flexShrink: 0, minHeight: 44, paddingHorizontal: 16, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, detailContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 36, gap: 12 }, detailTitle: { color: "#111827", fontSize: 16, fontWeight: "700" }, scopeBadge: { alignSelf: "flex-start", overflow: "hidden", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, fontSize: 12, fontWeight: "700" }, fieldLabel: { color: "#6b7280", fontSize: 12, fontWeight: "700" }, detailInput: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: "#111827", fontSize: 16 }, detailBodyInput: { minHeight: 160, fontSize: 14, lineHeight: 20 }, detailBodySurface: { minHeight: 160, borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, padding: 10 }, detailBody: { color: "#111827", fontSize: 14, lineHeight: 20 }, wikiSection: { marginTop: 8, gap: 8 }, wikiSectionTitle: { color: "#6b7280", fontSize: 13, fontWeight: "700" }, actions: { gap: 9 }, action: { borderRadius: 9, paddingVertical: 11, paddingHorizontal: 14, backgroundColor: "#eff6ff", borderWidth: 1, borderColor: "#bfdbfe" }, actionText: { color: "#1d4ed8", fontWeight: "700", textAlign: "center" }, report: { alignSelf: "flex-start", paddingVertical: 10 }, reportText: { color: "#b91c1c", fontWeight: "700" },
 });
 
 const GuildScreen = (props: Props) => {

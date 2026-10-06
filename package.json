@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
+    "postinstall": "node scripts/patch-rn-textinput-scroll.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -22,7 +23,9 @@
     "firebase:grant-cloud-sync": "node --experimental-strip-types ./scripts/upsert-cloud-sync-grant.ts",
     "firebase:set-admin-claim": "node --experimental-strip-types ./scripts/set-firebase-admin-claim.ts",
     "ios:device:debug": "bash ./scripts/ios-device-debug.sh",
-    "ios:device:logs": "bash ./scripts/ios-device-logs.sh"
+    "ios:device:logs": "bash ./scripts/ios-device-logs.sh",
+    "ios:check-profile-native": "node scripts/check-ios-profile-native.mjs",
+    "ios:prepare-profile-native": "node scripts/prepare-ios-profile-native.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -37,6 +40,8 @@
     "expo-crypto": "~15.0.9",
     "expo-dev-client": "~6.0.20",
     "expo-file-system": "^19.0.21",
+    "expo-image-manipulator": "~14.0.8",
+    "expo-image-picker": "~17.0.10",
     "expo-notifications": "~0.32.16",
     "expo-screen-orientation": "~9.0.8",
     "expo-sqlite": "~16.0.10",

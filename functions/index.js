@@ -4,6 +4,8 @@ import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions";
 import { FieldPath, FieldValue, getFirestore } from "firebase-admin/firestore";
 import accountDeletion from "./accountDeletion.cjs";
+import profileIdentity from "./profileIdentity.cjs";
+import guildPublication from "./guildPublication.cjs";
 import directMessages from "./directMessages.cjs";
 import groundedAnswerCore from "./groundedAnswerCore.cjs";
 import guildAICore from "./guildAICore.cjs";
@@ -11,6 +13,11 @@ import guildAIIndex from "./guildAIIndex.cjs";
 import guildAIRetrieval from "./guildAIRetrieval.cjs";
 import projectAccessCore from "./projectAccessCore.cjs";
 import temisAccessCore from "./temisAccessCore.cjs";
+
+export const updateGuildPublication = guildPublication.updateGuildPublication;
+
+export const syncProfileIdentity = profileIdentity.syncProfileIdentity;
+export const cleanupProfilePhotos = profileIdentity.cleanupProfilePhotos;
 
 export const deleteAccount = accountDeletion.deleteAccount;
 export const getAccountDeletionBlockers = accountDeletion.getAccountDeletionBlockers;

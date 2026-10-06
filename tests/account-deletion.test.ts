@@ -65,7 +65,7 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
   };
   const bufferedDeletes: { resolve: () => void; reject: (error: unknown) => void }[] = [];
   const db = {
-    doc: (path: string) => ({ path, delete: () => step(path.startsWith("profiles/") ? "profile" : "subscription_access") }),
+    doc: (path: string) => ({ path, set: () => step("guild_author"), delete: () => step(path.startsWith("profiles/") ? "profile" : "subscription_access") }),
     collection: () => ({ where: () => ({
       get: async () => ({ docs: [], size: 0, empty: true }),
       limit: () => ({ get: async () => ({ docs: [], size: 0, empty: !options.sharedData }) }),
@@ -96,6 +96,8 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
     "./directMessagesCore.cjs": { createDMService: () => ({ deleteAccountMessages: () => step("direct_messages") }) },
     "./accountDeletionCore.cjs": require("../functions/accountDeletionCore.cjs"),
     "firebase-admin/app": { initializeApp() {}, getApp: () => ({ options: { projectId: "test", credential: { getAccessToken: async () => ({ access_token: "NOT_REAL" }) } } }) },
+    "firebase-admin/storage": { getStorage: () => ({ bucket: () => ({}) }) },
+    "./profileIdentityCore.cjs": { deleteAccountPhotos: () => step("profile_photos") },
     "firebase-admin/auth": { getAuth: () => auth },
     "firebase-admin/firestore": { getFirestore: () => options.database ?? db },
     "firebase-functions": { logger: { error: (...args: unknown[]) => logs.push(args), warn: (...args: unknown[]) => logs.push(args) } },
@@ -150,7 +152,7 @@ test("actual callable: external outages leave Firebase success intact", async ()
   const result = await fixture.call(request);
   assert.equal(result.deleted, true);
   assert.deepEqual(Array.from(result.externalCleanupPending), ["revenuecat", "crashlytics"]);
-  assert.deepEqual(fixture.events.slice(0, 5), ["query", "invitations", "direct_messages", "profile", "cloud_data"]);
+  assert.deepEqual(fixture.events.slice(0, 6), ["query", "invitations", "direct_messages", "guild_author", "profile_photos", "profile"]);
   assert.equal(fixture.events.filter((event) => event === "subscription_access").length, 3);
   assert.ok(fixture.events.indexOf("firebase_auth") > fixture.events.indexOf("subscription_access"));
   assert.doesNotMatch(JSON.stringify(fixture.logs), /NOT_REAL|FAKE_DISPOSABLE_UID/);
@@ -333,4 +335,13 @@ test("DM cleanup failure prevents profile and Auth deletion and reports a retrya
   assert.equal(fixture.events.includes("profile"), false);
   assert.equal(fixture.events.includes("firebase_auth"), false);
   assert.match(accountDeletionErrorMessage({ details: { stage: "direct_messages" } }), /DM履歴/);
+});
+
+
+test("photo cleanup failure stops before profile and Auth deletion and can be retried", async () => {
+  const fixture = callableFixture({ failStage: "profile_photos" });
+  await assert.rejects(fixture.call(request), (error: any) => error.details.stage === "profile_photos");
+  assert.equal(fixture.events.includes("profile"), false);
+  assert.equal(fixture.events.includes("firebase_auth"), false);
+  assert.equal((await callableFixture().call(request)).deleted, true);
 });

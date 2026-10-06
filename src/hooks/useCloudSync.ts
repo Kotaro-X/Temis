@@ -24,6 +24,7 @@ import { deleteAllLocalAccountData } from "../services/account/localAccountData"
 import { logOutRevenueCatUser } from "../services/subscription/revenueCat";
 import { isSyncFirebaseUser, toSyncUser, type SyncUser } from "../services/auth/syncUser";
 import { getFirebaseAuth } from "../services/sync/firebaseApp";
+import { clearCompletedProfile } from "../services/collaboration/profileCompletionCache";
 import { subscribeSyncQueueChanges } from "../services/sync/syncQueueEvents";
 import { waitForResolvedValue } from "../services/auth/waitForResolvedValue";
 import { clearAccountDeletionState, readAccountDeletionState, saveAccountDeletionState } from "../services/account/accountDeletionState";
@@ -336,6 +337,8 @@ export const useCloudSync = ({
           appleAuthorizationCode ? { appleAuthorizationCode } : {},
         );
         cloudDeleted = true;
+        // Clear completion even if provider sign-out or unrelated local cleanup fails.
+        await clearCompletedProfile(firebaseUser.uid);
 
         // The cloud account is gone at this point. Sign out locally before
         // clearing storage so Firebase and RevenueCat cannot retain the old UID.

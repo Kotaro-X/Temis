@@ -42,6 +42,8 @@ export type UserProfile = {
   createdAt: number;
   updatedAt: number;
   usernameChangedAt?: number | null;
+  profileCompletedAt?: number | null;
+  photoStoragePath?: string | null;
 };
 
 export type ConnectionStatus =

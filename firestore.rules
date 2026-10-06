@@ -558,7 +558,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           "userId", "username", "displayName", "photoUrl", "bio", "interestTags",
           "skillTags", "affiliation", "profileVisibility", "connectionRequestPolicy",
-          "createdAt", "updatedAt", "usernameChangedAt",
+          "createdAt", "updatedAt", "usernameChangedAt", "profileCompletedAt", "photoStoragePath",
         ])
         && data.userId == userId
         && validString(data.username, 30)
@@ -571,7 +571,10 @@ service cloud.firestore {
         && data.profileVisibility in ["public", "connections_only", "private"]
         && data.connectionRequestPolicy in ["everyone", "connections_only", "disabled"]
         && data.createdAt is int && data.updatedAt is int
-        && validNullableInt(data.usernameChangedAt);
+        && validNullableInt(data.usernameChangedAt)
+        && (!('profileCompletedAt' in data) || validNullableInt(data.profileCompletedAt))
+        && (!('photoStoragePath' in data) || data.photoStoragePath == null
+          || (data.photoStoragePath is string && data.photoStoragePath.matches('profilePhotos/' + userId + '/[a-zA-Z0-9-]+[.]jpg')));
     }
 
     function validProject(data, projectId) {
@@ -662,6 +665,15 @@ service cloud.firestore {
         && validString(data.reason, 4000) && data.status in ["pending", "reviewed", "dismissed"]
         && data.notificationStatus in ["pending", "sent", "failed"]
         && data.createdAt is int && data.updatedAt is int;
+    }
+
+    // Minimal Commons identity: only backend writes this projection.
+    match /guildAuthors/{userId} {
+      allow get: if signedIn();
+      allow list, write: if false;
+    }
+    match /guildPublicationStates/{stateId} {
+      allow read, write: if false;
     }
 
     match /profiles/{userId} {
