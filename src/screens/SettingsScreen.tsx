@@ -1,3 +1,7 @@
+import { isTestEnvironment } from "../services/environment/runtimeEnvironment";
+import EnvironmentSettings from "../components/settings/EnvironmentSettings";
+import { AIConsentSettings } from '../context/AIConsentContext';
+import BlockedUsersSettings from '../components/settings/BlockedUsersSettings';
 import ProfilePhotoEditor from "../components/ProfilePhotoEditor";
 import React, { useEffect, useRef, useState } from "react";
 import SocialSignInButtons from "../components/settings/SocialSignInButtons";
@@ -79,6 +83,7 @@ export type SettingsScreenProps = {
   subscriptionAccessSource?:
     | "none"
     | "revenuecat"
+    | "test_fixture"
     | "staff_free"
     | "invite_free"
     | "invite_discount";
@@ -553,7 +558,7 @@ const SettingsScreen = ({
             <Text style={[styles.googleAuthButtonText, styles.googleAuthButtonTextSecondary]}>{language === "ja" ? "同期を再実行" : "Retry sync"}</Text>
           </Pressable>
         ) : null}
-        <View style={styles.accountLegalLinks}>
+        <AIConsentSettings /><BlockedUsersSettings /><View style={styles.accountLegalLinks}>
           <Pressable onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
             <Text style={styles.subscriptionLegalLink}>
               {t(language, "settings.sync.privacyPolicy")}
@@ -742,7 +747,7 @@ const SettingsScreen = ({
   );
 
   return (
-    <ScrollView
+    <ScrollView keyboardShouldPersistTaps="always"
       ref={scrollRef}
       contentContainerStyle={[
         styles.container,
@@ -872,7 +877,7 @@ const SettingsScreen = ({
                         isSubscriptionBusy ||
                         !subscriptionPrice ||
                         !subscriptionPeriodLabel ||
-                        !onPurchaseCloudSync
+                        !onPurchaseCloudSync || isTestEnvironment()
                       }
                     >
                       <Text style={styles.subscriptionPrimaryButtonText}>
@@ -888,7 +893,7 @@ const SettingsScreen = ({
                         isSubscriptionBusy && styles.syncButtonDisabled,
                       ]}
                       onPress={onRestoreCloudSync}
-                      disabled={isSubscriptionBusy || !onRestoreCloudSync}
+                      disabled={isTestEnvironment() || isSubscriptionBusy || !onRestoreCloudSync}
                     >
                       <Text
                         style={[
@@ -1012,7 +1017,7 @@ const SettingsScreen = ({
                           onPress={onOpenCloudSyncPurchase ?? onPurchaseCloudSync}
                           disabled={
                             (isSubscriptionBusy && !onOpenCloudSyncPurchase) ||
-                            (!onOpenCloudSyncPurchase && !onPurchaseCloudSync)
+                            (isTestEnvironment() || (!onOpenCloudSyncPurchase && !onPurchaseCloudSync))
                           }
                         >
                           <Text style={styles.googleAuthButtonText}>
@@ -1094,6 +1099,7 @@ const SettingsScreen = ({
           <DeletedItemsSection {...deletedItemsSectionProps} />
         </View>
       )}
+      <EnvironmentSettings />
     </ScrollView>
   );
 };

@@ -18,6 +18,7 @@ const loadHybridSearch = () => {
     console,
     require: (name: string) => {
       const dependencies: Record<string, unknown> = {
+        "./account/workspaceEpoch": { getWorkspaceEpoch: () => 0 },
         "../db/chunkIndexRepo": {
           searchTopChunksByEmbedding: async () => [{
             chunkId: "unrelated-chunk",

@@ -1,3 +1,6 @@
+import type { ProjectSharedNote } from "../types/collaboration";
+import { extractTokens } from "../utils/wikiLink";
+import { projectMemoEvidenceId } from "./collaboration/projectMemoAIRetrievalCore";
 import { loadAllTodayStates } from "../../storage";
 import { getMemoById } from "../db/memoRepo";
 import { getNoteById } from "../db/noteRepo";
@@ -13,6 +16,9 @@ export type WikiReferenceItem = {
   preview: string;
   date: string;
   updatedAt: number;
+  scope?: "personal" | "project";
+  projectId?: string;
+  projectNoteId?: string;
 };
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
@@ -69,6 +75,9 @@ export const listWikiReferencesByToken = async (
   token: string,
   options?: {
     excludeMemoId?: string | null;
+    noteScope?: "personal";
+    projectId?: string;
+    projectNotes?: ProjectSharedNote[];
   },
 ): Promise<WikiReferenceItem[]> => {
   const [hits, taskIndex] = await Promise.all([
@@ -85,7 +94,7 @@ export const listWikiReferencesByToken = async (
       if (hit.memoId.startsWith("note:")) {
         const noteId = hit.memoId.slice("note:".length);
         const note = await getNoteById(noteId);
-        if (!note) {
+        if (!note || (options?.noteScope === "personal" && note.scope !== "personal")) {
           return null;
         }
         const title =
@@ -134,7 +143,13 @@ export const listWikiReferencesByToken = async (
     }),
   );
 
-  return items
+  const projectItems: WikiReferenceItem[] = (options?.projectNotes ?? [])
+    .filter(note => note.projectId === options?.projectId && extractTokens(note.body).some(value => value.toLocaleLowerCase() === token.toLocaleLowerCase()))
+    .map(note => ({ memoId: projectMemoEvidenceId(note.projectId, note.id), source: "note" as const,
+      scope: "project" as const, projectId: note.projectId, projectNoteId: note.id, title: note.title?.trim() || "無題",
+      preview: buildPreview(note.body), date: dateFromTimestamp(note.updatedAt), updatedAt: note.updatedAt }))
+    .filter(item => item.memoId !== excludeMemoId);
+  return [...projectItems, ...items.map(item => item && options?.noteScope === "personal" ? { ...item, scope: "personal" as const } : item)]
     .filter((item): item is WikiReferenceItem => item !== null)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 };

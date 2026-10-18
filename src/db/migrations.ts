@@ -1,4 +1,4 @@
-type SqlParams = Array<string | number | null>;
+type SqlParams = (string | number | null)[];
 
 type SqlExecutor = (sql: string, params?: SqlParams) => Promise<unknown>;
 type SqlTableInfoRow = { name: string };
@@ -197,6 +197,8 @@ const addNoteProjectScope = async (executeSql: SqlExecutor): Promise<void> => {
   await executeSql("CREATE INDEX IF NOT EXISTS idx_notes_project_scope ON notes(project_id, scope)");
 };
 
+const addEmbeddingJobAccount = (executeSql: SqlExecutor) => addColumnIfMissing(executeSql, 'embedding_jobs', 'account_user_id', 'TEXT');
+
 export const MIGRATIONS: Migration[] = [
   {
     version: "001_create_memo_tables",
@@ -230,6 +232,7 @@ export const MIGRATIONS: Migration[] = [
     version: "008_add_note_project_scope",
     up: addNoteProjectScope,
   },
+  { version: "009_add_embedding_job_account", up: addEmbeddingJobAccount },
 ];
 
 const createLatestSchema = async (executeSql: SqlExecutor): Promise<void> => {
@@ -254,6 +257,7 @@ const createLatestSchema = async (executeSql: SqlExecutor): Promise<void> => {
     "CREATE INDEX IF NOT EXISTS idx_chunk_index_embedding_model_version ON chunk_index(embedding_model_version)",
   );
   await createEmbeddingJobs(executeSql);
+  await addEmbeddingJobAccount(executeSql);
   await createBackfillProgress(executeSql);
   await createNotesTables(executeSql);
   await addNoteProjectScope(executeSql);

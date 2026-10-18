@@ -19,6 +19,7 @@ export type GuildPost = {
   /** Never expose this field in a public feed response. */
   source: { scope: "personal" | "project"; memoId: string };
   status: GuildPostStatus;
+  safety?: { status: 'pending' | 'approved' | 'rejected' | 'failed' | 'consent_required'; version?: number; contentHash?: string; ticket?: string; consentRevision?: string; sourceConsents?: { userId: string; revision: string }[]; sourceUserIds?: string[]; checkedAt?: number };
   moderation: {
     visibility: "visible" | "hidden";
     hiddenByUserId: string | null;

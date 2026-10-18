@@ -1,0 +1,3 @@
+const { contentHash, activeConsent, MODERATION_VERSION } = require('../functions/reviewSafetyCore.cjs');
+const needsSafetyMigration = (post, consent, sourceConsents = {}) => post?.status === 'published' && (!activeConsent(consent) || post?.safety?.status !== 'approved' || post?.safety?.version !== MODERATION_VERSION || post?.safety?.consentRevision !== consent.revision || post?.safety?.contentHash !== contentHash(post) || (post.safety?.sourceConsents || []).some(source => !activeConsent(sourceConsents[source.userId]) || sourceConsents[source.userId].revision !== source.revision));
+module.exports = { needsSafetyMigration };

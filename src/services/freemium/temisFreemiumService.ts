@@ -12,7 +12,7 @@ const callable = <Request, Response>(name: string, timeout = 60_000) =>
 export type TemisAccessState = {
   userId: string;
   tier: "free" | "plus";
-  source: "revenuecat" | "staff_free" | "invite_free" | "none";
+  source: "operator_test" | "revenuecat" | "staff_free" | "invite_free" | "none";
   verifiedAt: number;
   verifiedUntil: number;
   updatedAt: number;

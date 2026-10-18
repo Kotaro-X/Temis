@@ -42,7 +42,7 @@ const TaskLogScreen = ({
   onScroll,
 }: Props) => {
   return (
-    <ScrollView
+    <ScrollView keyboardShouldPersistTaps="always"
       ref={scrollRef}
       contentContainerStyle={[
         styles.content,

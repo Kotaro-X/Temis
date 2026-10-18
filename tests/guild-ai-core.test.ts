@@ -11,7 +11,7 @@ const guildAI = require("../functions/guildAICore.cjs") as {
 };
 
 test("Guild AI indexes only public visible posts", () => {
-  const visible = { status: "published", moderation: { visibility: "visible" } };
+  const visible = { status: "published", moderation: { visibility: "visible" }, safety: { status: "approved", version: 1 } };
   assert.equal(guildAI.isPublicVisibleGuildPost(visible), true);
   assert.equal(guildAI.isPublicVisibleGuildPost({ ...visible, status: "unpublished" }), false);
   assert.equal(guildAI.isPublicVisibleGuildPost({ ...visible, moderation: { visibility: "hidden" } }), false);

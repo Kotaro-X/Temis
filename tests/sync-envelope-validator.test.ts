@@ -169,3 +169,13 @@ test("future and corrupt remote documents are logged, skipped, and cannot alter 
     console.warn = originalWarn;
   }
 });
+
+test('planned and undated task sync round trips all schedule, reminder and occurrence fields', () => {
+  const envelope = {
+    schemaVersion: CURRENT_SYNC_ENVELOPE_SCHEMA_VERSION, entityType:'task', entityId:'task:planned', updatedAt:100, isDeleted:false, deletedAt:null,deviceId:null,
+    record:{ kind:'state',date:'undated',slotKey:'morning',task:{ id:'planned',taskName:'Plan',tags:[],estimateMinutes:30,elapsedMinutes:0,status:'TODO',isArchived:false,startAt:null,
+      plannedStartAt:null,plannedEndAt:null,repeat:'daily',repeatAnchorDate:'2026-10-19', reminder:{ enabled:true,mode:'custom',offsetMinutes:0,at:2000000 },migratedTodoId:'old',occurrenceOverrides:{ '2026-10-20':{ date:'2026-10-21',slot:'afternoon',plannedStartAt:2000000,plannedEndAt:3800000,estimateMinutes:30,completed:true,title:'Exception',memo:'Body',tags:['tag'] } } } },
+  };
+  const result = validateSyncEnvelope('task',envelope); assert.equal(result.ok,true);
+  if (result.ok) assert.deepEqual(result.envelope.record,envelope.record);
+});

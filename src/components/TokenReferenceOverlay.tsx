@@ -1,6 +1,6 @@
+import Modal from "./common/KeyboardAwareModal";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -88,7 +88,7 @@ const TokenReferenceOverlay = ({
               {language === "en" ? "No matching memos" : "該当メモがありません"}
             </Text>
           ) : (
-            <ScrollView style={styles.list} contentContainerStyle={styles.listBody}>
+            <ScrollView keyboardShouldPersistTaps="always" style={styles.list} contentContainerStyle={styles.listBody}>
               {items.map((item) => (
                 <Pressable
                   key={item.memoId}

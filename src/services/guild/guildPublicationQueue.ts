@@ -1,4 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getEnvironmentEpoch } from "../environment/runtimeEnvironment";
+import { requireAIConsent, validateConsentReceipt } from '../ai/aiConsent';
+import AsyncStorage from '../account/accountWorkspace';
 import { AppState } from 'react-native';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, documentId, getDocsFromServer, limit, orderBy, query, startAfter, where, type QueryConstraint } from 'firebase/firestore';
@@ -17,7 +19,7 @@ let serial = Promise.resolve();
 const listeners = new Set<() => void>();
 export const subscribePublications = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 const notify = () => listeners.forEach(listener => listener());
-const locked = <T>(job: () => Promise<T>): Promise<T> => { const result = serial.then(job, job); serial = result.then(() => undefined, () => undefined); return result; };
+const locked = <T>(job: () => Promise<T>): Promise<T> => { const epoch = getEnvironmentEpoch(); const guarded = () => { if (epoch !== getEnvironmentEpoch()) throw new Error('接続環境が切り替わりました。'); return job(); }; const result = serial.then(guarded, guarded); serial = result.then(() => undefined, () => undefined); return result; };
 const read = async (uid: string): Promise<Store> => JSON.parse(await AsyncStorage.getItem(key(uid)) || '{}');
 const write = async (uid: string, store: Store) => { await AsyncStorage.setItem(key(uid), JSON.stringify(store)); notify(); };
 const currentUid = () => isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
@@ -37,24 +39,47 @@ export const enqueuePublicationContent = async (content: PublicationContent, ope
     store[content.sourceId] = { posts: state?.posts ?? [], lastVersion: state?.lastVersion, sourceUpdatedAt: state?.sourceUpdatedAt, pending: { ...state?.pending, ...content, ...metadata, operation: content.deleted ? 'delete' : operation === 'sync' ? state?.pending?.operation ?? operation : operation, version: { updatedAt, deviceId } } };
     await write(uid, store);
   });
+  if (operation === 'delete' || operation === 'unpublish' || content.deleted) {
+    // A removal must overtake a slow moderation request instead of waiting behind it.
+    void flushUrgentRemoval(uid, content.sourceId).catch(() => undefined);
+  }
+};
+const flushUrgentRemoval = async (uid: string, sourceId: string) => {
+  const pending = (await read(uid))[sourceId]?.pending;
+  if (!pending || !['delete', 'unpublish'].includes(pending.operation) || currentUid() !== uid) return;
+  const result = await httpsCallable<Pending & { userId: string }, { posts: GuildPost[]; revision: number }>(getFunctions(getFirebaseApp(), 'asia-northeast1'), 'updateGuildPublication')({ ...pending, userId: uid, title: null, body: '' });
+  if (currentUid() !== uid) return;
+  await locked(async () => {
+    const latest = await read(uid); const current = latest[sourceId];
+    if (currentUid() !== uid || JSON.stringify(current?.pending) !== JSON.stringify(pending)) return;
+    latest[sourceId] = { posts: result.data.posts, lastVersion: pending.version, sourceUpdatedAt: pending.updatedAt }; await write(uid, latest);
+  });
 };
 export const enqueuePublicationEnvelope = async (envelope: SyncEntityEnvelope<'memo'>, expectedUid?: string) => {
   await enqueuePublicationContent(publicationContent(envelope), 'sync', undefined, expectedUid);
 };
-let activeFlush: Promise<void> | null = null;
+let activeFlush: { uid: string; promise: Promise<void> } | null = null;
 export const flushPublications = (force = false): Promise<void> => {
-  if (activeFlush) return activeFlush;
   const uid = currentUid(); if (!uid) return Promise.resolve();
-  activeFlush = (async () => {
+  if (activeFlush) {
+    const previous = activeFlush;
+    // A publish/retry queued during another flush must receive its own pass.
+    if (force || previous.uid !== uid) return previous.promise.then(() => currentUid() === uid ? flushPublications(force) : undefined);
+    return previous.promise;
+  }
+  const promise = (async () => {
   try {
     const store = await read(uid);
     for (const [sourceId, state] of Object.entries(store)) {
       const pending = state.pending; if (!pending || currentUid() !== uid || !force && (state.nextAttemptAt ?? 0) > Date.now()) continue;
       try {
-        const callable = httpsCallable<Pending & { userId: string }, { posts: GuildPost[]; revision: number }>(getFunctions(getFirebaseApp(), 'asia-northeast1'), 'updateGuildPublication');
+        const callable = httpsCallable<Pending & { userId: string; consentRevision?: string }, { posts: GuildPost[]; revision: number }>(getFunctions(getFirebaseApp(), 'asia-northeast1'), 'updateGuildPublication', { timeout: 150000 });
         const content = ['delete', 'unpublish'].includes(pending.operation) ? { title: null, body: '' } : {};
-        const { data } = await callable({ ...pending, ...content, userId: uid });
+        const receipt = ['delete', 'unpublish'].includes(pending.operation) ? null : await requireAIConsent(false, uid);
         if (currentUid() !== uid) return;
+        const { data } = await callable({ ...pending, ...content, userId: uid, consentRevision: receipt?.revision });
+        if (currentUid() !== uid) return;
+        if (receipt) await validateConsentReceipt(receipt);
         await locked(async () => {
           const latest = await read(uid); const current = latest[sourceId];
           if (!current || JSON.stringify(current.pending) !== JSON.stringify(pending)) return;
@@ -62,9 +87,16 @@ export const flushPublications = (force = false): Promise<void> => {
         });
       } catch (cause) {
         if (currentUid() !== uid) return;
+        let serverPosts: GuildPost[] | undefined;
+        try {
+          const aliases = sourceId.startsWith('note:') ? [sourceId, sourceId.slice(5)] : [sourceId];
+          serverPosts = (await getDocsFromServer(query(collection(getFirebaseFirestore(), 'guildPosts'), where('authorUserId', '==', uid), where('source.memoId', 'in', aliases)))).docs.map(item => item.data() as GuildPost);
+        } catch { /* Keep the draft and pending status when the server cannot be reached. */ }
+        if (currentUid() !== uid) return;
         await locked(async () => {
           const latest = await read(uid); const current = latest[sourceId];
           if (current && JSON.stringify(current.pending) === JSON.stringify(pending)) {
+            if (serverPosts) current.posts = serverPosts;
             current.attempts = (current.attempts ?? 0) + 1;
             const terminal = ["functions/invalid-argument", "functions/permission-denied", "functions/aborted", "functions/failed-precondition"].includes((cause as { code?: string })?.code ?? "");
             current.nextAttemptAt = terminal ? Number.MAX_SAFE_INTEGER : Date.now() + Math.min(300000, 15000 * 2 ** Math.min(current.attempts, 5));
@@ -75,7 +107,8 @@ export const flushPublications = (force = false): Promise<void> => {
     }
   } finally { activeFlush = null; }
   })();
-  return activeFlush;
+  activeFlush = { uid, promise };
+  return promise;
 };
 export const registerPublicationPosts = async (uid: string, sourceId: string, posts: GuildPost[]) => locked(async () => {
   if (currentUid() !== uid) return;
@@ -123,11 +156,12 @@ export const startPublicationSync = (uid: string) => {
 };
 export const publishSource = async (input: GuildPostInput) => {
   const uid = currentUid(); if (!uid) throw new Error('ログインしてください。');
+  await requireAIConsent(false, uid);
   const { readGuildSourceContent } = await import('./guildSourceReader');
   const content = await readGuildSourceContent(input.source.memoId);
   if (!content) throw new Error('元メモが見つかりません。保存後に再試行してください。');
   await enqueuePublicationContent(content, 'publish', { scope: input.source.scope, type: input.type, projectId: input.projectId }, uid);
-  await flushPublications();
+  await flushPublications(true);
   const state = await getPublicationState(uid, content.sourceId);
   if (state?.pending) throw new Error(state.error ?? 'Commonsへの反映を待っています。通信状態を確認してください。');
   if (!state?.posts.length) throw new Error('公開結果を取得できませんでした。');

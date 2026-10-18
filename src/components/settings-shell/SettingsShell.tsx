@@ -109,8 +109,8 @@ const buildDeletedItemView = (
   const kindLabel =
     item.kind === "todo"
       ? language === "en"
-        ? "ToDo"
-        : "ToDo"
+        ? "Task"
+        : "タスク"
       : item.kind === "task"
         ? language === "en"
           ? "Task"
@@ -367,7 +367,7 @@ const SettingsShell = ({
     inviteCodeTrimmed.length === 0 ||
     inviteStatus === "redeeming";
   const cloudSyncAccessCaption =
-    cloudSyncAccessSource === "staff_free"
+    cloudSyncAccessSource === "test_fixture" ? "テスト用Plus（ストア課金なし）" : cloudSyncAccessSource === "staff_free"
       ? tr("settings.sync.staffGrantActive")
       : cloudSyncAccessSource === "invite_free"
         ? accessGrant?.inviteCode

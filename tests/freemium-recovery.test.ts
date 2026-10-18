@@ -43,7 +43,7 @@ test("AI usage labels distinguish loading, authentication, failure, free quota a
   assert.equal(label(null, "loading"), "利用回数を確認中");
   assert.equal(label(null, "signed_out"), "ログインしてください");
   assert.equal(label({ unlimited: true }, "error"), "利用回数を確認できません");
-  assert.equal(label({ unlimited: false, remaining: 10 }, "ready"), "今週あと10回");
+  assert.equal(label({ unlimited: false, remaining: 5 }, "ready"), "今週あと5回");
   assert.equal(label({ unlimited: true }, "ready"), "無制限");
 });
 
@@ -54,7 +54,9 @@ test("memo reservation rejection prevents search and preserves the actionable qu
   const exports: any = {};
   const code = ts.transpileModule(readFileSync("src/hooks/useAI.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInNewContext(code, { exports, setTimeout, clearTimeout, require: (name: string) => {
+    if (name.endsWith("aiConsent")) return { requireAIConsent: async () => ({}), validateConsentReceipt: async () => {}, subscribeAIInvalidation: () => () => {} };
     if (name === "react") return {
+      useEffect: () => {},
       useCallback: (fn: any) => fn,
       useState: (value: any) => { const i = cursor++; if (!(i in states)) states[i] = value; return [states[i], (next: any) => { states[i] = next; }]; },
       useRef: (value: any) => { const i = cursor++; if (!(i in states)) states[i] = { current: value }; return states[i]; },

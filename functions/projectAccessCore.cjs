@@ -395,20 +395,31 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
       tasks.set(document.id, document);
     }
     for (const task of tasks.values()) {
-      const current = task.data();
-      const createdByUser = current.ownerUserId === uid || current.creatorUserId === uid;
-      const update = {
-        ...(current.ownerUserId === uid ? { ownerUserId: null } : {}),
-        ...(current.creatorUserId === uid ? { creatorUserId: null } : {}),
-        ...(current.assigneeUserId === uid ? { assigneeUserId: null } : {}),
-        ...(createdByUser ? {
-          creatorDisplayName: ANONYMOUS_DISPLAY_NAME,
-          creatorAnonymizedAt: timestamp,
-          anonymizedReason: "project_exit",
-        } : {}),
-        updatedAt: timestamp,
-      };
-      writer.update(task.ref, update);
+      await db.runTransaction(async transaction => {
+        const latest = await transaction.get(task.ref);
+        if (!latest.exists) return;
+        const current = latest.data();
+        if (current.projectId !== projectId) return;
+        const createdByUser = current.ownerUserId === uid || current.creatorUserId === uid;
+        const update = {
+          ...(current.ownerUserId === uid ? { ownerUserId: null } : {}),
+          ...(current.creatorUserId === uid ? { creatorUserId: null } : {}),
+          ...((current.assigneeUserId === uid || (current.assigneeUserId === undefined && (current.creatorUserId ?? current.ownerUserId) === uid)) ? {
+            assigneeUserId: null,
+            ...((current.kind ?? "task") === "task" && current.status === "in_progress" ? {
+              status: "paused", startAt: null,
+              elapsedMinutes: (current.elapsedMinutes ?? 0) + (current.startAt == null ? 0 : Math.max(0, timestamp - current.startAt) / 60000),
+            } : {}),
+          } : {}),
+          ...(createdByUser ? {
+            creatorDisplayName: ANONYMOUS_DISPLAY_NAME,
+            creatorAnonymizedAt: timestamp,
+            anonymizedReason: "project_exit",
+          } : {}),
+          updatedAt: timestamp,
+        };
+        transaction.update(task.ref, update);
+      });
     }
     await writer.close();
 

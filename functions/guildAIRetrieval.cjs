@@ -1,4 +1,4 @@
-const { retrieveWikiAnswerEvidence } = require("./wikiAnswerRetrievalCore.cjs");
+const { retrieveWikiAnswerEvidence, buildWikiAnswerExcerpt } = require("./wikiAnswerRetrievalCore.cjs");
 const { isPublicVisibleGuildPost, toSafeGuildEvidencePost, toMillis } = require("./guildAICore.cjs");
 const { GUILD_INDEX_VERSION, hashWikiToken, extractGuildWikiTokens, sourceRevision } = require("./guildAIIndex.cjs");
 
@@ -9,7 +9,7 @@ const cosine = (left, right) => {
   return a && b ? dot / Math.sqrt(a * b) : 0;
 };
 
-const retrieveGuildAnswer = async ({ db, FieldValue, HttpsError, uid, question, queryEmbedding, hasBlockedConnection }) => {
+const retrieveGuildAnswer = async ({ db, FieldValue, HttpsError, uid, question, queryEmbedding, hasBlockedConnection, hasAuthorConsent = async () => false }) => {
   const indexCollection = db.collection("guildPostAIIndex");
   const visibleIndex = () => indexCollection.where("status", "==", "published").where("moderationVisibility", "==", "visible");
   const indexCache = new Map();
@@ -29,7 +29,7 @@ const retrieveGuildAnswer = async ({ db, FieldValue, HttpsError, uid, question, 
   }).get();
   if (ready.empty || nearest.empty) {
     const publicPosts = await db.collection("guildPosts").where("status", "==", "published")
-      .where("moderation.visibility", "==", "visible").limit(1).get();
+      .where("moderation.visibility", "==", "visible").where("safety.status", "==", "approved").where("safety.version", "==", 1).limit(1).get();
     if (!publicPosts.empty) throw new HttpsError("failed-precondition", "Temis AI search index is not ready.");
     return { evidence: [], posts: [], revalidate: async () => {} };
   }
@@ -41,7 +41,7 @@ const retrieveGuildAnswer = async ({ db, FieldValue, HttpsError, uid, question, 
     const documents = await Promise.all(snapshots.map(async (snapshot) => {
       const post = snapshot.data();
       if (!snapshot.exists || !isPublicVisibleGuildPost(post) || typeof post.authorUserId !== "string" ||
-          await isBlocked(post.authorUserId)) return null;
+          await isBlocked(post.authorUserId) || !await hasAuthorConsent(post)) return null;
       const index = indexCache.get(snapshot.id);
       const revision = sourceRevision(snapshot);
       const vector = index?.sourceRevision === revision && index?.embeddingModel === "text-embedding-3-small" && index?.embedding?.toArray ? index.embedding.toArray() : null;
@@ -94,7 +94,7 @@ const retrieveGuildAnswer = async ({ db, FieldValue, HttpsError, uid, question, 
         throw new HttpsError("aborted", "Referenced posts have changed. Please retry.");
       }
       if (!blocked.has(post.authorUserId)) blocked.set(post.authorUserId, await hasBlockedConnection(uid, post.authorUserId));
-      if (blocked.get(post.authorUserId)) throw new HttpsError("aborted", "Referenced posts have changed. Please retry.");
+      if (blocked.get(post.authorUserId) || !await hasAuthorConsent(post)) throw new HttpsError("aborted", "Referenced posts have changed. Please retry.");
     }
   };
   return {
@@ -104,4 +104,4 @@ const retrieveGuildAnswer = async ({ db, FieldValue, HttpsError, uid, question, 
     revalidate,
   };
 };
-module.exports = { retrieveGuildAnswer };
+module.exports = { retrieveGuildAnswer, buildProjectExcerpt: (note, question, path) => buildWikiAnswerExcerpt([note.title?.trim(), note.body?.trim()].filter(Boolean).join('\n'), question, Array.isArray(path) ? path : []).slice(0, 1200) };

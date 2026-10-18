@@ -1,3 +1,5 @@
+import { registerEnvironmentSaveHandler } from "../../services/environment/switchLifecycle";
+import { saveRecoveryDraft, loadRecoveryDraft, clearRecoveryDraft } from "../../services/environment/recoveryDrafts";
 import React, { useEffect, useRef } from "react";
 import {
   Keyboard,
@@ -94,6 +96,29 @@ const TodoComposerModal = ({
   onHandleHourPickerScrollEnd,
   onHandleMinutePickerScrollEnd,
 }: Props) => {
+  const recoveryId = `todo:${todoEditingContext?.todoId ?? 'new'}`;
+  const currentDraft = useRef(todoDraft); currentDraft.current = todoDraft;
+  const wasVisible = useRef(false);
+  useEffect(() => {
+    if (!visible) {
+      if (wasVisible.current) void clearRecoveryDraft(recoveryId).catch(() => {});
+      wasVisible.current = false;
+      return;
+    }
+    wasVisible.current = true;
+    return registerEnvironmentSaveHandler(async () => {}, () => saveRecoveryDraft(recoveryId, { title: currentDraft.current.text, body: JSON.stringify(currentDraft.current) }));
+  }, [visible, recoveryId]);
+  useEffect(() => {
+    if (!visible) return;
+    let active = true;
+    const initial = currentDraft.current;
+    void loadRecoveryDraft(recoveryId).then(saved => {
+      if (!active || !saved || currentDraft.current !== initial) return;
+      const restored = JSON.parse(saved.body) as TodoDraft;
+      if (typeof restored.text === 'string' && typeof restored.memo === 'string' && Array.isArray(restored.tags)) setTodoDraft(restored);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [visible, recoveryId, setTodoDraft]);
   const todoHourScrollRef = useRef<ScrollView | null>(null);
   const todoMinuteScrollRef = useRef<ScrollView | null>(null);
 
@@ -136,7 +161,7 @@ const TodoComposerModal = ({
           </View>
           <View style={styles.todoTagSection}>
             <Text style={styles.label}>{tr("todo.tags")}</Text>
-            <ScrollView
+            <ScrollView keyboardShouldPersistTaps="always"
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.todoTagChipRow}
@@ -350,7 +375,7 @@ const TodoComposerModal = ({
             <Text style={styles.dateTitle}>{tr("todo.reminderTime")}</Text>
             <View style={styles.timePickerColumns}>
               <View style={styles.timePickerColumn}>
-                <ScrollView
+                <ScrollView keyboardShouldPersistTaps="always"
                   ref={todoHourScrollRef}
                   showsVerticalScrollIndicator={false}
                   snapToInterval={TIME_PICKER_ITEM_HEIGHT}
@@ -388,7 +413,7 @@ const TodoComposerModal = ({
               </View>
               <Text style={styles.timePickerColon}>:</Text>
               <View style={styles.timePickerColumn}>
-                <ScrollView
+                <ScrollView keyboardShouldPersistTaps="always"
                   ref={todoMinuteScrollRef}
                   showsVerticalScrollIndicator={false}
                   snapToInterval={TIME_PICKER_ITEM_HEIGHT}

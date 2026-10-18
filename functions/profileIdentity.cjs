@@ -3,7 +3,7 @@ const { getStorage } = require('firebase-admin/storage');
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const core = require('./profileIdentityCore.cjs');
-const runtime = { region: 'asia-northeast1', timeoutSeconds: 540, maxInstances: 3, serviceAccount: 'temis-embeddings@temis-c05aa.iam.gserviceaccount.com' };
+const runtime = { region: 'asia-northeast1', timeoutSeconds: 540, maxInstances: 3, serviceAccount: require('./environmentRuntime.cjs').runtimeServiceAccount };
 
 exports.syncProfileIdentity = onDocumentWritten({ ...runtime, document: 'profiles/{uid}', retry: true }, async (event) => {
   const uid = event.params.uid;

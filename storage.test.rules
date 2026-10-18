@@ -1,0 +1,26 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function activeOperatorSession() {
+      return request.auth != null
+        && request.auth.token.testOperator == true
+        && request.auth.token.testOperatorExpiresAt is number
+        && request.auth.token.testOperatorExpiresAt > request.time.toMillis() / 1000;
+    }
+
+    // Public avatars contain no private memo data. Only the owner can write.
+    match /profilePhotos/{userId}/{filename} {
+      allow get: if activeOperatorSession() && (true);
+      allow list: if activeOperatorSession() && (false);
+      allow create: if activeOperatorSession() && (resource == null && request.auth != null && request.auth.uid == userId
+        && filename.matches('[a-zA-Z0-9-]+[.]jpg')
+        && request.resource.size > 0 && request.resource.size <= 1024 * 1024
+        && request.resource.contentType == 'image/jpeg');
+      allow update: if activeOperatorSession() && (false);
+      allow delete: if activeOperatorSession() && (request.auth != null && request.auth.uid == userId);
+    }
+    match /{allPaths=**} {
+      allow read, write: if activeOperatorSession() && (false);
+    }
+  }
+}

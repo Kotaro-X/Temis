@@ -1,6 +1,6 @@
+import Modal from "./common/KeyboardAwareModal";
 import React, { useEffect, useState } from "react";
 import {
-  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -104,7 +104,7 @@ const ItemDetailModal = ({
           <Text style={styles.title}>{language === "en" ? "Detail" : "詳細"}</Text>
           <View style={styles.headerRight} />
         </View>
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.container}>
           {loading ? (
             <Text style={styles.helperText}>{tr("common.loading")}</Text>
           ) : !item ? (

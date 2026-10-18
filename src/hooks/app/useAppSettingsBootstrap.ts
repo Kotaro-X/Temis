@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { readAccountEntry } from "../../services/auth/accountEntry";
 
 import {
   loadCloudSyncEnabled,
@@ -57,6 +58,7 @@ export const useAppSettingsBootstrap = ({
           loadTimeBoxSchedule(),
           loadStoredAppLanguage(),
           loadCloudSyncEnabled(),
+          readAccountEntry(),
         ]);
 
       if (!active) {

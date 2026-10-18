@@ -1,3 +1,4 @@
+import { isTestEnvironment } from "../environment/runtimeEnvironment";
 import { Platform } from "react-native";
 import Purchases, {
   LOG_LEVEL,
@@ -191,11 +192,14 @@ const resolveTargetPackage = (
 };
 
 export const configurePurchases = async (): Promise<boolean> => {
+  if (isTestEnvironment()) return false;
   if (!isRevenueCatSupportedPlatform()) {
     return false;
   }
 
-  if (await Purchases.isConfigured()) {
+  const alreadyConfigured = await Purchases.isConfigured();
+  if (isTestEnvironment()) return false;
+  if (alreadyConfigured) {
     return true;
   }
 
@@ -214,6 +218,7 @@ export const configurePurchases = async (): Promise<boolean> => {
 
     Purchases.setLogHandler(revenueCatLogHandler);
     await Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.INFO);
+    if (isTestEnvironment()) return false;
     Purchases.configure({ apiKey });
     return true;
   })().catch((error) => {
@@ -226,7 +231,7 @@ export const configurePurchases = async (): Promise<boolean> => {
 
 export const getCustomerInfo = async (): Promise<CustomerInfo | null> => {
   const configured = await configurePurchases();
-  if (!configured) {
+  if (!configured || isTestEnvironment()) {
     return null;
   }
   return Purchases.getCustomerInfo();
@@ -236,11 +241,12 @@ export const logInRevenueCatUser = async (
   firebaseUid: string,
 ): Promise<CustomerInfo | null> => {
   const configured = await configurePurchases();
-  if (!configured) {
+  if (!configured || isTestEnvironment()) {
     return null;
   }
 
   const currentAppUserId = await Purchases.getAppUserID();
+  if (isTestEnvironment()) return null;
   if (currentAppUserId === firebaseUid) {
     return Purchases.getCustomerInfo();
   }
@@ -251,11 +257,12 @@ export const logInRevenueCatUser = async (
 
 export const logOutRevenueCatUser = async (): Promise<CustomerInfo | null> => {
   const configured = await configurePurchases();
-  if (!configured) {
+  if (!configured || isTestEnvironment()) {
     return null;
   }
 
   const currentAppUserId = await Purchases.getAppUserID();
+  if (isTestEnvironment()) return null;
   // RevenueCat already uses an anonymous identity after a fresh configure/logOut.
   if (currentAppUserId.startsWith("$RCAnonymousID:")) {
     return Purchases.getCustomerInfo();
@@ -268,12 +275,13 @@ export const purchaseCloudSyncPlan = async (
   override?: CloudSyncPurchaseOverride,
 ): Promise<CustomerInfo> => {
   const configured = await configurePurchases();
-  if (!configured) {
+  if (!configured || isTestEnvironment()) {
     throw new Error("RevenueCat purchases are not supported on this platform.");
   }
 
   const config = getRevenueCatRuntimeConfig();
   const offerings = await Purchases.getOfferings();
+  if (isTestEnvironment()) throw new Error("テスト環境ではストア操作を利用できません。");
   const selectedPackage = resolveTargetPackage(offerings, config, override);
   if (!selectedPackage) {
     throw new Error(
@@ -289,11 +297,12 @@ export const getCloudSyncPlanDetails = async (
   override?: CloudSyncPurchaseOverride,
 ): Promise<CloudSyncPlanDetails | null> => {
   const configured = await configurePurchases();
-  if (!configured) {
+  if (!configured || isTestEnvironment()) {
     return null;
   }
   const config = getRevenueCatRuntimeConfig();
   const offerings = await Purchases.getOfferings();
+  if (isTestEnvironment()) throw new Error("テスト環境ではストア操作を利用できません。");
   const selectedPackage = resolveTargetPackage(offerings, config, override);
   if (!selectedPackage) {
     return null;
@@ -310,7 +319,7 @@ export const getCloudSyncPlanDetails = async (
 
 export const restorePurchases = async (): Promise<CustomerInfo | null> => {
   const configured = await configurePurchases();
-  if (!configured) {
+  if (!configured || isTestEnvironment()) {
     return null;
   }
   return Purchases.restorePurchases();

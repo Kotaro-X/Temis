@@ -37,6 +37,7 @@ type Props = {
   placeholder?: string;
   editable?: boolean;
   autoFocus?: boolean;
+  fillAvailableSpace?: boolean;
   enableHighlight?: boolean;
   style?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<TextStyle>;
@@ -49,6 +50,7 @@ const MemoTextEditor = ({
   placeholder,
   editable,
   autoFocus,
+  fillAvailableSpace = false,
   enableHighlight = false,
   style,
   inputStyle,
@@ -201,7 +203,7 @@ const MemoTextEditor = ({
   );
 
   return (
-    <View style={[styles.container, style]}>
+    <View style={[styles.container, style, fillAvailableSpace && { flex: 1, minHeight: 0 }]}>
       {enableHighlight ? (
         <HighlightEditor
           value={value}
@@ -209,9 +211,10 @@ const MemoTextEditor = ({
           placeholder={placeholder}
           editable={editable}
           autoFocus={autoFocus}
-          containerStyle={styles.editorContainer}
+          containerStyle={StyleSheet.flatten([styles.editorContainer, fillAvailableSpace && { flex: 1 }])}
           textStyle={StyleSheet.flatten([
             styles.input,
+            fillAvailableSpace && { flex: 1, minHeight: 0 },
             inputStyle,
             inputPaddingStyle,
           ]) as TextStyle}
@@ -223,7 +226,7 @@ const MemoTextEditor = ({
         />
       ) : (
         <TextInput
-          style={[styles.input, inputStyle, inputPaddingStyle]}
+          style={[styles.input, inputStyle, inputPaddingStyle, fillAvailableSpace && { flex: 1, minHeight: 0 }]}
           value={value}
           onChangeText={handleInputChangeText}
           placeholder={placeholder}

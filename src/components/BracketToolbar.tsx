@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
 
 type Selection = {
   start: number;
@@ -43,7 +43,8 @@ const BracketToolbar = ({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}>
+      <Pressable style={styles.button} onPress={Keyboard.dismiss} accessibilityLabel="キーボードを閉じる"><Text style={styles.buttonText}>閉じる</Text></Pressable>
       <View style={styles.spacer} />
       <Pressable
         style={styles.button}

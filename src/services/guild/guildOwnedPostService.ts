@@ -1,8 +1,9 @@
+import { requireAIConsent } from '../ai/aiConsent';
 import { getNoteById, upsertDailyNote, upsertFreeNote } from "../../db/noteRepo";
 import type { UserProfile } from "../../types/collaboration";
 import { type GuildPost } from "../../types/guild";
 import { loadMemoById, updateMemo } from "../../repositories/memoRepository";
-import { upsertProjectSharedNote } from "../collaboration/collaborationService";
+import { listProjectSharedNotes, upsertProjectSharedNote } from "../collaboration/collaborationService";
 import { getResearchNoteById, upsertResearchNote } from "../researchNoteService";
 import { getOwnedGuildPost } from "./guildService";
 
@@ -33,8 +34,9 @@ export const updateGuildSourceMemo = async ({
       ? await upsertDailyNote(existing.date, body)
       : await upsertFreeNote({ id: existing.id, title, body });
     if (updated.scope === "project" && updated.projectId) {
+      const shared = (await listProjectSharedNotes(updated.projectId)).find(note => note.sourceNoteId === updated.id);
       await upsertProjectSharedNote({
-        id: updated.id,
+        id: shared?.id ?? updated.id,
         sourceNoteId: updated.id,
         ownerUserId: profile.userId,
         creatorDisplayName: profile.displayName?.trim() || `@${profile.username}`,
@@ -71,8 +73,9 @@ export const updateGuildSourceMemo = async ({
     ? await upsertDailyNote(legacyNote.date, body)
     : await upsertFreeNote({ id: legacyNote.id, title, body });
   if (updated.scope === "project" && updated.projectId) {
+    const shared = (await listProjectSharedNotes(updated.projectId)).find(note => note.sourceNoteId === updated.id);
     await upsertProjectSharedNote({
-      id: updated.id,
+      id: shared?.id ?? updated.id,
       sourceNoteId: updated.id,
       ownerUserId: profile.userId,
       creatorDisplayName: profile.displayName?.trim() || `@${profile.username}`,
@@ -86,6 +89,7 @@ export const updateGuildSourceMemo = async ({
 };
 
 export const republishOwnedGuildPost = async ({ postId, profile }: { postId: string; profile: UserProfile }): Promise<GuildPost> => {
+  await requireAIConsent(false, profile.userId);
   const post = await getOwnedGuildPost(postId);
   if (!post || post.authorUserId !== profile.userId) throw new Error('この投稿を再公開する権限がありません。');
   const { readGuildSourceContent } = await import('./guildSourceReader');
@@ -94,7 +98,7 @@ export const republishOwnedGuildPost = async ({ postId, profile }: { postId: str
   if (!content) throw new Error('元メモがこの端末にありません。同期後に再試行してください。');
   await registerPublicationPosts(profile.userId, content.sourceId, [post]);
   await enqueuePublicationContent(content, 'publish', undefined, profile.userId);
-  await flushPublications();
+  await flushPublications(true);
   const state = await getPublicationState(profile.userId, content.sourceId);
   if (state?.pending) throw new Error(state.error ?? 'Commonsへの反映を待っています。');
   return state?.posts.find(item => item.id === postId) ?? post;

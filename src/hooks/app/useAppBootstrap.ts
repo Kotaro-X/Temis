@@ -15,6 +15,8 @@ import {
 } from "../../services/llmSettings";
 import { cleanupExpiredLocalDeletedState } from "../../services/sync/syncRetention";
 import { classifySyncError } from "../../services/sync/syncDiagnostics";
+import { withLocalEntityMutation } from "../../services/sync/localMutationLock";
+import { getWorkspaceEpoch } from "../../services/account/workspaceEpoch";
 
 type Args = {
   syncNow: () => Promise<unknown>;
@@ -62,6 +64,10 @@ export const useAppBootstrap = ({ syncNow }: Args) => {
   }, [runSyncCycle]);
 
   useEffect(() => {
+    const epoch = getWorkspaceEpoch();
+    const assertCurrent = () => {
+      if (getWorkspaceEpoch() !== epoch) throw new Error("Account workspace changed.");
+    };
     const config = configureEmbeddingProviderFromEnv();
     const llmConfig = configureLLMProviderFromEnv();
 
@@ -83,9 +89,10 @@ export const useAppBootstrap = ({ syncNow }: Args) => {
     });
 
     ensureDbReady()
-      .then(() =>
-        backfillNoteIndexes({ batchSize: 20, jobKey: "note-index-backfill-v1" }),
-      )
+      .then(() => withLocalEntityMutation("memo", () => {
+        assertCurrent();
+        return backfillNoteIndexes({ batchSize: 20, jobKey: "note-index-backfill-v1" });
+      }))
       .then((progress) => {
         console.log(
           `[Backfill][Note] completed ${progress.processed}/${progress.total} reindexed=${progress.reindexed}`,
@@ -97,13 +104,14 @@ export const useAppBootstrap = ({ syncNow }: Args) => {
       });
 
     ensureDbReady()
-      .then(() =>
-        backfillEmbeddings({
+      .then(() => withLocalEntityMutation("memo", () => {
+        assertCurrent();
+        return backfillEmbeddings({
           batchSize: 20,
           jobKey: "embedding-backfill-v1",
-        }),
-      )
-      .then(() => runPendingEmbeddingJobs({ limit: 20 }))
+        });
+      }))
+      .then(() => { assertCurrent(); return runPendingEmbeddingJobs({ limit: 20 }); })
       .then((progress) => {
         console.log(
           `[Backfill][Embedding] resumedJobs=${progress.processedJobs} completedJobs=${progress.completedJobs} failedJobs=${progress.failedJobs}`,

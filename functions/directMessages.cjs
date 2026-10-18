@@ -1,12 +1,12 @@
 const { getFirestore } = require('firebase-admin/firestore');
-const { onCall } = require('firebase-functions/v2/https');
+const { onCall } = require('./environmentRuntime.cjs');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { createDMService, requireUser } = require('./directMessagesCore.cjs');
 const { processNotificationJob } = require('./directMessagesNotifications.cjs');
 const options = {
   region: 'asia-northeast1', timeoutSeconds: 60, memory: '256MiB', maxInstances: 3,
-  serviceAccount: 'temis-embeddings@temis-c05aa.iam.gserviceaccount.com',
+  serviceAccount: require('./environmentRuntime.cjs').runtimeServiceAccount,
 };
 exports.sendDirectMessage = onCall(options, (request) => createDMService(getFirestore()).send(requireUser(request), request.data));
 exports.markDirectMessagesRead = onCall(options, (request) => createDMService(getFirestore()).markRead(requireUser(request), request.data));

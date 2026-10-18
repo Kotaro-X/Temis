@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { subscribeTaskChanges } from '../features/taskPlanning/taskEvents';
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Suggestion } from "../features/routineSuggestions";
 import * as taskRepository from "../repositories/taskRepository";
@@ -100,6 +101,8 @@ export const useTasks = (args: UseTasksArgs = {}): UseTasksResult => {
     setLogs(loadedLogs);
     setTodayState(loadedToday);
   }, [defaultTag, loadForDate, loadLogs, selectedDate]);
+
+  useEffect(() => subscribeTaskChanges(() => { void refresh().catch(() => {}); }), [refresh]);
 
   const actions = useTaskActions({
     todayState,

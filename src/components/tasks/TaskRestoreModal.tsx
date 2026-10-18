@@ -1,6 +1,6 @@
+import Modal from "../common/KeyboardAwareModal";
 import React from "react";
 import {
-  Modal,
   Pressable,
   Text,
   TextInput,

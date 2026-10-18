@@ -1,5 +1,6 @@
+import Modal from "../common/KeyboardAwareModal";
 import React from "react";
-import { Linking, Modal, Pressable, Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 
 import appChromeStyles from "../../styles/appChromeStyles";
 

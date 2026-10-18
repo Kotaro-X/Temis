@@ -49,6 +49,7 @@ type Props = {
   onStart?: () => void;
   onPause?: () => void;
   onDone?: () => void;
+  executionActions?: React.ReactNode;
   actions: Array<{
     label: string;
     onPress: () => void;
@@ -85,6 +86,7 @@ const TaskItem = ({
   onPause,
   onDone,
   actions,
+  executionActions,
   completedTime,
   completed = false,
   swipeEnabled = true,
@@ -251,7 +253,7 @@ const TaskItem = ({
                   </Text>
                 </View>
                 <View style={styles.taskActions}>
-                  {task.status === "IN_PROGRESS" ? (
+                  {executionActions !== undefined ? executionActions : task.status === "IN_PROGRESS" ? (
                     <>
                       <Pressable style={styles.inlineActionButton} onPress={onPause}>
                         <Text style={styles.inlineActionText}>{tr("task.pause")}</Text>

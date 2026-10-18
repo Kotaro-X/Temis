@@ -45,7 +45,7 @@ export default function ProfileSetupBoundary({ children }: { children: React.Rea
   const signedOut = profileSetupStatus === 'signed_out' && !accountUserId && !user && authStatus !== 'signedIn';
   if (!restoring && (signedOut || (ownsProfile && profileSetupStatus === 'complete'))) return <>{children}</>;
   return <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#fff', paddingTop: insets.top, paddingBottom: insets.bottom }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.container}>
+    <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.container}>
       {restoring || profileSetupStatus === 'checking' ? <View style={styles.form}><ActivityIndicator /><Text>アカウントを確認しています…</Text></View>
         : profileSetupStatus === 'error' ? <View style={styles.form}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="再試行" onPress={() => void refreshProfile()} /></View>
           : ownsProfile ? <SetupForm key={accountUserId} /> : <ActivityIndicator />}

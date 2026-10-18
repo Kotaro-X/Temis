@@ -1,5 +1,5 @@
-import React, { useMemo } from "react";
-import { Modal } from "react-native";
+import Modal from "../common/KeyboardAwareModal";
+import React, { useMemo, useState } from "react";
 
 import { useAppRefresh } from "../../context/AppRefreshContext";
 import { useAppSettings } from "../../context/AppSettingsContext";
@@ -19,6 +19,7 @@ const MemoWorkspaceShell = ({
   children,
 }: Props) => {
   const { appLanguage } = useAppSettings();
+  const [detailCloseRequest, setDetailCloseRequest] = useState(0);
   const { refreshVersions, touchDomains } = useAppRefresh();
   const {
     openMenu,
@@ -87,9 +88,10 @@ const MemoWorkspaceShell = ({
         <Modal
           visible
           animationType="slide"
-          onRequestClose={handleCloseMemoDetail}
+          onRequestClose={() => setDetailCloseRequest(value => value + 1)}
         >
           <MemoDetailScreen
+            closeRequest={detailCloseRequest}
             memoId={memoDetailId}
             onBack={handleCloseMemoDetail}
             language={appLanguage}

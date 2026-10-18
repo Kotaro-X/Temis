@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
+import PrivateProjectTaskItem from "../components/private-project/PrivateProjectTaskItem";
 import TaskArchiveScreen from "./TaskArchiveScreen";
 import TaskDetailScreen from "./TaskDetailScreen";
 import TaskLogScreen from "./TaskLogScreen";
@@ -14,10 +15,10 @@ import type { TaskWorkspaceScreenKey } from "../types/appNavigation";
 import styles from "../styles/workspaceSharedStyles";
 import type { SlotKey, Tag, TaskState, TaskStatus, TimeBoxSchedule } from "../types";
 import { SLOT_KEYS } from "../types";
-import { listMyProjectTasks, updateProjectTask, type MyProjectTask } from "../services/collaboration/collaborationService";
-import { syncProjectTaskMemo } from "../services/collaboration/projectTaskMemoService";
+import { subscribeProjectTasks, deleteProjectTask, updateProjectTask, type MyProjectTask } from "../services/collaboration/collaborationService";
+import { projectTaskOwner } from "../services/collaboration/projectTaskCore";
 import { useCollaboration } from "../context/CollaborationContext";
-import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot } from "../utils/projectTaskPlacement";
+import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot, toLocalDateString } from "../utils/projectTaskPlacement";
 
 type Props = {
   visible: boolean;
@@ -100,8 +101,11 @@ const TaskWorkspaceScreen = ({
   todayContentPaddingTop,
   footerPaddingBottom,
 }: Props) => {
+  const [projectArchiveItems, setProjectArchiveItems] = useState<MyProjectTask[]>([]);
   const [projectTasksBySlot, setProjectTasksBySlot] = useState(emptyProjectTasksBySlot);
-  const { profile } = useCollaboration();
+  const { profile, projects } = useCollaboration();
+  const projectSession = useRef(0);
+  const [projectReload, setProjectReload] = useState(0);
   const {
     todayState,
     activeTaskId,
@@ -155,39 +159,25 @@ const TaskWorkspaceScreen = ({
     logState,
   } = useTaskWorkspace();
 
-  const refreshProjectTasks = useCallback(async () => {
-    if (!visible || currentScreen !== "today") {
-      setProjectTasksBySlot(emptyProjectTasksBySlot());
-      return;
-    }
-    try {
-      const nextItems = await listMyProjectTasks("task");
-      const itemsWithBackfilledMemos = profile
-        ? await Promise.all(nextItems.map(async (item) => {
-          if (item.task.relatedMemoId || !item.task.description?.trim()) return item;
-          const relatedMemoId = await syncProjectTaskMemo({ task: item.task, profile });
-          return {
-            ...item,
-            task: await updateProjectTask(item.task.id, { relatedMemoId }),
-          };
-        }))
-        : nextItems;
-      const nextBySlot = emptyProjectTasksBySlot();
-      for (const item of itemsWithBackfilledMemos) {
-        if (getProjectTaskPrivateDate(item.task) !== selectedDate) {
-          continue;
-        }
-        nextBySlot[getProjectTaskPrivateSlot(item.task, timeBoxSchedule)].push(item);
-      }
-      setProjectTasksBySlot(nextBySlot);
-    } catch {
-      setProjectTasksBySlot(emptyProjectTasksBySlot());
-    }
-  }, [currentScreen, profile, selectedDate, timeBoxSchedule, visible]);
+  const refreshProjectTasks = useCallback(() => setProjectReload(value => value + 1), []);
 
   useEffect(() => {
-    void refreshProjectTasks();
-  }, [refreshProjectTasks]);
+    const session = ++projectSession.current;
+    setProjectTasksBySlot(emptyProjectTasksBySlot()); setProjectArchiveItems([]);
+    if (!visible || (currentScreen !== "today" && currentScreen !== "archive") || !profile) return;
+    const grouped = new Map<string, MyProjectTask[]>();
+    const unsubscribers = projects.map(project => subscribeProjectTasks(project.id, tasks => {
+      if (session !== projectSession.current) return;
+      grouped.set(project.id, tasks.filter(task => (task.kind ?? "task") === "task" && projectTaskOwner(task) === profile.userId).map(task => ({ project, task })));
+      setProjectArchiveItems([...grouped.values()].flat().filter(item => item.task.isArchived));
+      const nextBySlot = emptyProjectTasksBySlot();
+      for (const item of [...grouped.values()].flat()) {
+        if (getProjectTaskPrivateDate(item.task) === selectedDate) nextBySlot[getProjectTaskPrivateSlot(item.task, timeBoxSchedule)].push(item);
+      }
+      setProjectTasksBySlot(nextBySlot);
+    }, () => { if (session === projectSession.current) { grouped.delete(project.id); setProjectTasksBySlot(emptyProjectTasksBySlot()); } }));
+    return () => { projectSession.current = session + 1; unsubscribers.forEach(unsubscribe => unsubscribe()); };
+  }, [visible, currentScreen, profile, projects, selectedDate, timeBoxSchedule, projectReload]);
   const [newTaskId, setNewTaskId] = useState<string | null>(null);
   const [activeExpandedBySlot, setActiveExpandedBySlot] = useState<
     Record<SlotKey, boolean>
@@ -195,6 +185,12 @@ const TaskWorkspaceScreen = ({
   const [completedExpandedBySlot, setCompletedExpandedBySlot] = useState<
     Record<SlotKey, boolean>
   >(buildExpandedState);
+
+  useEffect(() => {
+    if (!selectionMode || currentScreen !== "today") return;
+    const existing = new Set(Object.values(projectTasksBySlot).flat().filter(item => !item.task.isArchived).map(item => `project:${item.task.id}`));
+    for (const id of selectedSet) if (id.startsWith("project:") && !existing.has(id)) toggleSelection(id);
+  }, [currentScreen, projectTasksBySlot, selectedSet, selectionMode, toggleSelection]);
 
   const taskListBaseProps = useMemo(
     () => ({
@@ -285,11 +281,16 @@ const TaskWorkspaceScreen = ({
       onNextDate: () => shiftMoveDateDraft(1),
       onClose: closeMoveModal,
       onConfirm: () => {
-        void applyMoveTask();
+        const parsed = new Date(`${moveDateDraft}T00:00:00`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(moveDateDraft) || Number.isNaN(parsed.getTime()) || toLocalDateString(parsed.getTime()) !== moveDateDraft) { void applyMoveTask(); return; }
+        const sharedIds = [...selectedSet].filter(id => id.startsWith("project:"));
+        void Promise.all(sharedIds.map(id => updateProjectTask(id.slice(8), { privateDate: moveDateDraft, privateSlotKey: moveTargetSlotKey })))
+          .then(() => applyMoveTask()).catch(error => Alert.alert("移動できません", error.message));
       },
     }),
     [
       applyMoveTask,
+      selectedSet,
       closeMoveModal,
       language,
       moveDateDraft,
@@ -459,7 +460,9 @@ const TaskWorkspaceScreen = ({
         restoreModalProps={restoreModalProps}
         onOpenRestoreModal={(item) => openRestoreModal(item.task, item.slotKey)}
         onApplyRestoreTask={applyRestoreTask}
-      />
+      >
+        {projectArchiveItems.map(item => <PrivateProjectTaskItem key={`${profile?.userId}:${item.task.id}`} item={item} styles={styles} tr={tr} noTagLabel={noTagLabel} untitledLabel={untitledLabel} statusLabel={statusLabel} statusPalette={statusPalette} timeBoxSchedule={timeBoxSchedule} onChanged={() => {}} />)}
+      </TaskArchiveScreen>
     );
   }
 
@@ -553,7 +556,7 @@ const TaskWorkspaceScreen = ({
 
   return (
     <>
-      <TaskScreen
+      <TaskScreen planningSelectedDate={selectedDate}
         styles={styles}
         insetsTop={insetsTop}
         title={selectedDate}
@@ -591,7 +594,10 @@ const TaskWorkspaceScreen = ({
         }}
         onOpenTaskDetail={handleOpenTaskDetail}
         onDeleteTask={deleteTask}
-        onDeleteSelectedTasks={deleteSelectedTasks}
+        onDeleteSelectedTasks={() => {
+          const sharedIds = [...selectedSet].filter(id => id.startsWith("project:"));
+          void Promise.all(sharedIds.map(id => deleteProjectTask(id.slice(8)))).then(() => { deleteSelectedTasks(); exitSelectionMode(); }).catch(error => Alert.alert("消去できません", error.message));
+        }}
         onArchiveTask={archiveTask}
         onOpenMoveModal={openMoveModal}
         onOpenMoveSelectedModal={openMoveSelectedModal}
@@ -600,12 +606,14 @@ const TaskWorkspaceScreen = ({
           taskId: string,
           targetSlotKey: SlotKey,
         ) => {
-          void moveTask(taskId, fromSlotKey, selectedDate, targetSlotKey);
+          if (taskId.startsWith("project:")) {
+            void updateProjectTask(taskId.slice(8), { privateSlotKey: targetSlotKey }).catch(error => Alert.alert("移動できません", error.message));
+          } else void moveTask(taskId, fromSlotKey, selectedDate, targetSlotKey);
         }}
         taskListBaseProps={taskListBaseProps}
         moveModalProps={moveModalProps}
         projectTasksBySlot={projectTasksBySlot}
-        onProjectTaskChanged={() => void refreshProjectTasks()}
+        onProjectTaskChanged={() => {}}
         timeBoxSchedule={timeBoxSchedule}
       />
       {inProgressInfo ? (

@@ -1,16 +1,18 @@
+import Modal from "../common/KeyboardAwareModal";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Modal,
+  BackHandler,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView, initialWindowMetrics } from "react-native-safe-area-context";
+import { requireAIConsent } from "../../services/ai/aiConsent";
 
 import { upsertFreeNote } from "../../db/noteRepo";
 import { useCollaboration } from "../../context/CollaborationContext";
@@ -22,6 +24,7 @@ export type GuildPostSource = { scope: "personal" | "project"; memoId: string; p
 
 type Props = {
   visible: boolean;
+  embedded?: boolean;
   source?: GuildPostSource | null;
   initialTitle?: string;
   initialBody?: string;
@@ -35,7 +38,7 @@ const TYPE_LABEL: Record<GuildPostType, string> = {
   project_recruiting: "メンバー募集",
 };
 
-const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", initialBody = "", onClose, onPublished }: Props) => {
+const GuildPostComposerModal = ({ visible, embedded = false, source = null, initialTitle = "", initialBody = "", onClose, onPublished }: Props) => {
   const { profile, projects, projectStatus } = useCollaboration();
   const [title, setTitle] = useState(initialTitle);
   const [body, setBody] = useState(initialBody);
@@ -43,6 +46,11 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
   const [projectId, setProjectId] = useState<string | null>(source?.projectId ?? null);
   const createdSourceId = useRef<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  useEffect(() => {
+    if (!visible || !embedded) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => { if (!submitting) onClose(); return true; });
+    return () => subscription.remove();
+  }, [visible, embedded, submitting, onClose]);
 
   useEffect(() => {
     if (!visible) { createdSourceId.current = null; return; }
@@ -72,6 +80,8 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
     }
     setSubmitting(true);
     try {
+      // The account decision is collected at sign-in, before opening this modal.
+      await requireAIConsent(false, profile.userId);
       const draftSource = source
         ? { scope: source.scope, memoId: source.memoId }
         : { scope: "personal" as const, memoId: "pending-local-note" };
@@ -118,9 +128,9 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
     }
   };
 
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.screen}>
+  if (!visible) return null;
+  const content = (
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}><SafeAreaView style={styles.screen}>
         <View style={styles.header}>
           <Pressable style={styles.headerButton} onPress={onClose} disabled={submitting}><Text style={styles.cancel}>キャンセル</Text></Pressable>
           <Text style={styles.title}>Commonsに投稿</Text>
@@ -128,8 +138,8 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
             {submitting ? <ActivityIndicator color="#ffffff" size="small" /> : <Text style={styles.publishText}>公開</Text>}
           </Pressable>
         </View>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.caption}>公開後にCommons側で編集すると、元メモにも同じ変更が反映されます。</Text>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="always">
+          <Text style={styles.caption}>公開内容は元メモと連動します。公開前に内容の安全確認を行います。</Text>
           <Text style={styles.label}>タイトル</Text>
           <TextInput value={title} onChangeText={setTitle} style={styles.input} placeholder="タイトル（任意）" />
           <TextInput value={body} onChangeText={setBody} style={styles.body} multiline autoFocus placeholder="探究やプロジェクトの活動を共有する" textAlignVertical="top" />
@@ -150,9 +160,10 @@ const GuildPostComposerModal = ({ visible, source = null, initialTitle = "", ini
             <Text style={styles.projectPickerText}>{projectChoices.find((project) => project.id === projectId)?.name ?? "プロジェクトを選択"}</Text>
           </Pressable>
         </ScrollView>
-      </SafeAreaView>
-    </Modal>
+      </SafeAreaView></SafeAreaProvider>
   );
+  return embedded ? <View style={{ ...StyleSheet.absoluteFillObject, zIndex: 20, backgroundColor: '#fff' }} accessibilityViewIsModal>{content}</View>
+    : <Modal visible animationType="slide" onRequestClose={() => { if (!submitting) onClose(); }}>{content}</Modal>;
 };
 
 const styles = StyleSheet.create({

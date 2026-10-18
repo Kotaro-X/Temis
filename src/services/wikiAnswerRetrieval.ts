@@ -15,12 +15,12 @@ import {
 export const searchWikiAnswerEvidence = async (
   query: string,
   maxMemos = 15,
-  options?: { noteScope?: "personal" | "project"; projectId?: string },
+  options?: { noteScope?: "personal" | "project"; projectId?: string; expectedUid?: string },
 ) => {
   if (!query.trim()) return [];
   let researchNotes: ReturnType<typeof listResearchNotes> | undefined;
   const provider = getEmbeddingProvider();
-  const queryEmbedding = await provider.embed(query);
+  const queryEmbedding = await provider.embed(query, { expectedUid: options?.expectedUid });
   const hits = await hybridSearch(query, { topK: 60, topN: 60, queryEmbedding });
   const seedIds = selectWikiAnswerSeedIds(hits);
   return retrieveWikiAnswerEvidence(query, seedIds, {
@@ -36,6 +36,9 @@ export const searchWikiAnswerEvidence = async (
               ? (await (researchNotes ??= listResearchNotes())).find((note) => note.id === memoId.slice(7))
               : await getMemoById(memoId);
           if (!record) return null;
+          if (memoId.startsWith("note:") && (!options?.noteScope || options.noteScope === "personal")) {
+            if (!("scope" in record) || record.scope !== "personal") return null;
+          }
           if (memoId.startsWith("note:") && options?.noteScope) {
             if (!("scope" in record) || record.scope !== options.noteScope) return null;
             if (options.noteScope === "project" && options.projectId && record.projectId !== options.projectId) return null;

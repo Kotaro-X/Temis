@@ -38,7 +38,9 @@ test("project permissions preserve the owner/member/viewer boundary", () => {
   assert.equal(canInviteToProject(project, "owner"), true);
   assert.equal(canInviteToProject(project, "viewer"), false);
   assert.equal(canInviteToProject({ ...project, invitationPolicy: "owner_only" }, "member"), false);
-  assert.equal(canEditProjectTask(task, "viewer", "viewer"), false);
+  assert.equal(canEditProjectTask(task, "viewer", "viewer"), true);
+  assert.equal(canEditProjectTask({ ...task, kind: "todo" }, "viewer", "viewer"), false);
+  assert.equal(canEditProjectTask(task, null, "owner"), false);
   assert.equal(canEditProjectTask(task, "member", "member"), true);
 });
 
@@ -51,7 +53,7 @@ test("a project creator can find their own content from Private", () => {
   assert.equal(isProjectContentCreatedBy(task, "carol"), false);
 });
 
-test("project tasks retain personal-task editing fields without timer state", () => {
+test("legacy project tasks retain personal-task editing fields when timer state is absent", () => {
   const task: ProjectTask = {
     id: "t", ownerUserId: "owner", creatorUserId: "owner", projectId: "p1",
     title: "共有タスク", status: "paused", tags: ["開発"], estimateMinutes: 45,

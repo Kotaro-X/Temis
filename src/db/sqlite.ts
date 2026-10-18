@@ -1,3 +1,4 @@
+import { getEnvironmentEpoch } from "../services/environment/runtimeEnvironment";
 import {
   deleteDatabaseAsync,
   openDatabaseSync,
@@ -5,19 +6,25 @@ import {
 } from "expo-sqlite";
 
 import { runMigrations } from "./migrations";
+import { accountWorkspace } from "../services/account/accountWorkspace";
 
 const DB_NAME = "wememo.db";
 
-let db: SQLiteDatabase | null = null;
+const databases = new Map<string, SQLiteDatabase>();
+const databaseName = () => accountWorkspace.scope() === "legacy" ? DB_NAME
+  : `wememo-account-${accountWorkspace.scope()}.db`;
 
 const getDatabase = (): SQLiteDatabase => {
+  const name = databaseName();
+  let db = databases.get(name);
   if (!db) {
-    db = openDatabaseSync(DB_NAME);
+    db = openDatabaseSync(name);
+    databases.set(name, db);
   }
   return db;
 };
 
-type SqlParams = Array<string | number | null>;
+type SqlParams = (string | number | null)[];
 
 type SqlRow = Record<string, unknown>;
 
@@ -41,22 +48,44 @@ export const executeSql = async (
   sql: string,
   params: SqlParams = [],
 ): Promise<SqlResultSet> => {
+  const epoch = getEnvironmentEpoch();
+  await accountWorkspace.initialize();
+  if (epoch !== getEnvironmentEpoch()) throw new Error("接続環境が切り替わりました。");
   const rows = await getDatabase().getAllAsync<SqlRow>(sql, params);
+  if (epoch !== getEnvironmentEpoch()) throw new Error("接続環境が切り替わりました。");
   return { rows: toRowList(rows) };
 };
 
-let readyPromise: Promise<void> | null = null;
+const readyPromises = new Map<string, Promise<void>>();
 
 export const ensureDbReady = async (): Promise<void> => {
+  const epoch = getEnvironmentEpoch();
+  await accountWorkspace.initialize();
+  if (epoch !== getEnvironmentEpoch()) throw new Error("接続環境が切り替わりました。");
+  const name = databaseName();
+  let readyPromise = readyPromises.get(name);
   if (!readyPromise) {
-    readyPromise = runMigrations(executeSql);
+    const database = getDatabase();
+    readyPromise = runMigrations(async (sql, params = []) => {
+      const rows = await database.getAllAsync<SqlRow>(sql, params);
+      return { rows: toRowList(rows) };
+    });
+    readyPromises.set(name, readyPromise);
   }
   return readyPromise;
 };
 
 export const deleteLocalDatabase = async (): Promise<void> => {
-  db?.closeSync();
-  db = null;
-  readyPromise = null;
-  await deleteDatabaseAsync(DB_NAME);
+  const epoch = getEnvironmentEpoch();
+  await accountWorkspace.initialize();
+  if (epoch !== getEnvironmentEpoch()) throw new Error("接続環境が切り替わりました。");
+  for (const scope of accountWorkspace.databaseScopes()) {
+    const name = scope === "legacy" ? DB_NAME : `wememo-account-${scope}.db`;
+    // A recorded account may never have opened its database. Opening then
+    // closing also makes deletion safe when its file is already absent.
+    (databases.get(name) ?? openDatabaseSync(name)).closeSync();
+    databases.delete(name);
+    readyPromises.delete(name);
+    await deleteDatabaseAsync(name);
+  }
 };

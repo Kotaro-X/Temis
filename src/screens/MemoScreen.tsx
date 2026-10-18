@@ -1,3 +1,4 @@
+import MemoSearchField from "../components/memo/MemoSearchField";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -13,7 +14,6 @@ import {
   SectionList,
   StyleSheet,
   Text,
-  TextInput,
   TextInputSelectionChangeEventData,
   View,
 } from "react-native";
@@ -27,15 +27,10 @@ import {
   listResearchNotes,
 } from "../services/researchNoteService";
 import {
-  normalizeKey,
-  normalizeParens,
   tokenizeLinks,
 } from "../utils/linkTokenize";
-import { loadTodos } from "../repositories/todoRepository";
-import TodoComposerHost from "../components/todos/TodoComposerHost";
-import { useTodoWorkspace } from "../context/TodoWorkspaceContext";
 import {
-  ALL_TAG_FILTER, NO_TAG_FILTER, buildTodoMemoItems, filterMemoTab,
+  ALL_TAG_FILTER, NO_TAG_FILTER, filterMemoTab,
   filterMemoTags, filterMemoQuery, hasMemoTags, type MemoItem,
 } from "../utils/memoListItems";
 import {
@@ -133,6 +128,9 @@ const buildTaskIndex = async () => {
         const existing = taskIndex.get(task.id);
         if (!existing || state.date > existing.date) {
           taskIndex.set(task.id, { title, date: state.date, tags: task.tags ?? [] });
+          for (const [day, override] of Object.entries(task.occurrenceOverrides ?? {})) {
+            taskIndex.set(`${task.id}@${day}`, { title: override.title ?? title, date: override.date, tags: override.tags ?? task.tags ?? [] });
+          }
         }
       }
     }
@@ -141,18 +139,17 @@ const buildTaskIndex = async () => {
 };
 
 const buildMemoItems = async (): Promise<MemoItem[]> => {
-  const [taskIndex, memos, notes, tankyuNotes, todos] = await Promise.all([
+  const [taskIndex, memos, notes, tankyuNotes] = await Promise.all([
     buildTaskIndex(),
     listAllMemos(),
     listAllNotes(),
     listResearchNotes(),
-    loadTodos(),
   ]);
-  const items: MemoItem[] = buildTodoMemoItems(todos);
+  const items: MemoItem[] = [];
   for (const memo of memos) {
     const info = taskIndex.get(memo.taskId);
     const updatedAt = memo.updatedAt ?? memo.createdAt;
-    const date = info?.date ?? dateFromTimestamp(updatedAt);
+    const date = info?.date === 'undated' ? '日付未定' : info?.date ?? dateFromTimestamp(updatedAt);
     items.push({
       key: `task:${memo.id}`,
       memoId: memo.id,
@@ -205,19 +202,6 @@ const buildMemoItems = async (): Promise<MemoItem[]> => {
     });
   }
   return items.sort((a, b) => b.updatedAt - a.updatedAt);
-};
-
-const extractLinkQuery = (input: string) => {
-  const normalized = normalizeParens(input);
-  const start = normalized.lastIndexOf("((");
-  if (start === -1) {
-    return { isActive: false, query: "" };
-  }
-  const after = normalized.slice(start + 2);
-  if (after.includes("))")) {
-    return { isActive: false, query: "" };
-  }
-  return { isActive: true, query: after };
 };
 
 const MemoEvidenceCard = ({
@@ -276,7 +260,6 @@ const MemoScreen = ({
   language,
 }: Props) => {
   const tr = (key: string) => t(language, key);
-  const { closeTodoCreate, openTodoEditById, todoComposerSource } = useTodoWorkspace();
   const allTagLabel = tr("common.all");
   const noTagLabel = tr("common.noTag");
   const untitledLabel = tr("common.untitled");
@@ -317,21 +300,14 @@ const MemoScreen = ({
   const [tagFilter, setTagFilter] = useState(ALL_TAG_FILTER);
   const [headerBottomY, setHeaderBottomY] = useState(0);
   const [qaInputFocused, setQaInputFocused] = useState(false);
-  const [searchInputFocused, setSearchInputFocused] = useState(false);
   const [qaSelection, setQaSelection] = useState<Selection | null>(null);
   const [qaSelectionOverride, setQaSelectionOverride] = useState<Selection | null>(null);
-  const [searchSelection, setSearchSelection] = useState<Selection | null>(null);
-  const [searchSelectionOverride, setSearchSelectionOverride] = useState<Selection | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const aiUsage = useTemisAIUsage();
   const listRef = useRef<SectionList<MemoItem>>(null);
   const qaAccessoryId = useMemo(
     () => `qa-toolbar-${Math.random().toString(36).slice(2, 10)}`,
-    [],
-  );
-  const searchAccessoryId = useMemo(
-    () => `search-toolbar-${Math.random().toString(36).slice(2, 10)}`,
     [],
   );
   const {
@@ -382,9 +358,6 @@ const MemoScreen = ({
     if (visible) return loadItems();
   }, [loadItems, refreshToken, visible, tab]);
 
-  useEffect(() => {
-    if (!visible && todoComposerSource === "memo") closeTodoCreate();
-  }, [closeTodoCreate, todoComposerSource, visible]);
 
   useEffect(() => {
     const showEvent =
@@ -438,32 +411,6 @@ const MemoScreen = ({
     });
   }, [qaQuery]);
 
-  useEffect(() => {
-    const end = query.length;
-    setSearchSelection((prev) => {
-      if (!prev) {
-        return prev;
-      }
-      const nextStart = Math.min(prev.start, end);
-      const nextEnd = Math.min(prev.end, end);
-      if (nextStart === prev.start && nextEnd === prev.end) {
-        return prev;
-      }
-      return { start: nextStart, end: nextEnd };
-    });
-    setSearchSelectionOverride((prev) => {
-      if (!prev) {
-        return prev;
-      }
-      const nextStart = Math.min(prev.start, end);
-      const nextEnd = Math.min(prev.end, end);
-      if (nextStart === prev.start && nextEnd === prev.end) {
-        return prev;
-      }
-      return { start: nextStart, end: nextEnd };
-    });
-  }, [query]);
-
   const handleQaSelectionChange = (
     event: NativeSyntheticEvent<TextInputSelectionChangeEventData>,
   ) => {
@@ -480,24 +427,6 @@ const MemoScreen = ({
   const applyQaSelection = (next: Selection) => {
     setQaSelection(next);
     setQaSelectionOverride(next);
-  };
-
-  const handleSearchSelectionChange = (
-    event: NativeSyntheticEvent<TextInputSelectionChangeEventData>,
-  ) => {
-    const next = event.nativeEvent.selection;
-    setSearchSelection(next);
-    setSearchSelectionOverride((prev) => {
-      if (!prev) {
-        return prev;
-      }
-      return prev.start !== next.start || prev.end !== next.end ? null : prev;
-    });
-  };
-
-  const applySearchSelection = (next: Selection) => {
-    setSearchSelection(next);
-    setSearchSelectionOverride(next);
   };
 
   useEffect(() => {
@@ -525,67 +454,6 @@ const MemoScreen = ({
   }, [tab, tagFilter]);
 
   const activeTagSet = useMemo(() => new Set(tagLibrary), [tagLibrary]);
-
-  const linkIndex = useMemo(() => {
-    const index = new Map<string, { label: string; count: number }>();
-    for (const item of items) {
-      const parts = tokenizeLinks(item.memoText);
-      for (const part of parts) {
-        if (part.type !== "link") {
-          continue;
-        }
-        const token = part.value.trim();
-        if (!token) {
-          continue;
-        }
-        const key = normalizeKey(token);
-        if (!key) {
-          continue;
-        }
-        const existing = index.get(key);
-        if (existing) {
-          existing.count += 1;
-        } else {
-          index.set(key, { label: token, count: 1 });
-        }
-      }
-    }
-    return index;
-  }, [items]);
-
-  const activeLinkQuery = useMemo(() => extractLinkQuery(query), [query]);
-
-  const suggestions = useMemo(() => {
-    if (!activeLinkQuery.isActive) {
-      return [];
-    }
-    const entries = Array.from(linkIndex.entries()).map(([key, value]) => ({
-      key,
-      label: value.label,
-      count: value.count,
-    }));
-    if (entries.length === 0) {
-      return [];
-    }
-    const needle = normalizeKey(activeLinkQuery.query);
-    if (!needle) {
-      return entries
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10);
-    }
-    const prefixMatches: typeof entries = [];
-    const containsMatches: typeof entries = [];
-    for (const entry of entries) {
-      if (entry.key.startsWith(needle)) {
-        prefixMatches.push(entry);
-      } else if (entry.key.includes(needle)) {
-        containsMatches.push(entry);
-      }
-    }
-    prefixMatches.sort((a, b) => b.count - a.count);
-    containsMatches.sort((a, b) => b.count - a.count);
-    return [...prefixMatches, ...containsMatches].slice(0, 10);
-  }, [activeLinkQuery, linkIndex]);
 
   const tabbedItems = useMemo(() => filterMemoTab(items, tab), [items, tab]);
 
@@ -791,40 +659,9 @@ const MemoScreen = ({
           );
         })}
       </View>
-      <View style={styles.searchRow}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder={tr("memo.searchPlaceholder")}
-          value={query}
-          onChangeText={setQuery}
-          selection={searchSelectionOverride ?? undefined}
-          onSelectionChange={handleSearchSelectionChange}
-          inputAccessoryViewID={
-            Platform.OS === "ios" ? searchAccessoryId : undefined
-          }
-          onFocus={() => setSearchInputFocused(true)}
-          onBlur={() => setSearchInputFocused(false)}
-        />
-        {activeLinkQuery.isActive && suggestions.length > 0 ? (
-          <View style={styles.suggestionPanel}>
-            <ScrollView>
-              {suggestions.map((item) => (
-                <Pressable
-                  key={item.key}
-                  style={styles.suggestionRow}
-                  onPress={() => setQuery(`((` + item.label + `))`)}
-                >
-                  <Text style={styles.suggestionText}>
-                    {`((` + item.label + `))`}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        ) : null}
-      </View>
+      <MemoSearchField value={query} onChangeText={setQuery} tokens={items.flatMap(item => tokenizeLinks(item.memoText).filter(part => part.type === "link").map(part => part.value))} placeholder={tr("memo.searchPlaceholder")} />
       {tab === "task" || tab === "all" ? (
-        <ScrollView
+        <ScrollView keyboardShouldPersistTaps="always"
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterRow}
@@ -859,7 +696,7 @@ const MemoScreen = ({
         {loading ? (
           <Text style={styles.helperText}>{tr("common.loading")}</Text>
         ) : (
-          <SectionList
+          <SectionList keyboardShouldPersistTaps="always"
             ref={listRef}
             key={`${tab}-${tagFilter}`}
             sections={sections}
@@ -880,13 +717,7 @@ const MemoScreen = ({
                     ...(item.source === "todo" && item.tags?.length ? [item.tags.join(" · ")] : []),
                   ]}
                   onPress={() => {
-                      if (item.source === "todo") {
-                        Keyboard.dismiss();
-                        if (!item.todoId) return;
-                        void openTodoEditById(item.todoId, "memo").then((opened) => {
-                          if (!opened) Alert.alert(tr("todo.editTitle"), "ToDoが削除されたか、見つかりません。");
-                        });
-                      } else openMemoDetail(item.memoId);
+                      openMemoDetail(item.memoId);
                     }}
                   onDelete={item.source !== "todo" ? () => handleDeleteMemo(item) : undefined}
                   deleting={isDeleting}
@@ -934,7 +765,7 @@ const MemoScreen = ({
             ) : qaSearched && qaResults.length === 0 ? (
               <Text style={styles.qaHelperText}>{tr("memo.aiNoRelated")}</Text>
             ) : (
-              <ScrollView
+              <ScrollView keyboardShouldPersistTaps="always"
                 style={[styles.qaResultList, styles.qaResultListExpanded]}
                 contentContainerStyle={styles.qaResultListContent}
                 showsVerticalScrollIndicator
@@ -978,14 +809,6 @@ const MemoScreen = ({
               onSelectionChange={applyQaSelection}
             />
           </InputAccessoryView>
-          <InputAccessoryView nativeID={searchAccessoryId} backgroundColor="#fff">
-            <BracketToolbar
-              value={query}
-              selection={searchSelection}
-              onChangeText={setQuery}
-              onSelectionChange={applySearchSelection}
-            />
-          </InputAccessoryView>
         </>
       ) : qaInputFocused && keyboardVisible ? (
         <View
@@ -1001,22 +824,7 @@ const MemoScreen = ({
             onSelectionChange={applyQaSelection}
           />
         </View>
-      ) : searchInputFocused && keyboardVisible ? (
-        <View
-          style={[
-            styles.qaBracketToolbar,
-            { bottom: Math.max(0, keyboardOffset) },
-          ]}
-        >
-          <BracketToolbar
-            value={query}
-            selection={searchSelection}
-            onChangeText={setQuery}
-            onSelectionChange={applySearchSelection}
-          />
-        </View>
       ) : null}
-      <TodoComposerHost source="memo" tr={tr} />
     </SafeAreaView>
   );
 };

@@ -279,6 +279,21 @@ service cloud.firestore {
         && data.isDeleted is bool;
     }
 
+    function validTaskPlanning(data) {
+      let start = data.get("plannedStartAt", null);
+      let end = data.get("plannedEndAt", null);
+      return ((start == null && end == null) || (start is int && end is int && start >= 0 && end >= start + 300000))
+        && data.get("repeat", "none") in ["none", "daily", "weekly", "monthly", "yearly"]
+        && (data.get("repeatAnchorDate", null) == null || (data.repeatAnchorDate is string && data.repeatAnchorDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+        && data.get("occurrenceOverrides", {}) is map && data.get("occurrenceOverrides", {}).size() <= 1000;
+    }
+    function validTaskReminder(data) {
+      return data is map && data.keys().hasOnly(["enabled", "mode", "offsetMinutes", "at"])
+        && data.keys().hasAll(["enabled", "mode", "offsetMinutes", "at"])
+        && data.enabled is bool && data.mode in ["start", "custom"]
+        && data.offsetMinutes in [0, 5, 10, 15, 30, 60]
+        && (data.at == null || (data.at is int && data.at >= 0));
+    }
     function validTaskState(data) {
       return data.keys().hasAll([
           "id", "taskName", "tags", "estimateMinutes", "elapsedMinutes",
@@ -286,7 +301,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           "id", "taskName", "tags", "estimateMinutes", "elapsedMinutes",
-          "status", "isArchived", "startAt",
+          "status", "isArchived", "startAt", "plannedStartAt", "plannedEndAt", "repeat", "repeatAnchorDate", "occurrenceOverrides", "reminder", "migratedTodoId",
         ])
         && validString(data.id, 512)
         && validString(data.taskName, 1000)
@@ -295,7 +310,10 @@ service cloud.firestore {
         && data.elapsedMinutes is number
         && data.status in ["TODO", "IN_PROGRESS", "PAUSED", "DONE"]
         && data.isArchived is bool
-        && validNullableInt(data.startAt);
+        && validNullableInt(data.startAt)
+        && validTaskPlanning(data)
+        && (data.get("reminder", null) == null || validTaskReminder(data.reminder))
+        && (data.get("migratedTodoId", null) == null || data.migratedTodoId is string);
     }
 
     function validTaskLog(data) {
@@ -444,6 +462,15 @@ service cloud.firestore {
         && validMemoRecord(data.record, documentId);
     }
 
+    match /users/{userId}/taskPreferences/{preferenceId} {
+      allow read, delete: if isSelf(userId);
+      allow create, update: if isSelf(userId) && (
+        (preferenceId == "reminders" && request.resource.data.keys().hasOnly(["reminders"])
+          && request.resource.data.reminders is map && request.resource.data.reminders.size() <= 1000)
+        || (preferenceId == "todoMigration" && request.resource.data.keys().hasOnly(["ids"])
+          && request.resource.data.ids is map && request.resource.data.ids.size() <= 10000)
+      );
+    }
     match /users/{userId}/tags/{tagId} {
       allow read: if isSelf(userId) && hasActiveTemisPlus(userId);
       allow create: if isSelf(userId) && hasActiveTemisPlus(userId)
@@ -470,7 +497,10 @@ service cloud.firestore {
         && validTaskEnvelope(request.resource.data, taskId);
       allow update: if isSelf(userId) && hasActiveTemisPlus(userId)
         && validTaskEnvelope(request.resource.data, taskId)
-        && request.resource.data.updatedAt >= resource.data.updatedAt;
+        && request.resource.data.updatedAt >= resource.data.updatedAt
+        && (resource.data.record.kind != "state" || request.resource.data.record.kind != "state"
+          || !resource.data.record.task.keys().hasAny(["plannedStartAt"])
+          || request.resource.data.record.task.keys().hasAll(["plannedStartAt", "plannedEndAt", "repeat", "repeatAnchorDate", "occurrenceOverrides"]));
       allow delete: if isSelf(userId) && hasActiveTemisPlus(userId);
     }
 
@@ -625,7 +655,7 @@ service cloud.firestore {
     function validGuildPost(data, postId) {
       return data.keys().hasOnly([
           "id", "authorUserId", "authorDisplayName", "authorPhotoUrl", "title", "body", "tags", "type", "projectId",
-          "source", "status", "moderation", "createdAt", "updatedAt", "publishedAt",
+          "source", "status", "moderation", "safety", "createdAt", "updatedAt", "publishedAt",
         ])
         && data.id == postId
         && validString(data.authorUserId, 128) && validString(data.authorDisplayName, 100)
@@ -647,7 +677,9 @@ service cloud.firestore {
     }
 
     function guildPostIsVisible(data) {
-      return data.status == "published" && data.moderation.visibility == "visible";
+      return data.status == "published" && data.moderation.visibility == "visible"
+        && data.get("safety", {}).get("status", "") == "approved"
+        && data.get("safety", {}).get("version", 0) == 1;
     }
 
     function validProjectJoinRequest(data, requestId) {
@@ -720,19 +752,15 @@ service cloud.firestore {
     match /connections/{connectionId} {
       allow read: if signedIn() && request.auth.uid in resource.data.userIds;
       allow create: if isSupportedAccountUser() && validConnection(request.resource.data, connectionId)
-        && request.resource.data.requesterUserId == request.auth.uid
-        && (request.resource.data.status == "pending"
-          || (request.resource.data.status == "blocked" && request.resource.data.blockedByUserId == request.auth.uid));
+        && request.resource.data.requesterUserId == request.auth.uid && request.resource.data.status == "pending";
       allow update: if isSupportedAccountUser() && request.auth.uid in resource.data.userIds
         && validConnection(request.resource.data, connectionId)
         && request.resource.data.userIds == resource.data.userIds
-        && ((resource.data.status == "pending" && resource.data.recipientUserId == request.auth.uid
-            && request.resource.data.status == "connected"
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "blockedByUserId", "updatedAt"]))
-          || (request.resource.data.status == "blocked" && request.resource.data.blockedByUserId == request.auth.uid
-            && (resource.data.status != "blocked" || resource.data.blockedByUserId == request.auth.uid)));
-      allow delete: if signedIn() && request.auth.uid in resource.data.userIds
-        && (resource.data.status != "blocked" || resource.data.blockedByUserId == request.auth.uid);
+        && resource.data.status == "pending" && resource.data.recipientUserId == request.auth.uid
+        && request.resource.data.status == "connected"
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "blockedByUserId", "updatedAt"]);
+      allow delete: if signedIn() && request.auth.uid in resource.data.userIds && resource.data.status != "blocked";
+
     }
 
     // Server-created DM documents. Only participants may read; writes go through
@@ -791,9 +819,47 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.inviterUserId == request.auth.uid;
     }
 
+    // A task memo may be edited only together with its authoritative task.
+    function validProjectTaskMemo(noteId, data) {
+      let taskPath = /databases/$(database)/documents/projectTasks/$(data.sourceTaskId);
+      let task = getAfter(taskPath).data;
+      return data.sourceTaskId is string
+        && isProjectMember(data.projectId) && projectRole(data.projectId) in ["owner", "member"] && hasProjectDataAccess(data.projectId)
+        && task.projectId == data.projectId && task.get("kind", "task") == "task"
+        && task.get("deletedAt", null) == data.get("deletedAt", null) && task.relatedMemoId == noteId
+        && task.title == data.title && (task.get("description", null) == null ? "" : task.description) == data.body;
+    }
+    function validSharedTask(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 2000
+        && (data.get("description", null) == null || (data.description is string && data.description.size() <= 200000))
+        && validTaskPlanning(data)
+        && data.status in ["todo", "in_progress", "paused", "completed"]
+        && data.get("tags", []) is list && data.get("tags", []).size() <= 100
+        && data.get("estimateMinutes", 25) is number && data.get("estimateMinutes", 25) >= 0 && data.get("estimateMinutes", 25) <= 100000
+        && data.get("isArchived", false) is bool
+        && (data.get("privateDate", null) == null || (data.privateDate is string && data.privateDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+        && (data.get("privateSlotKey", null) == null || data.privateSlotKey in ["morning", "forenoon", "afternoon", "night"])
+        && data.get("elapsedMinutes", 0) is number && data.get("elapsedMinutes", 0) >= 0
+        && (data.get("startAt", null) == null || (data.startAt is number && data.startAt >= 0))
+        && (data.status == "in_progress" || data.get("startAt", null) == null)
+        && (data.get("assigneeUserId", null) == null || (data.assigneeUserId is string && exists(projectMemberPath(data.projectId, data.assigneeUserId))));
+    }
+
     match /projectNotes/{noteId} {
+      allow create: if signedIn() && request.resource.data.get("sourceTaskId", null) != null
+        && request.resource.data.id == noteId && validProjectTaskMemo(noteId, request.resource.data)
+        && request.resource.data.ownerUserId == getAfter(/databases/$(database)/documents/projectTasks/$(request.resource.data.sourceTaskId)).data.ownerUserId;
+      allow update: if signedIn() && request.resource.data.get("sourceTaskId", null) != null
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["title", "body", "updatedAt", "sourceTaskId", "deletedAt"])
+        && (resource.data.get("sourceTaskId", null) == null || resource.data.sourceTaskId == request.resource.data.sourceTaskId)
+        && validProjectTaskMemo(noteId, request.resource.data)
+        && (resource.data.get("sourceTaskId", null) != null || get(/databases/$(database)/documents/projectTasks/$(request.resource.data.sourceTaskId)).data.get("relatedMemoId", null) == noteId);
+      // Creation transactions must be able to check that the ID is unused.
+      // Existing documents and collection queries still require membership.
+      allow get: if signedIn() && !exists(/databases/$(database)/documents/projectNotes/$(noteId));
       allow read: if isProjectMember(resource.data.projectId) && hasProjectDataAccess(resource.data.projectId);
-      allow create: if signedIn() && request.resource.data.id == noteId
+      allow create: if signedIn() && request.resource.data.get("sourceTaskId", null) == null && request.resource.data.id == noteId
         && request.resource.data.ownerUserId == request.auth.uid
         && request.resource.data.sourceNoteId != null
         && (!request.resource.data.keys().hasAny(["creatorAnonymizedAt"]) || request.resource.data.creatorAnonymizedAt == null)
@@ -801,6 +867,8 @@ service cloud.firestore {
         && isProjectEditor(request.resource.data.projectId)
         && hasProjectDataAccess(request.resource.data.projectId);
       allow update: if signedIn()
+        && resource.data.get("sourceTaskId", null) == null
+        && request.resource.data.get("sourceTaskId", null) == null
         && request.resource.data.projectId == resource.data.projectId
         && hasProjectDataAccess(resource.data.projectId)
         && (
@@ -823,33 +891,43 @@ service cloud.firestore {
 
     match /projectTasks/{taskId} {
       allow read: if isProjectMember(resource.data.projectId) && hasProjectDataAccess(resource.data.projectId);
-      allow create: if signedIn() && request.resource.data.id == taskId
+      allow create: if projectRole(request.resource.data.projectId) in ["owner", "member"] && signedIn() && request.resource.data.id == taskId
         && request.resource.data.ownerUserId == request.auth.uid
         && request.resource.data.creatorUserId == request.auth.uid
-        && isProjectEditor(request.resource.data.projectId)
+        && (isProjectEditor(request.resource.data.projectId) || (request.resource.data.get("kind", "task") == "task" && isProjectMember(request.resource.data.projectId)))
         && hasProjectDataAccess(request.resource.data.projectId)
         && (!request.resource.data.keys().hasAny(["creatorAnonymizedAt"]) || request.resource.data.creatorAnonymizedAt == null)
         && (!request.resource.data.keys().hasAny(["anonymizedReason"]) || request.resource.data.anonymizedReason == null)
         && get(projectPath(request.resource.data.projectId)).data.taskEnabled == true
-        && (request.resource.data.assigneeUserId == null || exists(projectMemberPath(request.resource.data.projectId, request.resource.data.assigneeUserId)));
-      allow update: if signedIn() && isProjectMember(resource.data.projectId)
+        && validSharedTask(request.resource.data)
+        && (request.resource.data.get("assigneeUserId", null) == null || exists(projectMemberPath(request.resource.data.projectId, request.resource.data.assigneeUserId)));
+      allow update: if projectRole(resource.data.projectId) in ["owner", "member"] && signedIn() && isProjectMember(resource.data.projectId)
         && hasProjectDataAccess(resource.data.projectId)
         && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (request.resource.data.get("kind", "task") == resource.data.get("kind", "task") || (resource.data.get("kind", "task") == "todo" && request.resource.data.get("kind", "task") == "task"))
+        && (request.resource.data.get("kind", "task") != "task" || validSharedTask(request.resource.data))
+        && (resource.data.get("kind", "task") != "task" || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "plannedStartAt", "plannedEndAt", "repeat", "repeatAnchorDate", "occurrenceOverrides", "title", "description", "status", "tags", "estimateMinutes", "isArchived", "priority", "dueAt", "privateDate", "privateSlotKey", "assigneeUserId", "relatedMemoId", "elapsedMinutes", "startAt", "completedAt", "deletedAt", "updatedAt"
+        ]))
+        && (resource.data.get("kind", "task") != "task" || request.resource.data.get("relatedMemoId", null) == resource.data.get("relatedMemoId", null)
+          || (resource.data.get("relatedMemoId", null) == null && request.resource.data.get("relatedMemoId", null) == "project-task-" + taskId))
         && request.resource.data.ownerUserId == resource.data.ownerUserId
         && request.resource.data.creatorUserId == resource.data.creatorUserId
         && request.resource.data.get("creatorDisplayName", null) == resource.data.get("creatorDisplayName", null)
         && request.resource.data.get("creatorAnonymizedAt", null) == resource.data.get("creatorAnonymizedAt", null)
         && request.resource.data.get("anonymizedReason", null) == resource.data.get("anonymizedReason", null)
-        && (resource.data.get("anonymizedReason", null) != "project_exit"
+        && (resource.data.get("kind", "task") == "task" || resource.data.get("anonymizedReason", null) != "project_exit"
           || request.resource.data.get("relatedMemoId", null) == resource.data.get("relatedMemoId", null))
-        && ((resource.data.get("anonymizedReason", null) == "project_exit"
+        && (resource.data.get("kind", "task") == "task" || (resource.data.get("anonymizedReason", null) == "project_exit"
             && projectRole(resource.data.projectId) in ["owner", "member"]
             && (projectRole(resource.data.projectId) == "owner"
               || request.resource.data.get("deletedAt", null) == resource.data.get("deletedAt", null)))
           || (resource.data.get("anonymizedReason", null) != "project_exit"
             && (projectRole(resource.data.projectId) in ["owner", "member"] || resource.data.ownerUserId == request.auth.uid || resource.data.creatorUserId == request.auth.uid || resource.data.assigneeUserId == request.auth.uid)))
-        && (request.resource.data.assigneeUserId == null || exists(projectMemberPath(resource.data.projectId, request.resource.data.assigneeUserId)));
-      allow delete: if signedIn() && hasProjectDataAccess(resource.data.projectId)
+        && (request.resource.data.get("assigneeUserId", null) == null || exists(projectMemberPath(resource.data.projectId, request.resource.data.assigneeUserId)));
+      allow delete: if projectRole(resource.data.projectId) in ["owner", "member"] && signedIn() && hasProjectDataAccess(resource.data.projectId)
         && ((resource.data.get("anonymizedReason", null) == "project_exit" && isProjectOwner(resource.data.projectId))
           || (resource.data.get("anonymizedReason", null) != "project_exit" && (isProjectOwner(resource.data.projectId) || resource.data.ownerUserId == request.auth.uid)));
     }
@@ -866,20 +944,15 @@ service cloud.firestore {
       allow list: if signedIn() && (
         resource.data.authorUserId == request.auth.uid || guildPostIsVisible(resource.data)
       );
-      allow create: if signedIn() && validGuildPost(request.resource.data, postId)
-        && request.resource.data.authorUserId == request.auth.uid
-        && request.resource.data.status == "published"
-        && request.resource.data.moderation.visibility == "visible"
-        && (request.resource.data.projectId == null || (
-          isProjectEditor(request.resource.data.projectId)
-          && hasProjectDataAccess(request.resource.data.projectId)
-        ));
+      allow create: if false;
       allow update: if validGuildPost(request.resource.data, postId) && (
         (signedIn() && resource.data.authorUserId == request.auth.uid
-          && request.resource.data.authorUserId == resource.data.authorUserId
-          && request.resource.data.source == resource.data.source
-          && request.resource.data.moderation == resource.data.moderation
-          && request.resource.data.createdAt == resource.data.createdAt)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "publishedAt", "updatedAt"])
+          && request.resource.data.status in ["unpublished", "deleted"] && request.resource.data.publishedAt == null)
+        || (signedIn() && resource.data.authorUserId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["authorDisplayName", "authorPhotoUrl", "updatedAt"])
+          && request.resource.data.authorDisplayName == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.displayName
+          && request.resource.data.authorPhotoUrl == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.photoUrl)
         || (isGuildStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["moderation", "updatedAt"]))
       );
       allow delete: if false;
@@ -897,6 +970,27 @@ service cloud.firestore {
       );
       allow create, update: if false;
       allow delete: if false;
+    }
+
+    match /aiConsents/{userId} {
+      allow get: if isSelf(userId);
+      allow list, write: if false;
+    }
+    function validDMReport(data, id) {
+      return data.keys().hasOnly(["id", "conversationId", "messageId", "reporterUserId", "reportedUserId", "reason", "evidence", "status", "createdAt", "updatedAt"])
+        && data.keys().hasAll(["id", "conversationId", "messageId", "reporterUserId", "reportedUserId", "reason", "evidence", "status", "createdAt", "updatedAt"])
+        && data.id == id && validString(data.conversationId, 256) && validString(data.messageId, 256)
+        && validString(data.reporterUserId, 128) && validString(data.reportedUserId, 128) && validString(data.reason, 1000)
+        && data.status in ["pending", "reviewed"] && data.createdAt is int && data.updatedAt is int
+        && data.evidence.keys().hasOnly(["text", "senderUserId", "createdAt"])
+        && validString(data.evidence.text, 4000) && validString(data.evidence.senderUserId, 128) && data.evidence.createdAt is int;
+    }
+    match /dmReports/{reportId} {
+      allow get, list: if isGuildStaff();
+      allow create, delete: if false;
+      allow update: if isGuildStaff() && validDMReport(request.resource.data, reportId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"])
+        && request.resource.data.status == "reviewed";
     }
 
     match /guildReports/{reportId} {

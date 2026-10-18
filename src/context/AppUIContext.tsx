@@ -339,7 +339,8 @@ export const AppUIProvider = ({
   }, [switchRootScreen]);
 
   const openTodo = useCallback(() => {
-    switchRootScreen("todo");
+    setTaskScreen("today");
+    switchRootScreen("tasks");
   }, [switchRootScreen]);
 
   const openMemos = useCallback((screen?: MemoWorkspaceScreenKey) => {

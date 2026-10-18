@@ -141,6 +141,53 @@
         { "fieldPath": "senderUserId", "order": "ASCENDING" },
         { "fieldPath": "deleted", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "guildPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "safety.status", "order": "ASCENDING" },
+        { "fieldPath": "safety.version", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "moderation.visibility", "order": "ASCENDING" },
+        { "fieldPath": "publishedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "guildPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "safety.status", "order": "ASCENDING" },
+        { "fieldPath": "safety.version", "order": "ASCENDING" },
+        { "fieldPath": "tags", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "moderation.visibility", "order": "ASCENDING" },
+        { "fieldPath": "publishedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dmReports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "projectNotes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "projectId", "order": "ASCENDING" },
+        { "fieldPath": "sourceNoteId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "guildPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "authorUserId", "order": "ASCENDING" },
+        { "fieldPath": "source.memoId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

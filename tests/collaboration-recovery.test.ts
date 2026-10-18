@@ -48,6 +48,7 @@ function fixture(cachedProfile: any = null, cacheReadTask?: ReturnType<typeof de
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },
   }).outputText;
   vm.runInNewContext(code, { exports, require: (name: string) => {
+    if (name.endsWith("aiConsent")) return { requireAIConsent: async () => ({ uid: "alice", revision: "1" }), validateConsentReceipt: async () => {} };
     if (name.endsWith("guildAuthorService")) return { resolveGuildAuthors: async (posts: unknown) => posts };
     if (name.endsWith("guildPublicationQueue")) return { startPublicationSync: () => () => {} };
     if (name === "react") return react;
@@ -162,6 +163,7 @@ test("Commons AI cannot call a legacy search endpoint when quota verification fa
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   vm.runInNewContext(code, { exports, process: { env: {} }, require: (name: string) => {
+    if (name.endsWith("aiConsent")) return { requireAIConsent: async () => ({ uid: "alice", revision: "1" }), validateConsentReceipt: async () => {} };
     if (name.endsWith("guildAuthorService")) return { resolveGuildAuthors: async (posts: unknown) => posts };
     if (name === "firebase/functions") return {
       getFunctions: () => ({}),

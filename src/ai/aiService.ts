@@ -15,7 +15,8 @@ export const searchAndGenerateAnswer = async (
     topK?: number;
     topN?: number;
     requestId?: string;
-    retrieveEvidence?: (query: string, options: { topK: number; topN: number }) => Promise<EvidenceInput[]>;
+    expectedUid?: string;
+    retrieveEvidence?: (query: string, options: { topK: number; topN: number; expectedUid?: string }) => Promise<EvidenceInput[]>;
   },
 ): Promise<{
   answer: ReturnType<typeof parseAIResponse>;
@@ -32,6 +33,7 @@ export const searchAndGenerateAnswer = async (
   let searchResults;
   try {
     const retrievalOptions = {
+      expectedUid: options?.expectedUid,
       topK: options?.topK ?? DEFAULT_TOP_K,
       topN: options?.topN ?? options?.topK ?? DEFAULT_TOP_K,
     };
@@ -61,6 +63,7 @@ export const searchAndGenerateAnswer = async (
     undefined,
     undefined,
     options?.requestId,
+    options?.expectedUid,
   );
   if (options?.requestId) {
     await completeTemisAIUsage(options.requestId);

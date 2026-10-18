@@ -1,0 +1,169 @@
+{
+  "status": "proposed-not-applied",
+  "inspectedAt": "2026-10-18T04:14:42.422Z",
+  "existingInfrastructureChanges": [],
+  "createServiceAccounts": [
+    {
+      "project": "temis-c05aa",
+      "email": "temis-environment-signer@temis-c05aa.iam.gserviceaccount.com",
+      "purpose": "Google-managed ticket signature; no key file"
+    }
+  ],
+  "createCustomRoles": [
+    {
+      "project": "temis-c05aa",
+      "roleId": "temisEnvironmentUserReader",
+      "permissions": [
+        "firebaseauth.users.get"
+      ]
+    },
+    {
+      "project": "temis-test-c05aa",
+      "roleId": "temisTestAuthDeletion",
+      "permissions": [
+        "firebaseauth.users.delete"
+      ]
+    }
+  ],
+  "addIamBindings": [
+    {
+      "resource": "projects/temis-c05aa",
+      "member": "serviceAccount:temis-embeddings@temis-c05aa.iam.gserviceaccount.com",
+      "role": "projects/temis-c05aa/roles/temisEnvironmentUserReader",
+      "purpose": "Read live operator claim and revocation state"
+    },
+    {
+      "resource": "projects/temis-c05aa/serviceAccounts/temis-environment-signer@temis-c05aa.iam.gserviceaccount.com",
+      "member": "serviceAccount:temis-embeddings@temis-c05aa.iam.gserviceaccount.com",
+      "role": "roles/iam.serviceAccountTokenCreator",
+      "purpose": "Sign only with the dedicated signer"
+    },
+    {
+      "resource": "projects/temis-test-c05aa/serviceAccounts/temis-embeddings@temis-test-c05aa.iam.gserviceaccount.com",
+      "member": "serviceAccount:temis-embeddings@temis-test-c05aa.iam.gserviceaccount.com",
+      "role": "roles/iam.serviceAccountTokenCreator",
+      "purpose": "Sign test Custom Tokens with own managed key"
+    },
+    {
+      "resource": "projects/temis-test-c05aa",
+      "member": "serviceAccount:temis-embeddings@temis-test-c05aa.iam.gserviceaccount.com",
+      "role": "projects/temis-test-c05aa/roles/temisTestAuthDeletion",
+      "purpose": "Delete only test Auth users"
+    },
+    {
+      "resource": "projects/_/buckets/temis-test-c05aa.firebasestorage.app",
+      "member": "serviceAccount:temis-embeddings@temis-test-c05aa.iam.gserviceaccount.com",
+      "role": "roles/storage.objectAdmin",
+      "purpose": "Test photo lookup and cleanup"
+    },
+    {
+      "resource": "projects/temis-test-c05aa/secrets/OPENAI_API_KEY",
+      "member": "serviceAccount:temis-embeddings@temis-test-c05aa.iam.gserviceaccount.com",
+      "role": "roles/secretmanager.secretAccessor",
+      "purpose": "Read the existing test key only in server runtime"
+    }
+  ],
+  "deployFunctions": {
+    "temis-c05aa": {
+      "create": [
+        "getEnvironmentSwitchCapability",
+        "issueTestSessionTicket"
+      ],
+      "update": [],
+      "delete": []
+    },
+    "temis-test-c05aa": {
+      "create": [
+        "backfillGuildPostAIIndex",
+        "beginFreeProjectSelection",
+        "beginTemisAIUsage",
+        "cancelTemisAIUsage",
+        "cleanupProfilePhotos",
+        "completeTemisAIUsage",
+        "createEmbeddings",
+        "createProjectEmbeddings",
+        "createProjectJoinRequestWithQuota",
+        "createProjectWithQuota",
+        "deleteAccount",
+        "exchangeTestSessionTicket",
+        "generateGroundedAnswer",
+        "getAccountDeletionBlockers",
+        "getConsentedProjectNotes",
+        "getTemisAIUsage",
+        "indexGuildPostForAISearch",
+        "refreshProjectAccess",
+        "refreshTemisAccess",
+        "resolveAccountDeletionBlocker",
+        "resolveProjectOverflow",
+        "respondToProjectInvitationWithQuota",
+        "respondToProjectJoinRequestWithQuota",
+        "searchGuildPostsWithAI",
+        "syncProfileIdentity",
+        "updateGuildPublication"
+      ],
+      "update": [
+        "cleanupRevokedAIConsent",
+        "markDirectMessagesRead",
+        "notifyDirectMessage",
+        "reportDirectMessage",
+        "retryDirectMessageNotifications",
+        "sendDirectMessage",
+        "setDirectMessageDevice",
+        "setUserBlocked",
+        "updateAIConsent"
+      ],
+      "delete": []
+    }
+  },
+  "callableTransportAccess": {
+    "role": "roles/run.invoker",
+    "member": "allUsers",
+    "scope": "Only the 2 new production callables and listed test callable services; Firebase Auth and lease checks remain mandatory",
+    "testCallables": [
+      "backfillGuildPostAIIndex",
+      "beginFreeProjectSelection",
+      "beginTemisAIUsage",
+      "cancelTemisAIUsage",
+      "completeTemisAIUsage",
+      "createEmbeddings",
+      "createProjectEmbeddings",
+      "createProjectJoinRequestWithQuota",
+      "createProjectWithQuota",
+      "deleteAccount",
+      "exchangeTestSessionTicket",
+      "generateGroundedAnswer",
+      "getAccountDeletionBlockers",
+      "getConsentedProjectNotes",
+      "getTemisAIUsage",
+      "markDirectMessagesRead",
+      "refreshProjectAccess",
+      "refreshTemisAccess",
+      "reportDirectMessage",
+      "resolveAccountDeletionBlocker",
+      "resolveProjectOverflow",
+      "respondToProjectInvitationWithQuota",
+      "respondToProjectJoinRequestWithQuota",
+      "searchGuildPostsWithAI",
+      "sendDirectMessage",
+      "setDirectMessageDevice",
+      "setUserBlocked",
+      "updateAIConsent",
+      "updateGuildPublication"
+    ]
+  },
+  "deployRules": {
+    "temis-c05aa": [],
+    "temis-test-c05aa": [
+      "firestore.test.rules",
+      "storage.test.rules"
+    ]
+  },
+  "excluded": [
+    "production business-function redeploy",
+    "production Rules/index changes",
+    "Auth claim assignment without a human-specified UID",
+    "secret value retrieval or copying",
+    "app distribution",
+    "Simulator/device launch"
+  ]
+}

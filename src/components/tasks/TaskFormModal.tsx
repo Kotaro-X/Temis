@@ -1,7 +1,7 @@
+import Modal from "../common/KeyboardAwareModal";
 import React from "react";
 import {
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   Text,

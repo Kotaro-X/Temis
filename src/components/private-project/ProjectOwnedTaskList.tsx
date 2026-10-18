@@ -1,8 +1,8 @@
+import Modal from "../common/KeyboardAwareModal";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   StyleSheet,
   Text,

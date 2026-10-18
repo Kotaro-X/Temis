@@ -51,7 +51,7 @@ test("client success requires deleted:true and never displays raw SDK data", () 
 });
 
 // The actual callable module runs against in-memory SDK stubs; no real account or network.
-function callableFixture(options: { failStage?: string; apple?: boolean; externalFailure?: boolean; userMissing?: boolean; redemptionCount?: number; sharedData?: boolean; database?: any } = {}) {
+function callableFixture(options: { testEnvironment?: boolean; failStage?: string; apple?: boolean; externalFailure?: boolean; userMissing?: boolean; redemptionCount?: number; sharedData?: boolean; database?: any } = {}) {
   const events: string[] = [];
   const logs: unknown[] = [];
   class HttpsError extends Error {
@@ -65,7 +65,7 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
   };
   const bufferedDeletes: { resolve: () => void; reject: (error: unknown) => void }[] = [];
   const db = {
-    doc: (path: string) => ({ path, set: () => step("guild_author"), delete: () => step(path.startsWith("profiles/") ? "profile" : "subscription_access") }),
+    doc: (path: string) => ({ path, set: () => step("guild_author"), delete: () => path.startsWith("aiConsents/") ? step("ai_consent") : step(path.startsWith("profiles/") ? "profile" : "subscription_access") }),
     collection: () => ({ where: () => ({
       get: async () => ({ docs: [], size: 0, empty: true }),
       limit: () => ({ get: async () => ({ docs: [], size: 0, empty: !options.sharedData }) }),
@@ -95,7 +95,7 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
     "node:crypto": require("node:crypto"),
     "./directMessagesCore.cjs": { createDMService: () => ({ deleteAccountMessages: () => step("direct_messages") }) },
     "./accountDeletionCore.cjs": require("../functions/accountDeletionCore.cjs"),
-    "firebase-admin/app": { initializeApp() {}, getApp: () => ({ options: { projectId: "test", credential: { getAccessToken: async () => ({ access_token: "NOT_REAL" }) } } }) },
+    "firebase-admin/app": { getApps: () => [], initializeApp() {}, getApp: () => ({ options: { projectId: "test", credential: { getAccessToken: async () => ({ access_token: "NOT_REAL" }) } } }) },
     "firebase-admin/storage": { getStorage: () => ({ bucket: () => ({}) }) },
     "./profileIdentityCore.cjs": { deleteAccountPhotos: () => step("profile_photos") },
     "firebase-admin/auth": { getAuth: () => auth },
@@ -104,6 +104,7 @@ function callableFixture(options: { failStage?: string; apple?: boolean; externa
     "firebase-functions/v2/https": { HttpsError, onCall: (_config: unknown, handler: unknown) => handler },
     "firebase-functions/params": { defineSecret: () => ({ value: () => "NOT_REAL" }) },
   };
+  sdk["./environmentRuntime.cjs"] = { ...(sdk["firebase-functions/v2/https"] as object), ...(sdk["firebase-functions/params"] as object), isTest: options.testEnvironment ?? false, secrets: (values: unknown[]) => values };
   vm.runInNewContext(readFileSync(new URL("../functions/accountDeletion.cjs", import.meta.url), "utf8"), {
     require: (name: string) => { if (!(name in sdk)) throw new Error(`Unexpected dependency: ${name}`); return sdk[name]; },
     exports, URL, URLSearchParams, AbortSignal, setTimeout, clearTimeout,
@@ -152,7 +153,7 @@ test("actual callable: external outages leave Firebase success intact", async ()
   const result = await fixture.call(request);
   assert.equal(result.deleted, true);
   assert.deepEqual(Array.from(result.externalCleanupPending), ["revenuecat", "crashlytics"]);
-  assert.deepEqual(fixture.events.slice(0, 6), ["query", "invitations", "direct_messages", "guild_author", "profile_photos", "profile"]);
+  assert.deepEqual(fixture.events.slice(0, 7), ["query", "invitations", "direct_messages", "guild_author", "profile_photos", "ai_consent", "profile"]);
   assert.equal(fixture.events.filter((event) => event === "subscription_access").length, 3);
   assert.ok(fixture.events.indexOf("firebase_auth") > fixture.events.indexOf("subscription_access"));
   assert.doesNotMatch(JSON.stringify(fixture.logs), /NOT_REAL|FAKE_DISPOSABLE_UID/);
@@ -344,4 +345,12 @@ test("photo cleanup failure stops before profile and Auth deletion and can be re
   assert.equal(fixture.events.includes("profile"), false);
   assert.equal(fixture.events.includes("firebase_auth"), false);
   assert.equal((await callableFixture().call(request)).deleted, true);
+});
+
+test("test deletion never revokes Apple or deletes RevenueCat/Crashlytics customers", async () => {
+  const fixture = callableFixture({ testEnvironment: true, apple: true });
+  const result = await fixture.call({ auth: { uid: "test-user" }, data: {} });
+  assert.equal(result.deleted, true);
+  assert.equal(result.appleAuthorizationRevoked, false);
+  assert.equal(fixture.events.includes("external"), false);
 });

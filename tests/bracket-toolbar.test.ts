@@ -45,6 +45,7 @@ const loadToolbar = () => {
       if (name === "react") return reactMock;
       if (name === "react-native") {
         return {
+          Keyboard: { dismiss: () => undefined },
           Pressable: "Pressable",
           StyleSheet: { create: (styles: unknown) => styles },
           Text: "Text",

@@ -24,9 +24,13 @@ import { deleteAllLocalAccountData } from "../services/account/localAccountData"
 import { logOutRevenueCatUser } from "../services/subscription/revenueCat";
 import { isSyncFirebaseUser, toSyncUser, type SyncUser } from "../services/auth/syncUser";
 import { getFirebaseAuth } from "../services/sync/firebaseApp";
+import { restoreSyncSession } from "../services/auth/restoreSyncSession";
+import { readAccountEntry, updateAccountEntry, completeAccountLogin } from "../services/auth/accountEntry";
+import { accountWorkspace } from "../services/account/accountWorkspace";
+import { withAllLocalEntityMutations } from "../services/sync/localMutationLock";
+import { invalidateHybridSearchCache } from "../services/hybridSearch";
 import { clearCompletedProfile } from "../services/collaboration/profileCompletionCache";
 import { subscribeSyncQueueChanges } from "../services/sync/syncQueueEvents";
-import { waitForResolvedValue } from "../services/auth/waitForResolvedValue";
 import { clearAccountDeletionState, readAccountDeletionState, saveAccountDeletionState } from "../services/account/accountDeletionState";
 import { accountDeletionErrorMessage } from "../services/account/accountDeletionErrors";
 import {
@@ -47,10 +51,14 @@ export const useCloudSync = ({
   enabled,
   entitled,
   onEntitySynced,
+  onAccountReady,
+  settingsReady = true,
 }: {
   enabled: boolean;
   entitled: boolean;
   onEntitySynced?: (entity: SyncEntityType) => Promise<void> | void;
+  onAccountReady?: () => Promise<void>;
+  settingsReady?: boolean;
 }) => {
   const [status, setStatus] = useState<SyncStatus>("idle");
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -62,6 +70,12 @@ export const useCloudSync = ({
     "restoring" | "signedOut" | "signingIn" | "deleting" | "signedIn"
   >("restoring");
   const [user, setUser] = useState<SyncUser | null>(null);
+  const [accountEntryRequired, setAccountEntryRequired] = useState<boolean | null>(null);
+  const [accountRestoreError, setAccountRestoreError] = useState<string | null>(null);
+  const [workspaceKey, setWorkspaceKey] = useState("initial");
+  const accountReadyCallbackRef = useRef(onAccountReady);
+  accountReadyCallbackRef.current = onAccountReady;
+  const authGenerationRef = useRef(0);
   const [accountDeletionBlockers, setAccountDeletionBlockers] =
     useState<AccountDeletionBlockers | null>(null);
   const [accountDeletionBlockersStatus, setAccountDeletionBlockersStatus] =
@@ -84,8 +98,38 @@ export const useCloudSync = ({
     }
   }, []);
 
+  const prepareAccount = useCallback(async (signedInUser: SyncUser) => {
+    const expectedUid = signedInUser.id;
+    const assertCurrent = () => {
+      if (getFirebaseAuth().currentUser?.uid !== expectedUid) throw new Error("アカウントが切り替わりました。もう一度お試しください。");
+    };
+    assertCurrent();
+    await withAllLocalEntityMutations(async () => {
+      assertCurrent();
+      await accountWorkspace.bind(expectedUid);
+    });
+    assertCurrent();
+    await completeAccountLogin();
+    await accountReadyCallbackRef.current?.();
+    assertCurrent();
+    invalidateHybridSearchCache();
+    setWorkspaceKey(accountWorkspace.scope());
+    setAccountEntryRequired(false);
+    setStatus("idle");
+    setInitialSyncStatus("idle");
+    setLastSyncedAt(null);
+  }, []);
+
   const restoreSession = useCallback(async () => {
+    const generation = ++authGenerationRef.current;
+    setAccountRestoreError(null);
+    setError(null);
     try {
+      const entry = await readAccountEntry();
+      setAccountEntryRequired(!entry.completed);
+      await accountWorkspace.initialize();
+      const auth = getFirebaseAuth();
+      await auth.authStateReady();
       const deletionState = await readAccountDeletionState();
       if (deletionState) {
         syncSuspendedRef.current = true;
@@ -97,28 +141,50 @@ export const useCloudSync = ({
         if (deletionState === "deleted") await signOutSyncUser({ accountDeleted: true }).catch(() => {});
         return remainingUser;
       }
-      const firebaseUser = getFirebaseAuth().currentUser;
-      const restoredUser = isSyncFirebaseUser(firebaseUser)
-        ? toSyncUser(firebaseUser)
-        : await restoreGoogleSyncUser();
+      const restoredUser = await restoreSyncSession(auth, restoreGoogleSyncUser);
+      if (generation !== authGenerationRef.current) return null;
+      if (restoredUser) await prepareAccount(restoredUser);
+      if (generation !== authGenerationRef.current) return null;
+      if (!restoredUser) setWorkspaceKey(accountWorkspace.scope());
+      syncSuspendedRef.current = false;
       setUser(restoredUser);
       setAuthStatus(restoredUser ? "signedIn" : "signedOut");
       return restoredUser;
     } catch (restoreError) {
+      if (generation !== authGenerationRef.current) return null;
       const message =
         restoreError instanceof Error ? restoreError.message : String(restoreError);
       setUser(null);
       setAuthStatus("signedOut");
       setError(message);
+      setAccountRestoreError(message);
       return null;
+    }
+  }, [prepareAccount]);
+
+  const skipAccountEntry = useCallback(async () => {
+    try {
+      await accountWorkspace.initialize();
+      await getFirebaseAuth().authStateReady();
+      if (isSyncFirebaseUser(getFirebaseAuth().currentUser)) {
+        throw new Error("ログイン済みのアカウントを確認できませんでした。再試行してください。");
+      }
+      await updateAccountEntry(state => ({ ...state, completed: true }));
+      setAccountRestoreError(null);
+      setAccountEntryRequired(false);
+      setWorkspaceKey(accountWorkspace.scope());
+      setAuthStatus("signedOut");
+    } catch (cause) {
+      setAccountRestoreError(cause instanceof Error ? cause.message : String(cause));
     }
   }, []);
 
   useEffect(() => {
-    void restoreSession();
-  }, [restoreSession]);
+    if (settingsReady) void restoreSession();
+  }, [restoreSession, settingsReady]);
 
   const syncNow = useCallback((): Promise<SyncResult | null> => {
+    if (!settingsReady || authStatus !== "signedIn") return Promise.resolve(null);
     if (syncSuspendedRef.current) return Promise.resolve(null);
     if (syncInFlightRef.current) {
       return syncInFlightRef.current;
@@ -158,6 +224,7 @@ export const useCloudSync = ({
       setError(null);
       setLastResultMessage("Sync started.");
       const result = await runCloudSync((entity) => entityCallbackRef.current?.(entity));
+      if (syncSuspendedRef.current || getFirebaseAuth().currentUser?.uid !== restoredUser.id) return null;
       setStatus(result.status);
       setLastSyncedAt(result.syncedAt);
       setError(result.status === "error" ? result.message ?? null : null);
@@ -190,7 +257,7 @@ export const useCloudSync = ({
         // Sync errors are converted to a user-visible SyncResult above.
       });
     return operation;
-  }, [clearAutoSyncTimer, enabled, entitled, restoreSession]);
+  }, [clearAutoSyncTimer, enabled, entitled, restoreSession, settingsReady, authStatus]);
 
   const scheduleAutoSync = useCallback(() => {
     if (syncSuspendedRef.current || !canSync || authStatus !== "signedIn") {
@@ -212,24 +279,26 @@ export const useCloudSync = ({
   scheduleAutoSyncRef.current = scheduleAutoSync;
 
   const signIn = useCallback(async () => {
-    syncSuspendedRef.current = false;
+    const generation = ++authGenerationRef.current;
+    syncSuspendedRef.current = true;
+    clearAutoSyncTimer();
     setAuthStatus("signingIn");
     setError(null);
     try {
-      const signedInUser =
-        (await signInGoogleSyncUser()) ??
-        (await waitForResolvedValue(
-          async () => {
-            return getCurrentGoogleSyncUser() ?? (await restoreGoogleSyncUser());
-          },
-          { attempts: 4, delayMs: 400 },
-        ));
+      await syncInFlightRef.current;
+      const signedInUser = await signInGoogleSyncUser();
+      if (generation !== authGenerationRef.current) return null;
       if (!signedInUser) {
-        const currentUser = getCurrentGoogleSyncUser();
+        const current = getFirebaseAuth().currentUser;
+        const currentUser = isSyncFirebaseUser(current) ? toSyncUser(current) : null;
+        syncSuspendedRef.current = Boolean(currentUser && accountWorkspace.ownerUid() !== currentUser.id);
         setUser(currentUser);
         setAuthStatus(currentUser ? "signedIn" : "signedOut");
         return null;
       }
+      await prepareAccount(signedInUser);
+      if (generation !== authGenerationRef.current) return null;
+      syncSuspendedRef.current = false;
       setUser(signedInUser);
       await clearAccountDeletionState();
       setAccountDeletionBlockers(null);
@@ -237,22 +306,31 @@ export const useCloudSync = ({
       setAuthStatus("signedIn");
       return signedInUser;
     } catch (signInError) {
+      if (generation !== authGenerationRef.current) return null;
       const message =
         signInError instanceof Error ? signInError.message : String(signInError);
       setUser(null);
       setAuthStatus("signedOut");
       setError(message);
+      if (isSyncFirebaseUser(getFirebaseAuth().currentUser)) setAccountRestoreError(message);
       setLastResultMessage(message);
       return null;
     }
-  }, []);
+  }, [clearAutoSyncTimer, prepareAccount]);
 
   const signInWithApple = useCallback(async () => {
-    syncSuspendedRef.current = false;
+    const generation = ++authGenerationRef.current;
+    syncSuspendedRef.current = true;
+    clearAutoSyncTimer();
     setAuthStatus("signingIn");
     setError(null);
     try {
+      await syncInFlightRef.current;
       const signedInUser = await signInAppleSyncUser();
+      if (generation !== authGenerationRef.current) return null;
+      await prepareAccount(signedInUser);
+      if (generation !== authGenerationRef.current) return null;
+      syncSuspendedRef.current = false;
       await clearAccountDeletionState();
       setUser(signedInUser);
       setAccountDeletionBlockers(null);
@@ -260,12 +338,14 @@ export const useCloudSync = ({
       setAuthStatus("signedIn");
       return signedInUser;
     } catch (signInError) {
+      if (generation !== authGenerationRef.current) return null;
       if (isAppleSignInCancelledError(signInError)) {
         const currentUser = getFirebaseAuth().currentUser;
         const restoredUser = isSyncFirebaseUser(currentUser)
           ? toSyncUser(currentUser)
           : null;
         setUser(restoredUser);
+        syncSuspendedRef.current = Boolean(restoredUser && accountWorkspace.ownerUid() !== restoredUser.id);
         setAuthStatus(restoredUser ? "signedIn" : "signedOut");
         return null;
       }
@@ -274,12 +354,14 @@ export const useCloudSync = ({
       setUser(null);
       setAuthStatus("signedOut");
       setError(message);
+      if (isSyncFirebaseUser(getFirebaseAuth().currentUser)) setAccountRestoreError(message);
       setLastResultMessage(message);
       return null;
     }
-  }, []);
+  }, [clearAutoSyncTimer, prepareAccount]);
 
   const signOut = useCallback(async () => {
+    ++authGenerationRef.current;
     syncSuspendedRef.current = true;
     autoSyncPendingRef.current = false;
     clearAutoSyncTimer();
@@ -311,6 +393,7 @@ export const useCloudSync = ({
         throw new Error("Sign in before deleting an account.");
       }
       deletingRef.current = true;
+      ++authGenerationRef.current;
       setAuthStatus("deleting");
       syncSuspendedRef.current = true;
       autoSyncPendingRef.current = false;
@@ -450,6 +533,11 @@ export const useCloudSync = ({
     error,
     lastResultMessage,
     syncNow,
+    accountEntryRequired,
+    accountRestoreError,
+    workspaceKey,
+    skipAccountEntry,
+    retryAccountRestore: restoreSession,
     authStatus,
     user,
     signIn,

@@ -6,7 +6,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import { shouldSuppressRevenueCatLog } from "../src/services/subscription/revenueCatErrors.ts";
 
-function fixture() {
+function fixture(testEnvironment = false) {
   let configured = false;
   let userId = "$RCAnonymousID:test";
   const events: string[] = [];
@@ -44,6 +44,7 @@ function fixture() {
     exports, console, __DEV__: false,
     process: { env: { EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY: "test-placeholder" } },
     require: (name: string) => {
+      if (name === "../environment/runtimeEnvironment") return { isTestEnvironment: () => testEnvironment };
       if (name === "react-native") return { Platform: { OS: "ios" } };
       if (name === "react-native-purchases") return { __esModule: true, default: sdk, LOG_LEVEL: { DEBUG: "DEBUG", INFO: "INFO" } };
       if (name === "./revenueCatErrors") return { shouldSuppressRevenueCatLog };
@@ -77,4 +78,14 @@ test("displayed invitation price and purchased package use the same offering ove
   assert.equal(events.at(-1), "purchase:$RCAnonymousID:test:invite");
   assert.equal(await service.getCloudSyncPlanDetails({ offeringId: "missing" }), null);
   await assert.rejects(service.purchaseCloudSyncPlan({ offeringId: "missing" }), /not available/);
+});
+
+test("test environment never configures, identifies, purchases or restores RevenueCat", async () => {
+  const { service, events } = fixture(true);
+  assert.equal(await service.configurePurchases(), false);
+  assert.equal(await service.logInRevenueCatUser("operator_test"), null);
+  assert.equal(await service.logOutRevenueCatUser(), null);
+  assert.equal(await service.restorePurchases(), null);
+  await assert.rejects(service.purchaseCloudSyncPlan());
+  assert.deepEqual(events, []);
 });

@@ -1,4 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { normalizePlanning } from './src/features/taskPlanning/planningCore';
+import AsyncStorage from "./src/services/account/accountWorkspace";
 import { nanoid } from "nanoid/non-secure";
 import {
   DEFAULT_TAGS,
@@ -142,6 +143,7 @@ const normalizeSimpleTodo = (entry: Partial<SimpleTodoItem>): SimpleTodoItem => 
 };
 
 const normalizeTask = (task: Partial<TaskState>): TaskState => ({
+  ...normalizePlanning(task),
   id: typeof task.id === "string" ? task.id : createTaskId(),
   taskName: typeof task.taskName === "string" ? task.taskName : "",
   tags: normalizeTags(task.tags ?? (task as { tag?: string }).tag),

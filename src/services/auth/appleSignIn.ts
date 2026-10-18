@@ -1,3 +1,4 @@
+import { isTestEnvironment } from "../environment/runtimeEnvironment";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Crypto from "expo-crypto";
 import {
@@ -52,6 +53,7 @@ export const requestAppleAccountDeletionAuthorizationCode = async (): Promise<
 };
 
 export const signInAppleSyncUser = async (): Promise<SyncUser> => {
+  if (isTestEnvironment()) throw new Error("テスト環境では専用アカウントを使用します。");
   // Firebase checks this raw nonce against the SHA-256 value embedded in the
   // Apple ID token, preventing a token captured from another request being reused.
   const rawNonce = nonceFromBytes(await Crypto.getRandomBytesAsync(32));

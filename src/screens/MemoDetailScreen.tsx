@@ -1,16 +1,22 @@
+import { getEnvironmentEpoch } from "../services/environment/runtimeEnvironment";
+import { saveRecoveryDraft, loadRecoveryDraft, clearRecoveryDraft } from "../services/environment/recoveryDrafts";
+import { registerEnvironmentSaveHandler } from "../services/environment/switchLifecycle";
+import { getFirebaseAuth, isFirebaseConfigured } from "../services/sync/firebaseApp";
+import type { ProjectSharedNote } from "../types/collaboration";
+import { projectNoteIdFromEvidence } from "../services/collaboration/projectMemoAIRetrievalCore";
+import { moveMemoScope } from "../services/collaboration/moveMemoScope";
+import MemoBodyEditorModal from "../components/memo/MemoBodyEditorModal";
+import { MemoDetailLayout } from "../components/memo/MemoDetailLayout";
 import MemoPublicationControls from "../components/guild/MemoPublicationControls";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  KeyboardAvoidingView,
-  Platform,
+  Keyboard,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 
 import { loadAllTodayStates } from "../../storage";
 import WikiReferenceOverlay, {
@@ -26,7 +32,6 @@ import {
 import {
   deleteNoteById,
   getNoteById,
-  setNoteScope,
   upsertDailyNote,
   upsertFreeNote,
 } from "../db/noteRepo";
@@ -34,6 +39,8 @@ import { useCollaboration } from "../context/CollaborationContext";
 import {
   removeProjectSharedNote,
   upsertProjectSharedNote,
+  listProjectSharedNotes,
+  listProjectTasks,
 } from "../services/collaboration/collaborationService";
 import {
   deleteResearchNoteById,
@@ -46,6 +53,8 @@ import {
 } from "../services/wikiReferenceService";
 import { extractTokens } from "../utils/wikiLink";
 import { AppLanguage, t } from "../i18n";
+
+const currentMemoUserId = () => isFirebaseConfigured() ? getFirebaseAuth().currentUser?.uid : undefined;
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
 
@@ -109,6 +118,11 @@ type Props = {
   memoId: string;
   onBack: () => void;
   language: AppLanguage;
+  closeRequest?: number;
+  referenceProjectId?: string;
+  initialReferenceToken?: string;
+  initialReferenceFilter?: WikiReferenceFilter;
+  onSelectProjectReference?: (note: ProjectSharedNote, token: string, filter: WikiReferenceFilter, fromMemoId: string) => void;
 };
 
 type DraftSnapshot = {
@@ -132,16 +146,19 @@ type HistoryEntry = {
 const MemoDetailScreen = ({
   memoId,
   onBack,
-  language,
+  language, closeRequest, referenceProjectId, initialReferenceToken, initialReferenceFilter, onSelectProjectReference,
 }: Props) => {
   const tr = (key: string) => t(language, key);
   const { profile, projects } = useCollaboration();
   const [activeMemoId, setActiveMemoId] = useState(memoId);
+  const [reloadEpoch, setReloadEpoch] = useState(0);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<MemoDetailData | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [bodyDraft, setBodyDraft] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [scopeLocked, setScopeLocked] = useState(false);
+  const [bodyEditorOpen, setBodyEditorOpen] = useState(false);
   const [guildComposerOpen, setGuildComposerOpen] = useState(false);
   const [referenceVisible, setReferenceVisible] = useState(false);
   const [referenceToken, setReferenceToken] = useState<string | null>(null);
@@ -150,6 +167,8 @@ const MemoDetailScreen = ({
   const [referenceItems, setReferenceItems] = useState<WikiReferenceItem[]>([]);
   const [referenceLoading, setReferenceLoading] = useState(false);
   const [historyStack, setHistoryStack] = useState<HistoryEntry[]>([]);
+  const sessionUidRef = useRef(currentMemoUserId());
+  const sessionEpochRef = useRef(getEnvironmentEpoch());
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<DraftSnapshot | null>(null);
   const latestSnapshotRef = useRef<DraftSnapshot | null>(null);
@@ -166,8 +185,10 @@ const MemoDetailScreen = ({
 
   const syncProjectNote = async (noteId: string, title: string | null, body: string, projectId: string) => {
     if (!profile) return;
+    const notes = await listProjectSharedNotes(projectId);
+    const shared = notes.find(note => note.sourceNoteId === noteId);
     await upsertProjectSharedNote({
-      id: noteId, sourceNoteId: noteId, ownerUserId: profile.userId, projectId, title, body, updatedAt: Date.now(),
+      id: shared?.id ?? noteId, sourceNoteId: noteId, ownerUserId: profile.userId, projectId, title, body, updatedAt: Date.now(),
     });
   };
   const tokens = useMemo(() => extractTokens(bodyDraft), [bodyDraft]);
@@ -175,12 +196,12 @@ const MemoDetailScreen = ({
   useEffect(() => {
     setActiveMemoId(memoId);
     setHistoryStack([]);
-    setReferenceVisible(false);
-    setReferenceToken(null);
-    setReferenceFilter("all");
+    setReferenceVisible(Boolean(initialReferenceToken));
+    setReferenceToken(initialReferenceToken ?? null);
+    setReferenceFilter(initialReferenceFilter ?? "all");
     setReferenceItems([]);
     setReferenceLoading(false);
-  }, [memoId]);
+  }, [memoId, initialReferenceToken, initialReferenceFilter]);
 
   const buildSnapshot = (
     source: MemoDetailData,
@@ -233,15 +254,16 @@ const MemoDetailScreen = ({
   };
 
   const saveDraft = async (snapshot: DraftSnapshot) => {
-    if (deletedRef.current) {
-      return;
-    }
+    if (sessionEpochRef.current !== getEnvironmentEpoch()) throw new Error("接続環境が切り替わりました。");
+    if (deletedRef.current) return;
+    if (currentMemoUserId() !== sessionUidRef.current) throw new Error("アカウントが切り替わりました。");
     if (savingRef.current) {
       pendingSaveRef.current = snapshot;
       return savingPromiseRef.current ?? Promise.resolve();
     }
     savingRef.current = true;
     const savePromise = (async () => {
+      if (currentMemoUserId() !== sessionUidRef.current) throw new Error("アカウントが切り替わりました。");
       if (snapshot.kind === "task" && snapshot.taskId) {
         await updateMemo(snapshot.taskId, snapshot.body, {
           indexMode: "async",
@@ -256,6 +278,7 @@ const MemoDetailScreen = ({
           title: snapshot.title.trim() || null,
           body: snapshot.body,
         });
+        if (currentMemoUserId() !== sessionUidRef.current) throw new Error("アカウントが切り替わりました。");
         if (detail?.kind === "note" && detail.scope === "project" && detail.projectId) {
           await syncProjectNote(saved.id, saved.title, saved.body, detail.projectId);
         }
@@ -271,8 +294,10 @@ const MemoDetailScreen = ({
     savingPromiseRef.current = savePromise;
     try {
       await savePromise;
+      if (sessionEpochRef.current !== getEnvironmentEpoch()) throw new Error("接続環境が切り替わりました。");
       if (!deletedRef.current) {
         lastSavedRef.current = snapshot;
+        await clearRecoveryDraft(snapshot.memoId);
       }
     } finally {
       savingRef.current = false;
@@ -280,7 +305,7 @@ const MemoDetailScreen = ({
       const pending = pendingSaveRef.current;
       if (!deletedRef.current && pending && hasChanges(pending, lastSavedRef.current)) {
         pendingSaveRef.current = null;
-        void saveDraft(pending);
+        void saveDraft(pending).catch(() => Alert.alert("保存できません", "入力内容は保持されています。再試行してください。"));
       } else {
         pendingSaveRef.current = null;
       }
@@ -288,6 +313,7 @@ const MemoDetailScreen = ({
   };
 
   const flushDraft = async () => {
+    if (currentMemoUserId() !== sessionUidRef.current) throw new Error("アカウントが切り替わりました。");
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
@@ -298,6 +324,29 @@ const MemoDetailScreen = ({
     }
     // A save may have queued a newer draft while the previous write was in flight.
     while (savingPromiseRef.current) await savingPromiseRef.current;
+  };
+
+  useEffect(() => registerEnvironmentSaveHandler(flushDraft, async () => {
+    const snapshot = latestSnapshotRef.current;
+    if (snapshot && hasChanges(snapshot, lastSavedRef.current)) await saveRecoveryDraft(activeMemoId, snapshot);
+  }));
+  useEffect(() => {
+    if (loading || !detail) return;
+    let active = true;
+    void loadRecoveryDraft(activeMemoId).then(draft => {
+      if (!active || !draft || userEditedRef.current) return;
+      userEditedRef.current = true;
+      setTitleDraft(draft.title); setBodyDraft(draft.body);
+    }).catch(() => Alert.alert('下書きを読み込めませんでした'));
+    return () => { active = false; };
+  }, [loading, detail, activeMemoId]);
+
+  const closeBodyEditor = () => {
+    Keyboard.dismiss();
+    void flushDraft().then(() => setBodyEditorOpen(false)).catch(() => Alert.alert(
+      language === "en" ? "Could not save" : "保存できませんでした",
+      language === "en" ? "Your edits are kept on this screen. Please try again." : "入力内容はこの画面に保持されています。再度保存をお試しください。",
+    ));
   };
 
   const handleTitleChange = (text: string) => {
@@ -326,6 +375,13 @@ const MemoDetailScreen = ({
       return;
     }
     await flushDraft();
+    const projectNoteId = projectNoteIdFromEvidence(nextMemoId);
+    if (projectNoteId && referenceProjectId && onSelectProjectReference && referenceToken) {
+      const note = (await listProjectSharedNotes(referenceProjectId)).find(item => item.id === projectNoteId);
+      if (!note) throw new Error("参照先が見つかりません。");
+      onSelectProjectReference(note, referenceToken, referenceFilter, activeMemoId);
+      return;
+    }
     setHistoryStack((prev) => [
       ...prev,
       {
@@ -353,6 +409,15 @@ const MemoDetailScreen = ({
     setReferenceVisible(true);
     setActiveMemoId(previous.memoId);
   };
+
+  const requestBackRef = useRef(() => {});
+  requestBackRef.current = () => {
+    if (bodyEditorOpen) { closeBodyEditor(); return; }
+    if (guildComposerOpen) return; // Use the composer's cancel button; it guards an active publication.
+    void flushDraft().then(handleBack).catch(() => Alert.alert("保存できません", "入力内容は保持されています。再試行してください。"));
+  };
+  const lastCloseRequestRef = useRef(closeRequest);
+  useEffect(() => { if (closeRequest !== lastCloseRequestRef.current) { lastCloseRequestRef.current = closeRequest; requestBackRef.current(); } }, [closeRequest]);
 
   useEffect(() => {
     let active = true;
@@ -400,6 +465,7 @@ const MemoDetailScreen = ({
           setTitleDraft(note.title ?? "");
           setBodyDraft(note.body);
           lastSavedRef.current = snapshot;
+        await clearRecoveryDraft(snapshot.memoId);
           latestSnapshotRef.current = snapshot;
           return;
         }
@@ -426,6 +492,7 @@ const MemoDetailScreen = ({
           setTitleDraft(note.title ?? "");
           setBodyDraft(note.body);
           lastSavedRef.current = snapshot;
+        await clearRecoveryDraft(snapshot.memoId);
           latestSnapshotRef.current = snapshot;
           return;
         }
@@ -455,6 +522,7 @@ const MemoDetailScreen = ({
         setTitleDraft("");
         setBodyDraft(memo.body);
         lastSavedRef.current = snapshot;
+        await clearRecoveryDraft(snapshot.memoId);
         latestSnapshotRef.current = snapshot;
       } finally {
         if (active) {
@@ -466,7 +534,7 @@ const MemoDetailScreen = ({
     return () => {
       active = false;
     };
-  }, [activeMemoId]);
+  }, [activeMemoId, reloadEpoch]);
 
   useEffect(() => {
     if (!referenceVisible || !referenceToken) {
@@ -476,11 +544,12 @@ const MemoDetailScreen = ({
     }
     let active = true;
     setReferenceLoading(true);
-    listWikiReferencesByToken(referenceToken, {
+    (async () => listWikiReferencesByToken(referenceToken, {
       excludeMemoId: activeMemoId,
-    })
+      ...(referenceProjectId ? { noteScope: "personal" as const, projectId: referenceProjectId, projectNotes: await listProjectSharedNotes(referenceProjectId) } : {}),
+    }))()
       .then((items) => {
-        if (active) {
+        if (active && currentMemoUserId() === sessionUidRef.current) {
           setReferenceItems(items);
         }
       })
@@ -497,7 +566,7 @@ const MemoDetailScreen = ({
     return () => {
       active = false;
     };
-  }, [referenceVisible, referenceToken, activeMemoId]);
+  }, [referenceVisible, referenceToken, activeMemoId, referenceProjectId]);
 
   useEffect(() => {
     if (!detail) {
@@ -522,7 +591,7 @@ const MemoDetailScreen = ({
       clearTimeout(autosaveTimerRef.current);
     }
     autosaveTimerRef.current = setTimeout(() => {
-      void saveDraft(snapshot);
+      void saveDraft(snapshot).catch(() => Alert.alert("保存できません", "入力内容は保持されています。再試行してください。"));
     }, 800);
     return () => {
       if (autosaveTimerRef.current) {
@@ -537,7 +606,7 @@ const MemoDetailScreen = ({
     }
     const snapshot = latestSnapshotRef.current;
     if (snapshot && hasChanges(snapshot, lastSavedRef.current)) {
-      void saveDraft(snapshot);
+      void saveDraft(snapshot).catch(() => Alert.alert("保存できません", "入力内容は保持されています。再試行してください。"));
     }
   }, []);
 
@@ -565,7 +634,8 @@ const MemoDetailScreen = ({
         await deleteMemo(detail.memoId);
       } else if (detail.kind === "note") {
         if (detail.scope === "project") {
-          await removeProjectSharedNote(detail.noteId);
+          const shared = (await listProjectSharedNotes(detail.projectId!)).find(note => note.sourceNoteId === detail.noteId);
+          if (shared) await removeProjectSharedNote(shared.id);
         }
         await deleteNoteById(detail.noteId);
       } else {
@@ -599,18 +669,23 @@ const MemoDetailScreen = ({
     ]);
   };
 
+  const scopeProjectId = detail?.kind === "note" && detail.scope === "project" ? detail.projectId : null;
+  const scopeSourceId = detail?.kind === "note" ? detail.noteId : null;
+  useEffect(() => {
+    let active = true;
+    setScopeLocked(Boolean(scopeProjectId));
+    if (scopeProjectId) void listProjectTasks(scopeProjectId).then(tasks => { if (active) setScopeLocked(tasks.some(task => task.relatedMemoId === scopeSourceId)); }).catch(() => { /* Keep movement disabled until task links can be verified. */ });
+    return () => { active = false; };
+  }, [scopeProjectId, scopeSourceId]);
+
   const changeNoteScope = async (projectId: string | null) => {
     if (!detail || detail.kind !== "note") return;
     try {
-      if (detail.scope === "project" && detail.projectId && detail.projectId !== projectId) {
-        await removeProjectSharedNote(detail.noteId);
-      }
-      const updated = await setNoteScope(
-        detail.noteId,
-        projectId ? { scope: "project", projectId } : { scope: "personal", projectId: null },
-      );
-      if (projectId) await syncProjectNote(updated.id, updated.title, updated.body, projectId);
+      await flushDraft();
+      if (!profile) throw new Error("ログインしてください。");
+      const updated = await moveMemoScope(detail.noteId, projectId, profile);
       setDetail({ ...detail, scope: updated.scope, projectId: updated.projectId });
+      if ("syncPending" in updated && updated.syncPending) Alert.alert("保存先を変更しました", "共有先の変更は完了しました。個人データの同期は再試行が必要です。");
     } catch (cause) {
       Alert.alert("保存先を変更できません", cause instanceof Error ? cause.message : "もう一度お試しください。");
     }
@@ -635,38 +710,11 @@ const MemoDetailScreen = ({
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        style={styles.keyboardAvoid}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <View style={styles.header}>
-          <Pressable style={styles.backButton} onPress={() => void handleBack()}>
-            <Ionicons name="chevron-back" size={18} color="#2563eb" />
-            <Text style={styles.backText}>{tr("common.back")}</Text>
-          </Pressable>
-          <Text style={styles.title}>
-            {detail?.kind === "note"
-              ? "Note"
-              : detail?.kind === "tankyu"
-                ? tr("research.title")
-                : tr("memo.detailTitle")}
-          </Text>
-          <Pressable
-            style={[
-              styles.deleteButton,
-              (deleting || loading || !detail) && styles.deleteButtonDisabled,
-            ]}
-            onPress={handleDelete}
-            disabled={deleting || loading || !detail}
-          >
-            <Text style={styles.deleteButtonText}>
-              {deleting ? tr("memo.deleting") : tr("common.delete")}
-            </Text>
-          </Pressable>
-        </View>
-        {detail ? <MemoPublicationControls sourceId={detail.memoId} flushDraft={flushDraft} onCreate={() => setGuildComposerOpen(true)} /> : null}
-        <View style={styles.container}>
+    <View style={styles.safeArea}>
+      <MemoDetailLayout language={language} obscured={bodyEditorOpen || guildComposerOpen} title={detail?.kind === "note" ? "Note" : detail?.kind === "tankyu" ? tr("research.title") : tr("memo.detailTitle")}
+        onBack={() => { void flushDraft().then(handleBack).catch(() => Alert.alert("保存できません", "入力内容は保持されています。再試行してください。")); }}
+        onDelete={!deleting && !loading && detail ? handleDelete : undefined} busy={deleting}
+        controls={detail ? <MemoPublicationControls sourceId={detail.memoId} flushDraft={flushDraft} onCreate={() => { void flushDraft().then(() => setGuildComposerOpen(true)).catch(() => Alert.alert("保存できません", "再試行してください。")); }} /> : undefined}>
           {loading ? (
             <Text style={styles.helperText}>{tr("common.loading")}</Text>
           ) : !detail ? (
@@ -676,8 +724,8 @@ const MemoDetailScreen = ({
               <Text style={styles.memoTitle}>{displayTitle}</Text>
               <Text style={styles.memoMeta}>{detail.date}</Text>
               {detail.kind === "note" ? (
-                <Pressable style={styles.scopeButton} onPress={openScopePicker}>
-                  <Text style={styles.scopeButtonText}>{detail.scope === "project" ? "保存先：プロジェクト" : "保存先：個人"}</Text>
+                <Pressable style={styles.scopeButton} disabled={scopeLocked} onPress={openScopePicker}>
+                  <Text style={styles.scopeButtonText}>{detail.scope === "project" ? "保存先：プロジェクト" : "保存先：個人"}{scopeLocked ? "（タスクの紐づきを確認中、または移動不可）" : ""}</Text>
                 </Pressable>
               ) : null}
               <MemoEditorFields
@@ -690,12 +738,13 @@ const MemoDetailScreen = ({
                 tokens={tokens}
                 onChangeTitle={handleTitleChange}
                 onChangeBody={handleBodyChange}
+                onEditBody={() => { Keyboard.dismiss(); setBodyEditorOpen(true); }}
                 onPressToken={handlePressToken}
               />
             </>
           )}
-        </View>
-      </KeyboardAvoidingView>
+      </MemoDetailLayout>
+      <MemoBodyEditorModal visible={bodyEditorOpen} value={bodyDraft} onChangeText={handleBodyChange} onDone={closeBodyEditor} language={language} />
       <WikiReferenceOverlay
         visible={referenceVisible}
         token={referenceToken}
@@ -705,10 +754,10 @@ const MemoDetailScreen = ({
         language={language}
         onClose={handleCloseReferences}
         onChangeFilter={setReferenceFilter}
-        onSelectItem={(nextMemoId) => void handleSelectReference(nextMemoId)}
+        onSelectItem={(nextMemoId) => { void handleSelectReference(nextMemoId).catch(() => Alert.alert("メモを開けません", "保存または参照に失敗しました。再試行してください。")); }}
       />
       {detail ? (
-        <GuildPostComposerModal
+        <GuildPostComposerModal embedded
           visible={guildComposerOpen}
           onClose={() => setGuildComposerOpen(false)}
           initialTitle={displayTitle}
@@ -718,10 +767,10 @@ const MemoDetailScreen = ({
             memoId: detail.memoId,
             projectId: detail.kind === "note" && detail.scope === "project" ? detail.projectId : null,
           }}
-          onPublished={() => setGuildComposerOpen(false)}
+          onPublished={() => { setGuildComposerOpen(false); setReloadEpoch(current => current + 1); }}
         />
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 };
 

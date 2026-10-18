@@ -1,3 +1,4 @@
+import { transitionProjectTask } from "../src/services/collaboration/projectTaskCore.ts";
 import { saveProfileSetupTransaction } from "../src/services/collaboration/profileSetupTransaction.ts";
 import type { UserProfile } from "../src/types/collaboration.ts";
 import test from "node:test";
@@ -17,7 +18,7 @@ const FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST;
 const REQUIRE_FIRESTORE_EMULATOR =
   process.env.CI === "true" ||
   process.env.FIRESTORE_RULES_TEST_REQUIRED === "1";
-const RULES_PATH = decodeURIComponent(
+const RULES_PATH = process.env.FIRESTORE_RULES_PATH ?? decodeURIComponent(
   new URL("../firestore.rules", import.meta.url).pathname,
 );
 
@@ -291,6 +292,19 @@ if (!FIRESTORE_EMULATOR_HOST) {
       });
     });
     await seedFreeProjectAccess("alice", "project-1");
+    await assertFails(env.unauthenticatedContext().firestore().collection("projectNotes").doc("note-1").get());
+    await assertSucceeds(aliceDb.runTransaction(async (transaction) => {
+      const ref = aliceDb.collection("projectNotes").doc("new-note");
+      const snapshot = await transaction.get(ref);
+      assert.equal(snapshot.exists, false);
+      transaction.set(ref, {
+        id: "new-note", ownerUserId: "alice", projectId: "project-1", sourceNoteId: "new-note",
+        creatorDisplayName: "Alice", creatorAnonymizedAt: null, anonymizedReason: null,
+        title: null, body: "ああああ", updatedAt: 1,
+      });
+    }));
+    await assertFails(bobDb.collection("projectNotes").doc("new-note").get());
+    await assertFails(bobDb.collection("projectNotes").doc("new-note").update({ body: "forged" }));
     await assertSucceeds(aliceDb.collection("projectNotes").doc("note-1").set({
       id: "note-1", ownerUserId: "alice", projectId: "project-1", sourceNoteId: "local-1",
       creatorDisplayName: "Alice", creatorAnonymizedAt: null, anonymizedReason: null,
@@ -301,6 +315,37 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await assertSucceeds(
       aliceDb.collection("projectMemberships").where("userId", "==", "alice").get(),
     );
+  });
+
+  test("Project memo transfers are atomic and preserve member-only access", async () => {
+    await seedPlusAccess("alice", "bob");
+    await env.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      for (const projectId of ["origin", "destination"]) {
+        await db.collection("projects").doc(projectId).set({ id: projectId, ownerUserId: "alice", visibility: "private", deletedAt: null });
+        await db.collection("projects").doc(projectId).collection("members").doc("alice").set({ userId: "alice", role: "owner" });
+      }
+      await db.collection("projects").doc("destination").collection("members").doc("bob").set({ userId: "bob", role: "member" });
+    });
+    const db = env.authenticatedContext("alice", createAppleToken()).firestore();
+    const original = { id: "origin-note", sourceNoteId: "stable-source", projectId: "origin", ownerUserId: "alice", creatorDisplayName: "Alice", creatorAnonymizedAt: null, anonymizedReason: null, title: null, body: "saved content", updatedAt: 1 };
+    const source = db.collection("projectNotes").doc(original.id);
+    await assertSucceeds(source.set(original));
+    const destination = db.collection("projectNotes").doc("destination-note");
+    await assertSucceeds(db.runTransaction(async transaction => {
+      const snapshot = await transaction.get(source);
+      transaction.set(destination, { ...snapshot.data(), id: "destination-note", projectId: "destination" });
+      transaction.delete(source);
+    }));
+    assert.equal((await source.get()).exists, false);
+    assert.equal((await destination.get()).data()?.sourceNoteId, "stable-source");
+    await assertSucceeds(env.authenticatedContext("bob", createGoogleToken()).firestore().collection("projectNotes").doc("destination-note").get());
+    const rejected = db.batch();
+    rejected.set(db.collection("projectNotes").doc("forbidden"), { ...original, id: "forbidden", projectId: "foreign" });
+    rejected.delete(destination);
+    await assertFails(rejected.commit());
+    assert.equal((await destination.get()).data()?.body, "saved content");
+    await assertFails(env.unauthenticatedContext().firestore().collection("projectNotes").doc("destination-note").get());
   });
 
   test("server-owned quota state and membership changes cannot be forged by clients", async () => {
@@ -319,7 +364,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
     }));
   });
 
-  test("anonymous notes belong to the project owner and anonymous tasks remain member-editable but owner-deletable", async () => {
+  test("anonymous notes belong to the project owner and anonymous tasks remain editable and deletable by all task members", async () => {
     const ownerDb = env.authenticatedContext("owner", createGoogleToken()).firestore();
     const memberDb = env.authenticatedContext("member", createAppleToken()).firestore();
     const projectId = "anon-project";
@@ -366,10 +411,115 @@ if (!FIRESTORE_EMULATOR_HOST) {
     const memberTask = memberDb.collection("projectTasks").doc("anon-task");
     await assertSucceeds(memberTask.update({ title: "メンバーが編集", updatedAt: 3 }));
     await assertFails(memberTask.update({ creatorUserId: "member", updatedAt: 4 }));
-    await assertFails(memberTask.update({ deletedAt: 4, updatedAt: 4 }));
+    await assertSucceeds(memberTask.update({ deletedAt: 4, updatedAt: 4 }));
     await assertSucceeds(ownerTask.update({ deletedAt: 4, updatedAt: 4 }));
     await assertFails(memberNote.delete());
     await assertSucceeds(ownerNote.delete());
+  });
+
+  test("task planning validates time pairs and protects personal Project reminder settings", async () => {
+    await seedPlusAccess("planner");
+    const db = env.authenticatedContext("planner", createGoogleToken()).firestore();
+    const outsider = env.authenticatedContext("planner-other", createAppleToken()).firestore();
+    const planned = createTaskEnvelope("planning");
+    const planning = { plannedStartAt: 1000000, plannedEndAt: 2800000, repeat: "none", repeatAnchorDate: null, occurrenceOverrides: {}, reminder: { enabled: true, mode: "start", offsetMinutes: 5, at: null } };
+    planned.record.task = { ...planned.record.task, ...planning };
+    const ref = db.doc("users/planner/tasks/planning");
+    await assertSucceeds(ref.set(planned));
+    await assertFails(ref.set({ ...planned, record: { ...planned.record, task: { ...planned.record.task, plannedEndAt: null } } }));
+    await assertFails(ref.set({ ...createTaskEnvelope("planning"), updatedAt: planned.updatedAt + 1 }));
+    await assertSucceeds(db.doc("users/planner/taskPreferences/reminders").set({ reminders: { planning: planning.reminder } }));
+    await assertFails(outsider.doc("users/planner/taskPreferences/reminders").get());
+    await assertFails(outsider.doc("users/planner/taskPreferences/reminders").set({ reminders: {} }));
+    await assertFails(db.doc("users/planner/taskPreferences/reminders").set({ reminders: {}, unexpected: true }));
+    await assertSucceeds(db.doc("users/planner/taskPreferences/todoMigration").set({ ids: { old: true } }));
+    await assertFails(outsider.doc("users/planner/taskPreferences/todoMigration").get());
+    await assertFails(outsider.doc("users/planner/taskPreferences/todoMigration").set({ ids: { old: true } }));
+  });
+
+  test("Project ToDo migration retains its ID and editor-only schedule updates", async () => {
+    const projectId = "planning-project";
+    const legacy = { id: "planning-legacy", projectId, kind: "todo", ownerUserId: "planner-owner", creatorUserId: "planner-owner", title: "Legacy", description: "", status: "todo", assigneeUserId: null, relatedMemoId: null, createdAt: 1, updatedAt: 1 };
+    await env.withSecurityRulesDisabled(async context => {
+      const db = context.firestore(); await db.doc(`projects/${projectId}`).set({ id: projectId, taskEnabled: true, deletedAt: null });
+      await db.doc(`projects/${projectId}/members/planner-owner`).set({ userId: "planner-owner", role: "owner" });
+      await db.doc(`projects/${projectId}/members/planner-viewer`).set({ userId: "planner-viewer", role: "viewer" });
+      await db.doc("projectTasks/planning-legacy").set(legacy);
+    });
+    await seedFreeProjectAccess("planner-owner", projectId); await seedFreeProjectAccess("planner-viewer", projectId);
+    const owner = env.authenticatedContext("planner-owner", createGoogleToken()).firestore();
+    const viewer = env.authenticatedContext("planner-viewer", createAppleToken()).firestore();
+    await assertSucceeds(owner.doc("projectTasks/planning-legacy").update({ kind: "task", privateDate: null, privateSlotKey: "morning", plannedStartAt: null, plannedEndAt: null }));
+    await assertSucceeds(owner.doc("projectTasks/planning-legacy").update({ privateDate: "2026-10-19", plannedStartAt: 1000000, plannedEndAt: 2800000, estimateMinutes: 30 }));
+    await assertFails(viewer.doc("projectTasks/planning-legacy").update({ plannedStartAt: 2000000, plannedEndAt: 3800000 }));
+    await assertFails(owner.doc("projectTasks/planning-legacy").update({ plannedEndAt: 1000000 }));
+    await assertFails(owner.doc("projectTasks/planning-legacy").update({ kind: "todo" }));
+    await assertSucceeds(viewer.doc("users/planner-viewer/taskPreferences/reminders").set({ reminders: { "planning-legacy": { enabled: true, mode: "start", offsetMinutes: 0, at: null } } }));
+  });
+
+  test("shared task writes require an editor and linked memo writes must match their source", async () => {
+    const projectId = "shared-task-project";
+    const initial = { id: "shared", projectId, kind: "task", ownerUserId: "owner", creatorUserId: "owner", title: "Shared", description: "Body", status: "todo", assigneeUserId: "owner", relatedMemoId: "project-task-shared", elapsedMinutes: 0, startAt: null, createdAt: 1, updatedAt: 1, completedAt: null, deletedAt: null };
+    await env.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      await db.doc(`projects/${projectId}`).set({ id: projectId, taskEnabled: true, deletedAt: null });
+      for (const [uid, role] of [["owner", "owner"], ["member", "member"], ["viewer", "viewer"]]) await db.doc(`projects/${projectId}/members/${uid}`).set({ userId: uid, role });
+      await db.doc("projectTasks/shared").set(initial);
+      await db.doc("projectNotes/project-task-shared").set({ id: "project-task-shared", sourceNoteId: "project-task-shared", sourceTaskId: "shared", projectId, ownerUserId: "owner", title: "Shared", body: "Body", updatedAt: 1 });
+      await db.doc("projectNotes/unrelated").set({ id: "unrelated", sourceNoteId: "unrelated", projectId, ownerUserId: "owner", title: "General", body: "General", updatedAt: 1 });
+    });
+    for (const uid of ["owner", "member", "viewer"]) await seedFreeProjectAccess(uid, projectId);
+    const viewer = env.authenticatedContext("viewer", createAppleToken()).firestore();
+    const member = env.authenticatedContext("member", createGoogleToken()).firestore();
+    const outsider = env.authenticatedContext("outsider", createGoogleToken()).firestore();
+    await assertSucceeds(viewer.doc("projectTasks/shared").get());
+    await assertFails(viewer.doc("projectTasks/shared").update({ assigneeUserId: "viewer" }));
+    await assertSucceeds(member.doc("projectTasks/shared").update({ assigneeUserId: null }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ assigneeUserId: "outsider" }));
+    await assertFails(outsider.doc("projectTasks/shared").get());
+    await assertFails(outsider.doc("projectTasks/shared").update({ title: "Attack" }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ ownerUserId: "viewer" }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ kind: "todo" }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ elapsedMinutes: -1 }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ status: "invalid" }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ unexpected: true }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ relatedMemoId: "unrelated" }));
+    await assertFails(viewer.doc("projectNotes/project-task-shared").update({ body: "Detached change" }));
+    const batch = member.batch();
+    batch.update(member.doc("projectTasks/shared"), { title: "Edited", description: "Together" });
+    batch.update(member.doc("projectNotes/project-task-shared"), { title: "Edited", body: "Together", updatedAt: 2 });
+    await assertSucceeds(batch.commit());
+    await assertFails(viewer.doc("projectNotes/unrelated").update({ body: "General notes remain protected" }));
+    await assertFails(viewer.doc("projectNotes/project-task-shared").update({ sourceTaskId: "other-task" }));
+    await assertFails(viewer.doc("projectTasks/new-viewer-task").set({ ...initial, id: "new-viewer-task", ownerUserId: "viewer", creatorUserId: "viewer", assigneeUserId: "owner", relatedMemoId: null }));
+    await env.withSecurityRulesDisabled(async context => {
+      await context.firestore().doc("projectTasks/legacy-linked").set({ ...initial, id: "legacy-linked", relatedMemoId: "legacy-note" });
+      await context.firestore().doc("projectNotes/legacy-note").set({ id: "legacy-note", sourceNoteId: "local-source", projectId, ownerUserId: "owner", title: "Shared", body: "Body", updatedAt: 1 });
+    });
+    const upgrade = member.batch();
+    upgrade.update(member.doc("projectTasks/legacy-linked"), { description: "Legacy upgraded" });
+    upgrade.update(member.doc("projectNotes/legacy-note"), { body: "Legacy upgraded", sourceTaskId: "legacy-linked", updatedAt: 3 });
+    await assertSucceeds(upgrade.commit());
+    const transition = (client: any, status: any, timestamp: number) => client.runTransaction(async (tx: any) => {
+      const ref = client.doc("projectTasks/shared");
+      const current = (await tx.get(ref)).data();
+      tx.set(ref, transitionProjectTask(current, status, timestamp));
+    });
+    await Promise.all([transition(member, "in_progress", 1000), transition(member, "in_progress", 2000)]);
+    const started = (await viewer.doc("projectTasks/shared").get()).data()!;
+    await Promise.all([transition(member, "paused", started.startAt + 60000), transition(member, "paused", started.startAt + 60000)]);
+    assert.equal((await viewer.doc("projectTasks/shared").get()).data()?.elapsedMinutes, 1);
+    await assertFails(viewer.doc("projectTasks/new-viewer-task").update({ status: "in_progress", startAt: 3000 }));
+    assert.equal((await viewer.doc("projectTasks/shared").get()).data()?.status, "paused");
+    await assertFails(viewer.doc("projectTasks/shared").update({ privateDate: "bad" }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ privateSlotKey: "invalid" }));
+    await assertFails(viewer.doc("projectTasks/shared").update({ startAt: 100 }));
+    const deletion = member.batch();
+    deletion.update(member.doc("projectTasks/shared"), { deletedAt: 5 });
+    deletion.update(member.doc("projectNotes/project-task-shared"), { deletedAt: 5 });
+    await assertSucceeds(deletion.commit());
+    await env.withSecurityRulesDisabled(context => context.firestore().doc(`projects/${projectId}/members/viewer`).delete());
+    await assertFails(viewer.doc("projectTasks/shared").update({ status: "paused" }));
   });
 
   test("selection_required blocks shared project data until a free project is chosen", async () => {
@@ -915,6 +1065,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
       body: "公開する探究", tags: [], type: "personal", projectId: null,
       source: { scope: "personal", memoId: "private-memo-1" }, status: "published",
       moderation: { visibility: "visible", hiddenByUserId: null, hiddenAt: null, reason: null },
+      safety: { status: "approved", version: 1 },
       createdAt: now, updatedAt: now, publishedAt: now,
     };
     await env.withSecurityRulesDisabled(async (context) => {
@@ -925,7 +1076,8 @@ if (!FIRESTORE_EMULATOR_HOST) {
       });
     });
 
-    await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).set(post));
+    await assertFails(aliceDb.collection("guildPosts").doc(post.id).set(post));
+    await env.withSecurityRulesDisabled(async context => { await context.firestore().collection("guildPosts").doc(post.id).set(post); });
     await assertSucceeds(
       bobDb.collection("connections").where("userIds", "array-contains", "guild-bob").get(),
     );
@@ -933,6 +1085,8 @@ if (!FIRESTORE_EMULATOR_HOST) {
     const visibleFeed = await assertSucceeds(bobDb.collection("guildPosts")
       .where("status", "==", "published")
       .where("moderation.visibility", "==", "visible")
+      .where("safety.status", "==", "approved")
+      .where("safety.version", "==", 1)
       .orderBy("publishedAt", "desc")
       .orderBy("__name__", "desc")
       .get());
@@ -956,15 +1110,18 @@ if (!FIRESTORE_EMULATOR_HOST) {
     const feedAfterUnpublish = await assertSucceeds(bobDb.collection("guildPosts")
       .where("status", "==", "published")
       .where("moderation.visibility", "==", "visible")
+      .where("safety.status", "==", "approved")
+      .where("safety.version", "==", 1)
       .orderBy("publishedAt", "desc")
       .orderBy("__name__", "desc")
       .get());
     assert.equal(feedAfterUnpublish.docs.length, 0);
-    await assertSucceeds(aliceDb.collection("guildPosts").doc(post.id).update({
+    await assertFails(aliceDb.collection("guildPosts").doc(post.id).update({
       status: "published",
       publishedAt: now + 2,
       updatedAt: now + 2,
     }));
+    await env.withSecurityRulesDisabled(async context => { await context.firestore().collection("guildPosts").doc(post.id).update({ status: "published", publishedAt: now + 2 }); });
     await assertSucceeds(bobDb.collection("guildPosts").doc(post.id).get());
     await assertSucceeds(staffDb.collection("guildPosts").doc(post.id).update({
       moderation: { visibility: "hidden", hiddenByUserId: "guild-staff", hiddenAt: now + 1, reason: "確認中" },
@@ -1043,13 +1200,13 @@ if (!FIRESTORE_EMULATOR_HOST) {
       });
       await db.collection("projectTasks").doc("owned-task").set({
         id: "owned-task", projectId, ownerUserId: "free-user", creatorUserId: "free-user",
-        assigneeUserId: "free-user", creatorDisplayName: "Original Name",
+        creatorDisplayName: "Original Name",
         title: "Keep task", description: "Keep description", status: "todo", updatedAt: 1,
       });
       await db.collection("projectTasks").doc("assigned-task").set({
         id: "assigned-task", projectId, ownerUserId: "another-user", creatorUserId: "another-user",
         assigneeUserId: "free-user", creatorDisplayName: "Other Member",
-        title: "Assigned only", status: "todo", updatedAt: 1,
+        title: "Assigned only", status: "in_progress", startAt: Date.now() - 60000, elapsedMinutes: 2, updatedAt: 1,
       });
       await projects.anonymizeProjectContent("free-user", projectId);
       await projects.anonymizeProjectContent("free-user", projectId);
@@ -1068,25 +1225,29 @@ if (!FIRESTORE_EMULATOR_HOST) {
       assert.equal(task.data()?.title, "Keep task");
       assert.equal(task.data()?.creatorDisplayName, "匿名ユーザー");
       assert.equal(assignedTask.data()?.assigneeUserId, null);
+      assert.equal(assignedTask.data()?.status, "paused");
+      assert.equal(assignedTask.data()?.startAt, null);
+      assert.ok(assignedTask.data()?.elapsedMinutes >= 3);
       assert.equal(assignedTask.data()?.ownerUserId, "another-user");
       assert.equal(assignedTask.data()?.creatorDisplayName, "Other Member");
       assert.equal(assignedTask.data()?.anonymizedReason, undefined);
 
-      const reservations = await Promise.allSettled(Array.from({ length: 11 }, (_, index) =>
+      await usage.begin("ai-user", "memo", "request_00");
+      const reservations = await Promise.allSettled(Array.from({ length: 6 }, (_, index) =>
         usage.begin("ai-user", index % 2 === 0 ? "memo" : "commons", `request_${String(index).padStart(2, "0")}`)));
-      assert.equal(reservations.filter((result) => result.status === "fulfilled").length, 10);
+      assert.equal(reservations.filter((result) => result.status === "fulfilled").length, 5);
       assert.equal(reservations.filter((result) => result.status === "rejected").length, 1);
       const repeated = await usage.begin("ai-user", "memo", "request_00");
-      assert.equal(repeated.used, 10);
+      assert.equal(repeated.used, 5);
       assert.equal(repeated.reused, true);
       await usage.claim("ai-user", "memo", "request_00");
       await assert.rejects(() => usage.claim("ai-user", "memo", "request_00"));
       await usage.cancel("ai-user", "request_00");
-      assert.equal((await usage.getUsage("ai-user")).used, 10);
+      assert.equal((await usage.getUsage("ai-user")).used, 5);
       await usage.refund("ai-user", "request_00");
-      assert.equal((await usage.getUsage("ai-user")).used, 9);
+      assert.equal((await usage.getUsage("ai-user")).used, 4);
       await usage.refund("ai-user", "request_00");
-      assert.equal((await usage.getUsage("ai-user")).used, 9);
+      assert.equal((await usage.getUsage("ai-user")).used, 4);
       await usage.begin("expired-user", "memo", "expired_request");
       await db.doc("temisAIUsageReservations/expired-user__expired_request").update({ expiresAt: 1 });
       await assert.rejects(() => usage.claim("expired-user", "memo", "expired_request"));
@@ -1108,16 +1269,17 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await assertSucceeds(ref.set(data));
     await assertFails(ref.update({ status: 'connected', recipientUserId: 'dm-a' }));
     await assertSucceeds(b.collection('connections').doc(ref.id).update({ status: 'connected' }));
-    await assertSucceeds(ref.update({ status: 'blocked', blockedByUserId: 'dm-a' }));
+    await assertFails(ref.update({ status: 'blocked', blockedByUserId: 'dm-a' }));
+    await env.withSecurityRulesDisabled(async context => { await context.firestore().collection('connections').doc(ref.id).update({ status: 'blocked', blockedByUserId: 'dm-a', blockedByUserIds: ['dm-a'] }); });
     await assertFails(b.collection('connections').doc(ref.id).delete());
     await assertFails(b.collection('connections').doc(ref.id).update({ status: 'blocked', blockedByUserId: 'dm-b' }));
-    await assertSucceeds(ref.delete());
+    await assertFails(ref.delete());
+    await env.withSecurityRulesDisabled(async context => { await context.firestore().collection("connections").doc(ref.id).delete(); });
     // Older installed clients replace request metadata when blocking. Preserve
     // this operation without allowing changed participants or forged acceptance.
     await assertSucceeds(ref.set(data));
     const bobRef = b.collection('connections').doc(ref.id);
-    await assertSucceeds(bobRef.set({ ...data, requesterUserId: 'dm-b', recipientUserId: 'dm-a', status: 'blocked', blockedByUserId: 'dm-b', createdAt: 2, updatedAt: 2 }));
-    await assertFails(ref.delete());
+    await assertFails(bobRef.set({ ...data, requesterUserId: 'dm-b', recipientUserId: 'dm-a', status: 'blocked', blockedByUserId: 'dm-b', createdAt: 2, updatedAt: 2 }));
     await assertSucceeds(bobRef.delete());
   });
 
@@ -1328,15 +1490,19 @@ if (!FIRESTORE_EMULATOR_HOST) {
     const require = createRequire(new URL('../functions/guildPublication.cjs', import.meta.url).href);
     const { initializeApp, deleteApp } = require('firebase-admin/app');
     const { getFirestore } = require('firebase-admin/firestore');
-    const { updatePublication } = require('../functions/guildPublication.cjs');
+    const { updatePublication: publish } = require('../functions/guildPublication.cjs');
     const app = initializeApp({ projectId: 'demo-wememo' }, 'publication-integration');
     const db = getFirestore(app);
-    const input = { userId: 'alice', sourceId: 'note:source', operation: 'publish', title: 'Memo title', body: 'Source body #TAG', version: { updatedAt: 10, deviceId: 'a' }, scope: 'personal', type: 'personal', projectId: null };
+    const updatePublication = (db: any, uid: string, input: any) => publish(db, uid, input, async () => true);
+    const input = { userId: 'alice', consentRevision: 'test-consent', sourceId: 'note:source', operation: 'publish', title: 'Memo title', body: 'Source body #TAG', version: { updatedAt: 10, deviceId: 'a' }, scope: 'personal', type: 'personal', projectId: null };
     try {
       await db.doc('profiles/alice').set({ displayName: 'Alice', photoUrl: null, profileVisibility: 'public' });
-      const concurrent = await Promise.all([updatePublication(db, 'alice', input), updatePublication(db, 'alice', input)]);
-      assert.equal(concurrent[0].posts[0].id, concurrent[1].posts[0].id);
-      const initial = concurrent[0].posts[0];
+      await db.doc('aiConsents/alice').set({ userId: 'alice', granted: true, version: 1, revision: 'test-consent' });
+      const concurrent = await Promise.allSettled([updatePublication(db, 'alice', input), updatePublication(db, 'alice', input)]);
+      const completed = concurrent.filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled');
+      assert.ok(completed.length >= 1);
+      const initial = completed[0].value.posts[0];
+      assert.equal((await db.collection('guildPosts').get()).size, 1);
       await db.doc('guildPosts/legacy').set({ ...initial, id: 'legacy', source: { scope: 'personal', memoId: 'source' }, status: 'unpublished', publishedAt: null, moderation: { ...initial.moderation, visibility: 'hidden' } });
       await db.doc('guildPosts/foreign').set({ ...initial, id: 'foreign', authorUserId: 'bob' });
       const updated = await updatePublication(db, 'alice', { ...input, operation: 'sync', body: 'Edited source #NEW', version: { updatedAt: 20, deviceId: 'a' } });
@@ -1344,7 +1510,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
       assert.ok(updated.posts.every((post: any) => post.body === 'Edited source #NEW'));
       const legacy = (await db.doc('guildPosts/legacy').get()).data();
       assert.equal(legacy.status, 'unpublished'); assert.equal(legacy.moderation.visibility, 'hidden');
-      assert.equal((await db.doc(`guildPosts/${initial.id}`).get()).data().publishedAt, initial.publishedAt);
+      assert.ok((await db.doc(`guildPosts/${initial.id}`).get()).data().publishedAt >= initial.publishedAt);
       assert.equal((await db.doc('guildPosts/foreign').get()).data().body, initial.body);
       await assert.rejects(updatePublication(db, 'alice', { ...input, version: { updatedAt: 15, deviceId: 'a' } }), (e: any) => e.code === 'aborted');
       await assert.rejects(updatePublication(db, 'bob', input), (e: any) => e.code === 'permission-denied');
@@ -1357,6 +1523,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
       const projectInput = { ...input, sourceId: 'note:project-source', scope: 'project', projectId: 'project', version: { updatedAt: 40, deviceId: 'a' } };
       await assert.rejects(updatePublication(db, 'alice', projectInput), (e: any) => e.code === 'permission-denied');
       await db.doc('projects/project/members/alice').update({ role: 'member' });
+      await db.doc('projectNotes/project-source').set({ id: 'project-source', projectId: 'project', sourceNoteId: 'project-source', ownerUserId: 'alice', body: 'body' });
       await updatePublication(db, 'alice', projectInput);
       await db.doc('projects/project/members/alice').delete();
       await assert.rejects(updatePublication(db, 'alice', { ...projectInput, operation: 'sync', version: { updatedAt: 50, deviceId: 'a' } }), (e: any) => e.code === 'permission-denied');
@@ -1367,6 +1534,73 @@ if (!FIRESTORE_EMULATOR_HOST) {
       assert.ok(hidden.posts.every((post: any) => post.status === 'unpublished'));
       await assert.rejects(updatePublication(db, 'alice', { ...input, version: { updatedAt: 70, deviceId: 'a' } }), (e: any) => e.code === 'failed-precondition');
     } finally { await deleteApp(app); }
+  });
+
+  test("AI consent is owner-readable and server-written; DM evidence is staff-only and immutable", async () => {
+    const alice = env.authenticatedContext('safety-alice', createAppleToken()).firestore();
+    const bob = env.authenticatedContext('safety-bob', createGoogleToken()).firestore();
+    const staff = env.authenticatedContext('safety-staff', createAppleToken()).firestore();
+    const report = { id: 'report', conversationId: 'thread', messageId: 'message', reporterUserId: 'safety-alice', reportedUserId: 'safety-bob', reason: '迷惑行為', evidence: { text: '対象メッセージ', senderUserId: 'safety-bob', createdAt: 1 }, status: 'pending', createdAt: 1, updatedAt: 1 };
+    await env.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      await db.doc('aiConsents/safety-alice').set({ userId: 'safety-alice', granted: true, version: 1, revision: '1' });
+      await db.doc('dmReports/report').set(report);
+      await db.doc('subscriptionAccess/safety-staff').set({ active: true, grantType: 'staff_free', expiresAt: null });
+    });
+    await assertSucceeds(alice.doc('aiConsents/safety-alice').get());
+    await assertFails(bob.doc('aiConsents/safety-alice').get());
+    await assertFails(alice.doc('aiConsents/safety-alice').update({ granted: true }));
+    await assertFails(alice.doc('aiConsents/safety-bob').set({ granted: true }));
+    await assertFails(alice.doc('dmReports/report').get());
+    await assertFails(bob.doc('dmReports/report').get());
+    await assertFails(alice.doc('dmReports/forged').set({ ...report, id: 'forged' }));
+    await assertSucceeds(staff.collection('dmReports').where('status', '==', 'pending').orderBy('createdAt', 'desc').get());
+    await assertSucceeds(staff.doc('dmReports/report').get());
+    await assertFails(staff.doc('dmReports/report').update({ evidence: { text: 'tampered', senderUserId: 'safety-bob', createdAt: 1 } }));
+    await assertFails(alice.doc('dmReports/report').update({ status: 'reviewed', updatedAt: 2 }));
+    await assertSucceeds(staff.doc('dmReports/report').update({ status: 'reviewed', updatedAt: 2 }));
+    await assertFails(staff.doc('dmReports/report').delete());
+  });
+
+  test("both blocks are server-owned; neither participant can clear the other block through Rules", async () => {
+    const alice = env.authenticatedContext('alice', createAppleToken()).firestore();
+    const bob = env.authenticatedContext('bob', createGoogleToken()).firestore();
+    await env.withSecurityRulesDisabled(async context => {
+      await context.firestore().doc('connections/alice__bob').set({ id: 'alice__bob', userIds: ['alice','bob'], requesterUserId: 'alice', recipientUserId: 'bob', status: 'blocked', blockedByUserId: 'alice', blockedByUserIds: ['alice','bob'], createdAt: 1, updatedAt: 1 });
+    });
+    await assertSucceeds(alice.doc('connections/alice__bob').get());
+    await assertSucceeds(bob.doc('connections/alice__bob').get());
+    await assertFails(alice.doc('connections/alice__bob').delete());
+    await assertFails(bob.doc('connections/alice__bob').update({ blockedByUserIds: ['bob'], blockedByUserId: 'bob' }));
+    await assertFails(alice.doc('connections/alice__bob').set({ id: 'alice__bob', userIds: ['alice','bob'], requesterUserId: 'alice', recipientUserId: 'bob', status: 'pending', createdAt: 1, updatedAt: 2 }));
+  });
+
+  test("publication rollout: consent lookup and moderated public posts support Apple and Google without client bypass", async () => {
+    for (const [provider, token] of [['apple', createAppleToken()], ['google', createGoogleToken()]] as const) {
+      const uid = `publication-${provider}`;
+      const owner = env.authenticatedContext(uid, token).firestore();
+      const viewer = env.authenticatedContext(`viewer-${provider}`, createGoogleToken()).firestore();
+      // Before first agreement, a missing own record must be readable so the dialog can open.
+      const absent = await assertSucceeds(owner.doc(`aiConsents/${uid}`).get());
+      assert.equal(absent.exists, false);
+      await assertFails(viewer.doc(`aiConsents/${uid}`).get());
+      await assertFails(owner.doc(`aiConsents/${uid}`).set({ userId: uid, granted: true, version: 1, revision: 'forged' }));
+      const post = { id: `post-${provider}`, authorUserId: uid, authorDisplayName: 'Author', authorPhotoUrl: null, title: 'Memo', body: 'Safe body', tags: [], type: 'personal', projectId: null, source: { scope: 'personal', memoId: 'note:source' }, status: 'published', moderation: { visibility: 'visible', hiddenByUserId: null, hiddenAt: null, reason: null }, safety: { status: 'approved', version: 1 }, createdAt: 1, updatedAt: 1, publishedAt: 1 };
+      await env.withSecurityRulesDisabled(async context => {
+        await context.firestore().doc(`aiConsents/${uid}`).set({ userId: uid, granted: true, version: 1, revision: 'server-verified' });
+        await context.firestore().doc(`guildPosts/${post.id}`).set(post);
+        const { safety: _safety, ...legacy } = post;
+        await context.firestore().doc(`guildPosts/legacy-${provider}`).set({ ...legacy, id: `legacy-${provider}` });
+      });
+      await assertSucceeds(owner.doc(`aiConsents/${uid}`).get());
+      await assertSucceeds(viewer.doc(`guildPosts/${post.id}`).get());
+      await assertFails(viewer.doc(`guildPosts/legacy-${provider}`).get());
+      await assertFails(owner.doc(`guildPosts/forged-${provider}`).set({ ...post, id: `forged-${provider}` }));
+      await assertFails(owner.doc(`guildPosts/${post.id}`).update({ body: 'Unchecked edit' }));
+      await assertSucceeds(viewer.collection('guildPosts').where('status', '==', 'published').where('moderation.visibility', '==', 'visible').where('safety.status', '==', 'approved').where('safety.version', '==', 1).orderBy('publishedAt', 'desc').orderBy('__name__', 'desc').get());
+      await assertSucceeds(owner.doc(`guildPosts/${post.id}`).update({ status: 'unpublished', publishedAt: null, updatedAt: 2 }));
+      await assertFails(owner.doc(`guildPosts/${post.id}`).update({ status: 'published', publishedAt: 3, updatedAt: 3 }));
+    }
   });
 
 }

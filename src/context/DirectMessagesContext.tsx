@@ -1,3 +1,4 @@
+import { getAppEnvironment } from "../services/environment/runtimeEnvironment";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AppState } from 'react-native';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -81,7 +82,7 @@ export const DirectMessagesProvider = ({ children }: { children: React.ReactNode
     let live = true;
     const receive = (response: Notifications.NotificationResponse | null) => {
       if (!response || !live) return;
-      const target = dmNotificationTarget(response.notification.request.content.data, userId);
+      const target = dmNotificationTarget(response.notification.request.content.data, userId, getAppEnvironment());
       if (target && getFirebaseAuth().currentUser?.uid === userId) openDM(target.conversationId);
       if (response.notification.request.content.data.type === 'dm') void Notifications.clearLastNotificationResponseAsync();
     };
@@ -91,7 +92,7 @@ export const DirectMessagesProvider = ({ children }: { children: React.ReactNode
   }, [userId, openDM]);
   const value = useMemo<Value>(() => ({
     userId, conversations, connections, loading, error, refresh, pushEnabled, pushError, setPushEnabled,
-    unread: userId ? conversations.reduce((sum, item) => sum + unreadMessages(item, userId), 0) : 0,
+    unread: userId ? conversations.filter(item => !connections.some(connection => connection.status === 'blocked' && connection.userIds.some(id => id !== userId && item.userIds.includes(id)))).reduce((sum, item) => sum + unreadMessages(item, userId), 0) : 0,
   }), [userId, conversations, connections, loading, error, refresh, pushEnabled, pushError, setPushEnabled]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 };

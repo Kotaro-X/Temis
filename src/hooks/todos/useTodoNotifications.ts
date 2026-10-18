@@ -1,3 +1,4 @@
+import { getAppEnvironment, getEnvironmentEpoch } from "../../services/environment/runtimeEnvironment";
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useEffect, useRef } from "react";
 import { Alert, Platform } from "react-native";
@@ -102,6 +103,8 @@ export const useTodoNotifications = ({
       reminderTime: string | null,
       repeat: SimpleTodoItem["repeat"],
     ) => {
+      const epoch = getEnvironmentEpoch();
+      const environment = getAppEnvironment();
       if (!NotificationsModule?.scheduleNotificationAsync) {
         return null;
       }
@@ -161,15 +164,22 @@ export const useTodoNotifications = ({
         };
       }
       try {
-        return await NotificationsModule.scheduleNotificationAsync({
+        if (epoch !== getEnvironmentEpoch()) return null;
+        const identifier = await NotificationsModule.scheduleNotificationAsync({
           content: {
             title: tr("todo.reminderTitle"),
             body: `${tr("todo.reminderBody")} ${text || untitledLabel}`,
             sound: "default",
+            data: { type: "todo", environment },
             ...(Platform.OS === "android" ? { channelId: "todo-reminders" } : {}),
           },
           trigger,
         });
+        if (epoch !== getEnvironmentEpoch()) {
+          await NotificationsModule.cancelScheduledNotificationAsync(identifier);
+          return null;
+        }
+        return identifier;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[todo-notification] failed to schedule: ${message}`);

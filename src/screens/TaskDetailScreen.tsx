@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Keyboard, ScrollView, Text } from "react-native";
+import { Keyboard, Platform, ScrollView, Text } from "react-native";
 
 import Header from "../components/common/Header";
 import TaskDetailView from "../components/tasks/TaskDetailView";
@@ -70,11 +70,14 @@ const TaskDetailScreen = ({
 
   return (
     <ScrollView
+      style={{ flex: 1 }}
+      automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       contentContainerStyle={[
         styles.content,
         { paddingTop: contentPaddingTop },
       ]}
-      keyboardShouldPersistTaps="handled"
+      keyboardShouldPersistTaps="always"
     >
       <Header
         styles={styles}

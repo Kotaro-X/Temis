@@ -1,3 +1,4 @@
+import { isTestEnvironment } from "../services/environment/runtimeEnvironment";
 import React, {
   createContext,
   useCallback,
@@ -39,6 +40,7 @@ import type { CloudSyncPlanDetails } from "../services/subscription/revenueCat";
 type SubscriptionStatus = "idle" | "loading" | "ready" | "purchasing" | "error";
 type InviteStatus = "idle" | "redeeming" | "error";
 type CloudSyncAccessSource =
+  | "test_fixture"
   | "none"
   | "revenuecat"
   | "staff_free"
@@ -99,6 +101,7 @@ export const SubscriptionProvider = ({
 }: {
   children: React.ReactNode;
 }) => {
+  const [testPlus, setTestPlus] = useState(false);
   const [status, setStatus] = useState<SubscriptionStatus>("idle");
   const [inviteStatus, setInviteStatus] = useState<InviteStatus>("idle");
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
@@ -125,10 +128,17 @@ export const SubscriptionProvider = ({
         return null;
       }
       try {
+        if (isTestEnvironment()) {
+          const state = await refreshTemisAccess();
+          setTestPlus(state.tier === 'plus');
+          setAccessGrant(null);
+          return null;
+        }
         const nextGrant = await loadCloudSyncAccessGrant(user.uid);
         setAccessGrant(nextGrant);
         return nextGrant;
       } catch (grantError) {
+        if (isTestEnvironment()) setTestPlus(false);
         // Losing connectivity or receiving a transient Firestore error must
         // not turn Cloud Sync off after access has already been established.
         // A successful empty response and explicit sign-out still clear it.
@@ -360,8 +370,8 @@ export const SubscriptionProvider = ({
 
   const revenueCatEntitled = isRevenueCatCloudSyncEntitled(customerInfo);
   const isCloudSyncEntitled =
-    revenueCatEntitled || grantsFreeCloudSyncAccess(accessGrant);
-  const cloudSyncAccessSource = resolveCloudSyncAccessSource({
+    isTestEnvironment() ? testPlus : revenueCatEntitled || grantsFreeCloudSyncAccess(accessGrant);
+  const cloudSyncAccessSource: CloudSyncAccessSource = isTestEnvironment() && testPlus ? "test_fixture" : resolveCloudSyncAccessSource({
     revenueCatEntitled,
     accessGrant,
   });

@@ -1,3 +1,7 @@
+import { useDirectMessages } from '../context/DirectMessagesContext';
+import { subscribeAIInvalidation } from '../services/ai/aiConsent';
+import ReportReasonModal from '../components/common/ReportReasonModal';
+import Modal from "../components/common/KeyboardAwareModal";
 import { resolveGuildAuthors } from "../services/guild/guildAuthorService";
 import UserAvatar from "../components/UserAvatar";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,7 +11,6 @@ import {
   Alert,
   FlatList,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -41,7 +44,7 @@ import {
   type GuildAIEvidencePost,
 } from "../services/guild/guildAISearch";
 import { readGuildSourceContent } from "../services/guild/guildSourceReader";
-import { getConnectionWithUser, getProjectMember, inviteToProject, sendConnectionRequest } from "../services/collaboration/collaborationService";
+import { setConnectionBlocked, getConnectionWithUser, getProjectMember, inviteToProject, sendConnectionRequest } from "../services/collaboration/collaborationService";
 import { getConnectionStatus, type ConnectionStatus } from "../types/collaboration";
 import { extractGuildTags, type GuildFeedKind, type GuildFeedPost, type GuildPost, type OwnedGuildFeedCursor } from "../types/guild";
 import { extractTokens, normalizeParens } from "../utils/wikiLink";
@@ -70,6 +73,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
   const { profile, inviteableProjects, status, error, refreshProfile: refresh, projectStatus, projectError, refreshProjects } = useCollaboration();
   const { openMemoDetail } = useAppUI();
   const aiUsage = useTemisAIUsage();
+  const { connections: safetyConnections } = useDirectMessages();
   const [feed, setFeed] = useState<GuildView>("recommended");
   const [search, setSearch] = useState("");
   const [aiQuery, setAIQuery] = useState("");
@@ -80,6 +84,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
   const [aiError, setAIError] = useState<string | null>(null);
   const [showAllAIEvidence, setShowAllAIEvidence] = useState(false);
   const aiRequestRef = useRef(0);
+  useEffect(() => subscribeAIInvalidation(() => { aiRequestRef.current++; setAIResult(null); setAISearching(false); setAIError(null); }), []);
   useEffect(() => {
     aiRequestRef.current += 1;
     setAIResult(null);
@@ -98,7 +103,17 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
   const [composerOpen, setComposerOpen] = useState(false);
   const [selectedPost, setSelectedPost] = useState<GuildDisplayPost | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [reportReasonOpen, setReportReasonOpen] = useState(false);
+  const [blocking, setBlocking] = useState(false);
   const [reporting, setReporting] = useState(false);
+  useEffect(() => {
+    const blocked = new Set(safetyConnections.filter(connection => connection.status === 'blocked').flatMap(connection => connection.userIds.filter(id => id !== profile?.userId)));
+    if (!blocked.size) return;
+    aiRequestRef.current++;
+    setPosts(current => current.filter(post => !blocked.has(post.authorUserId)));
+    setSelectedPost(current => current && blocked.has(current.authorUserId) ? null : current);
+    setAIResult(null); setAISearching(false);
+  }, [safetyConnections, profile?.userId]);
   const [connecting, setConnecting] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionActionState>("loading");
   const tags = useMemo(() => extractGuildTags(search), [search]);
@@ -273,13 +288,8 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
     ]);
   };
 
-  const handleReport = async () => {
-    if (!selectedPost || reporting) return;
-    setReporting(true);
-    try { await reportGuildPost(selectedPost.id, "ユーザーからの通報"); Alert.alert("通報を受け付けました", "運営が確認します。"); }
-    catch (cause) { Alert.alert("通報できません", cause instanceof Error ? cause.message : "もう一度お試しください。"); }
-    finally { setReporting(false); }
-  };
+  const handleReport = async () => { if (selectedPost && !reporting) setReportReasonOpen(true); };
+
 
   const handleAISearch = async () => {
     const question = aiQuery.trim();
@@ -373,9 +383,9 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
           </Pressable>
         </View>
       </View>
-      <ScrollView horizontal style={styles.feedTabsViewport} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedTabs}>{FEEDS.map((item) => <Pressable key={item.key} style={[styles.feedTab, feed === item.key && styles.feedTabActive]} onPress={() => setFeed(item.key)}><Text style={[styles.feedTabText, feed === item.key && styles.feedTabTextActive]}>{item.label}</Text></Pressable>)}</ScrollView>
+      <ScrollView keyboardShouldPersistTaps="always" horizontal style={styles.feedTabsViewport} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedTabs}>{FEEDS.map((item) => <Pressable key={item.key} style={[styles.feedTab, feed === item.key && styles.feedTabActive]} onPress={() => setFeed(item.key)}><Text style={[styles.feedTabText, feed === item.key && styles.feedTabTextActive]}>{item.label}</Text></Pressable>)}</ScrollView>
       <TextInput value={search} onChangeText={setSearch} style={styles.search} placeholder="投稿・#タグ・((Wikiリンク)) を検索" />
-      {loading ? <View style={styles.center}><ActivityIndicator color="#2563eb" /></View> : loadError && !posts.length ? <View style={styles.center}><Text style={styles.error}>{loadError}</Text><Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>再試行</Text></Pressable></View> : <FlatList style={styles.feedList} data={visiblePosts} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadFirst(true)} />} onEndReached={() => void loadMore()} onEndReachedThreshold={0.6} contentContainerStyle={visiblePosts.length ? styles.list : styles.emptyList} renderItem={({ item }) => <Pressable style={styles.card} onPress={() => void openDetail(item)}><View style={styles.cardMeta}><UserAvatar photoUrl={item.authorPhotoUrl} size={30} /><Text style={styles.author}>{item.authorDisplayName}</Text><Text style={styles.date}>{formatDate(item.publishedAt ?? item.updatedAt)}</Text></View>{feed === "mine" ? <Text style={[styles.statusBadge, item.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>{item.status === "published" ? "公開中" : "非公開"}</Text> : null}<Text style={styles.cardTitle} numberOfLines={2}>{item.title?.trim() || item.body.split("\n").find(Boolean) || "無題"}</Text><Text style={styles.body} numberOfLines={5}>{item.body}</Text><View style={styles.tagRow}>{item.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>{item.projectId ? <Text style={styles.projectLabel}>関連プロジェクト</Text> : null}</Pressable>} ListEmptyComponent={<View style={styles.center}><Text style={styles.empty}>{feed === "mine" ? "自分の投稿はまだありません" : tags.length ? "タグに合う投稿がまだありません" : "公開投稿はまだありません"}</Text><Pressable onPress={() => setComposerOpen(true)}><Text style={styles.retry}>最初の投稿を作成</Text></Pressable></View>} ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} color="#2563eb" /> : loadError && posts.length ? <Pressable style={styles.footer} onPress={() => void loadMore()}><Text style={styles.retry}>追加読み込みを再試行</Text></Pressable> : null} />}
+      {loading ? <View style={styles.center}><ActivityIndicator color="#2563eb" /></View> : loadError && !posts.length ? <View style={styles.center}><Text style={styles.error}>{loadError}</Text><Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>再試行</Text></Pressable></View> : <FlatList keyboardShouldPersistTaps="always" style={styles.feedList} data={visiblePosts} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadFirst(true)} />} onEndReached={() => void loadMore()} onEndReachedThreshold={0.6} contentContainerStyle={visiblePosts.length ? styles.list : styles.emptyList} renderItem={({ item }) => <Pressable style={styles.card} onPress={() => void openDetail(item)}><View style={styles.cardMeta}><UserAvatar photoUrl={item.authorPhotoUrl} size={30} /><Text style={styles.author}>{item.authorDisplayName}</Text><Text style={styles.date}>{formatDate(item.publishedAt ?? item.updatedAt)}</Text></View>{feed === "mine" ? <Text style={[styles.statusBadge, item.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>{item.status === "published" ? "公開中" : "非公開"}</Text> : null}<Text style={styles.cardTitle} numberOfLines={2}>{item.title?.trim() || item.body.split("\n").find(Boolean) || "無題"}</Text><Text style={styles.body} numberOfLines={5}>{item.body}</Text><View style={styles.tagRow}>{item.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>{item.projectId ? <Text style={styles.projectLabel}>関連プロジェクト</Text> : null}</Pressable>} ListEmptyComponent={<View style={styles.center}><Text style={styles.empty}>{feed === "mine" ? "自分の投稿はまだありません" : tags.length ? "タグに合う投稿がまだありません" : "公開投稿はまだありません"}</Text><Pressable onPress={() => setComposerOpen(true)}><Text style={styles.retry}>最初の投稿を作成</Text></Pressable></View>} ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} color="#2563eb" /> : loadError && posts.length ? <Pressable style={styles.footer} onPress={() => void loadMore()}><Text style={styles.retry}>追加読み込みを再試行</Text></Pressable> : null} />}
       <TemisAIDock
         expanded={aiOpen}
         expandedTop={headerBottomY > 0 ? headerBottomY : undefined}
@@ -391,7 +401,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
       >
         {aiSearching ? <Text style={styles.aiHelperText}>根拠を検索中...</Text> : null}
         {aiError ? <Text style={styles.aiError}>{aiError}</Text> : null}
-        {aiResult ? <ScrollView style={styles.aiResultScroll} nestedScrollEnabled showsVerticalScrollIndicator>
+        {aiResult ? <ScrollView keyboardShouldPersistTaps="always" style={styles.aiResultScroll} nestedScrollEnabled showsVerticalScrollIndicator>
             <AIAnswerEvidencePanel
               answerTitle="Temis AI"
               answerText={aiResult.answerText}
@@ -420,12 +430,12 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
       <Modal visible={selectedPost !== null} animationType="slide" onRequestClose={() => setSelectedPost(null)}>
         <SafeAreaView style={styles.detail}>
           <KeyboardAvoidingView style={styles.detailKeyboard} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View style={styles.detailHeader}>
+          <ReportReasonModal visible={reportReasonOpen} onClose={() => setReportReasonOpen(false)} onSubmit={async reason => { if (!selectedPost) throw new Error("投稿が見つかりません。"); setReporting(true); try { await reportGuildPost(selectedPost.id, reason); } finally { setReporting(false); } }} /><View style={styles.detailHeader}>
             <Pressable style={styles.detailBack} onPress={() => setSelectedPost(null)}><Text style={styles.detailBackText}>‹ 戻る</Text></Pressable>
             <Text style={styles.title}>Note</Text>
             <View style={styles.detailHeaderAction}>{selectedPost?.authorUserId === profile.userId ? <Pressable onPress={() => void handleOpenSourceMemo()}><Text style={styles.headerActionText}>編集</Text></Pressable> : null}</View>
           </View>
-          {detailLoading ? <ActivityIndicator color="#2563eb" /> : selectedPost ? <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+          {detailLoading ? <ActivityIndicator color="#2563eb" /> : selectedPost ? <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="always" keyboardDismissMode="interactive">
             <Text style={styles.detailTitle}>{selectedPost.title?.trim() || selectedPost.body.split("\n").find(Boolean) || "無題"}</Text>
             <Text style={styles.date}>{formatDate(selectedPost.publishedAt ?? selectedPost.updatedAt)}</Text>
             <Text style={[styles.scopeBadge, selectedPost.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>Commons・{selectedPost.status === "published" ? "公開" : "非公開"}</Text>
@@ -457,6 +467,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
               {selectedPost.projectId && projectStatus !== "ready" ? <View><Text style={styles.error}>{projectError ?? "プロジェクトの利用状態を確認中です。"}</Text>{projectStatus === "error" ? <Pressable onPress={() => void refreshProjects()}><Text style={styles.retry}>再試行</Text></Pressable> : null}</View> : null}
               {selectedPost.projectId ? <Pressable disabled={projectStatus !== "ready"} style={styles.action} onPress={() => void handleJoin()}><Text style={styles.actionText}>参加を申請</Text></Pressable> : null}
               {inviteableProjects.length ? <Pressable style={styles.action} onPress={() => void handleScout()}><Text style={styles.actionText}>プロジェクトへスカウト</Text></Pressable> : null}
+              <Pressable style={styles.report} disabled={blocking} onPress={() => Alert.alert('投稿者をブロックしますか？', 'この投稿者の投稿とAIの根拠を非表示にし、新しいDMと通知を停止します。', [{ text: 'キャンセル', style: 'cancel' }, { text: 'ブロック', style: 'destructive', onPress: () => { const author = selectedPost.authorUserId; setBlocking(true); void setConnectionBlocked(author, true, profile?.userId).then(() => { setPosts(current => current.filter(post => post.authorUserId !== author)); setAIResult(null); setSelectedPost(null); }).catch(cause => Alert.alert('ブロックできません', cause.message)).finally(() => setBlocking(false)); } }])}><Text style={styles.reportText}>{blocking ? '処理中…' : '投稿者をブロック'}</Text></Pressable>
               <Pressable style={styles.report} onPress={() => void handleReport()} disabled={reporting}><Text style={styles.reportText}>通報</Text></Pressable>
             </View> : <View style={styles.actions}>
               <Pressable style={styles.action} onPress={() => void handleOpenSourceMemo()}><Text style={styles.actionText}>元メモで編集・公開管理</Text></Pressable>

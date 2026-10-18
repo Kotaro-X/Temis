@@ -23,8 +23,8 @@ const projectCore = require("../functions/projectAccessCore.cjs") as {
   };
 };
 
-test("Temis AI uses one shared ten-use week beginning Monday 00:00 JST", () => {
-  assert.equal(accessCore.AI_WEEKLY_LIMIT, 10);
+test("Temis AI uses one shared five-use week beginning Monday 00:00 JST", () => {
+  assert.equal(accessCore.AI_WEEKLY_LIMIT, 5);
   const sunday = accessCore.getJstWeek(Date.parse("2026-09-27T14:59:59.999Z"));
   const monday = accessCore.getJstWeek(Date.parse("2026-09-27T15:00:00.000Z"));
   assert.equal(sunday.weekKey, "2026-09-21");

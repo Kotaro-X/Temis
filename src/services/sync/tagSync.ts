@@ -30,6 +30,7 @@ import {
 import { syncDiagnosticReporter } from "./syncTelemetry";
 import { withLocalEntityMutation, withSyncStoreMutation } from "./localMutationLock";
 import { reconcileProcessedQueue } from "./reconcileProcessedQueue";
+import { assertSyncAccount } from "./syncAccountGuard";
 import {
   ClassifiedSyncError,
   classifySyncError,
@@ -91,6 +92,7 @@ const syncQueuedTags = async (
       continue;
     }
     try {
+      assertSyncAccount(identity.userId);
       await pushTagRecord(identity.userId, record);
       pushedCount += 1;
     } catch (error) {
@@ -111,6 +113,7 @@ const syncQueuedTags = async (
   }
 
   await withSyncStoreMutation(async () => {
+    assertSyncAccount(identity.userId);
     await saveSyncQueue(reconcileProcessedQueue(queue, nextQueue, await loadSyncQueue()));
   });
   return {
@@ -167,6 +170,7 @@ export const syncTagRecords = async (
   let retryCount = 0;
 
   try {
+    assertSyncAccount(identity.userId);
     await diagnostics.phase("load_local_changes");
     metadata = {
       ...metadata,
@@ -194,6 +198,7 @@ export const syncTagRecords = async (
     const pullResult = await runIncrementalPull({
       metadata,
       pullPage: async (request) => {
+        assertSyncAccount(identity.userId);
         await diagnostics.phase("fetch_remote_changes", { retryCount });
         const page = await pullTagRecordPage(identity.userId, request, {
           onValidationFailure: async () => {
@@ -210,10 +215,12 @@ export const syncTagRecords = async (
         await diagnostics.phase("resolve_conflicts", { retryCount });
         await diagnostics.phase("write_local_db", { retryCount });
         await withLocalEntityMutation("tag", async () => {
+          assertSyncAccount(identity.userId);
           await saveTagRecords(mergeTagRecords(await loadTagRecords(), remotePage));
         });
       },
       saveProgress: async (progress) => {
+        assertSyncAccount(identity.userId);
         metadata = progress;
         await saveSyncEntityMetadata(identity.userId, "tag", progress);
       },
@@ -236,6 +243,7 @@ export const syncTagRecords = async (
       );
     }
     await diagnostics.phase("mark_synced", { retryCount });
+    assertSyncAccount(identity.userId);
     metadata = completeSyncEntityMetadata(
       metadata,
       queueResult.pushedCount > 0 ? Date.now() : null,
@@ -253,6 +261,7 @@ export const syncTagRecords = async (
       classifiedError.classification.errorCode,
     );
     try {
+      assertSyncAccount(identity.userId);
       await saveSyncEntityMetadata(identity.userId, "tag", metadata);
     } catch {
       // Preserve the primary failure; diagnostics and recovery metadata are best effort.

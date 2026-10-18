@@ -1,3 +1,4 @@
+import { AIConsentRequiredError } from './ai/aiConsent';
 import { labelAnswerEvidence, type EvidenceInput } from "./aiEvidence";
 import { getLLMProvider } from "./LLMProvider";
 import type { LLMProvider } from "./LLMProvider";
@@ -934,6 +935,7 @@ const rewriteAnswerIfNeeded = async (
       }
     }
   } catch (error) {
+    if (error instanceof AIConsentRequiredError) throw error;
     const message = error instanceof Error ? error.message : String(error);
     debugLog(`rewrite failed reason=${message}`);
   }
@@ -946,6 +948,7 @@ export const answerWithCitations = async (
   logSummaryText?: string,
   llmProvider?: LLMProvider,
   requestId?: string,
+  expectedUid?: string,
 ): Promise<AnswerWithCitationsResult> => {
   const trimmedQuestion = question.trim();
   if (!trimmedQuestion) {
@@ -977,11 +980,13 @@ export const answerWithCitations = async (
           question: trimmedQuestion,
           evidence: promptEvidence.map((item) => ({
             key: item.evidenceKey,
+            memoId: item.memoId,
             text: item.snippetText.slice(0, 1_200),
             linkPath: item.linkPath?.every((token) => token.length <= 200) ? item.linkPath : undefined,
           })),
           logSummaryText: logSummaryText?.slice(0, 500),
           requestId,
+          userId: expectedUid,
         },
         runtimeConfig.openAiFunctionRegion,
       );
@@ -1055,6 +1060,7 @@ export const answerWithCitations = async (
       citedEvidenceKeys: parsed.citedEvidenceKeys,
     };
   } catch (error) {
+    if (error instanceof AIConsentRequiredError) throw error;
     const message = error instanceof Error ? error.message : String(error);
     debugLog(`llm error=${message}`);
     let devDetails = "";

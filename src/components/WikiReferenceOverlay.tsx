@@ -1,6 +1,6 @@
+import Modal from "./common/KeyboardAwareModal";
 import React, { useMemo } from "react";
 import {
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -141,7 +141,7 @@ const WikiReferenceOverlay = ({
           ) : filteredItems.length === 0 ? (
             <Text style={styles.helperText}>{emptyLabel}</Text>
           ) : (
-            <ScrollView style={styles.list} contentContainerStyle={styles.listBody}>
+            <ScrollView keyboardShouldPersistTaps="always" style={styles.list} contentContainerStyle={styles.listBody}>
               {filteredItems.map((item) => (
                 <Pressable
                   key={item.memoId}
@@ -160,7 +160,7 @@ const WikiReferenceOverlay = ({
                     </Text>
                   ) : null}
                   <Text style={styles.itemMeta}>
-                    {labelForSource(item.source, language)}
+                    {labelForSource(item.source, language)}{item.scope ? ` · ${item.scope === "project" ? "Project" : "Private"}` : ""}
                   </Text>
                 </Pressable>
               ))}

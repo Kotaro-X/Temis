@@ -16,6 +16,7 @@ function loadModule(path: string, dependencies: Record<string, unknown>) {
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports: Record<string, any> = {};
   vm.runInNewContext(code, { exports, console, process: { env: {} }, require: (name: string) => {
+    if (name.endsWith("aiConsent")) return { AIConsentRequiredError: class extends Error {} };
     if (name in dependencies) return dependencies[name];
     throw new Error(`Unexpected dependency ${name}`);
   } });

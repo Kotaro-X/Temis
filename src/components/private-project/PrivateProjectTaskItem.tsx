@@ -1,196 +1,78 @@
-import React, { useMemo, useState } from "react";
-import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-
-import TaskItem from "../tasks/TaskItem";
-import { useCollaboration } from "../../context/CollaborationContext";
-import { updateProjectTask, type MyProjectTask } from "../../services/collaboration/collaborationService";
-import { syncProjectTaskMemo } from "../../services/collaboration/projectTaskMemoService";
+import React, { useEffect, useRef, useState } from "react";
+import { Alert, Pressable, Text, View } from "react-native";
+import TaskItem, { type TaskDragPreview } from "../tasks/TaskItem";
+import TaskMoveModal from "../tasks/TaskMoveModal";
+import ProjectTaskEditor from "../project/ProjectTaskEditor";
+import { updateProjectTask, deleteProjectTask, type MyProjectTask } from "../../services/collaboration/collaborationService";
+import { projectTaskOwner, projectTaskState } from "../../services/collaboration/projectTaskCore";
+import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot, toLocalDateString } from "../../utils/projectTaskPlacement";
+import { SLOT_KEYS, SLOT_LABELS, type SlotKey, type TaskStatus } from "../../types";
 import type { ProjectTaskStatus } from "../../types/collaboration";
-import { SLOT_KEYS, SLOT_LABELS, type SlotKey, type TaskState, type TaskStatus } from "../../types";
-import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot } from "../../utils/projectTaskPlacement";
 
 type Props = {
-  item: MyProjectTask;
-  styles: Record<string, any>;
-  tr: (key: string) => string;
-  noTagLabel: string;
-  untitledLabel: string;
-  statusLabel: Record<TaskStatus, string>;
+  item: MyProjectTask; styles: Record<string, any>; tr: (key: string) => string;
+  noTagLabel: string; untitledLabel: string; statusLabel: Record<TaskStatus, string>;
   statusPalette: Record<TaskStatus, { bar: string; badgeBg: string; badgeText: string }>;
-  timeBoxSchedule: Record<SlotKey, { start: string; end: string }>;
-  onChanged: () => void;
+  timeBoxSchedule: Record<SlotKey, { start: string; end: string }>; onChanged: () => void;
+  isOpen?: boolean; onOpenSwipe?: () => void; onCloseSwipe?: () => void;
+  ownerLabel?: string; selectionMode?: boolean; selected?: boolean; onToggleSelection?: () => void;
+  onDragStart?: (preview: TaskDragPreview) => void; onDragMove?: (x: number, y: number) => void;
+  onDragEnd?: () => void; onDragStateChange?: (dragging: boolean) => void; onDrop?: (pageY: number) => void;
 };
-
-const statusForProjectTask: Record<ProjectTaskStatus, TaskStatus> = {
-  todo: "TODO",
-  in_progress: "IN_PROGRESS",
-  paused: "PAUSED",
-  completed: "DONE",
-};
-
-const statusLabels: Record<ProjectTaskStatus, string> = {
-  todo: "未着手",
-  in_progress: "進行中",
-  paused: "一時停止",
-  completed: "完了",
-};
-
-const isValidDate = (value: string) => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  return !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
-};
-
-const PrivateProjectTaskItem = ({
-  item,
-  styles,
-  tr,
-  noTagLabel,
-  untitledLabel,
-  statusLabel,
-  statusPalette,
-  timeBoxSchedule,
-  onChanged,
-}: Props) => {
-  const { profile } = useCollaboration();
+export default function PrivateProjectTaskItem(props: Props) {
+  const { item, styles, tr, noTagLabel, untitledLabel, statusLabel, statusPalette, timeBoxSchedule, onChanged } = props;
   const [saving, setSaving] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState("");
-  const [estimate, setEstimate] = useState("25");
-  const [projectStatus, setProjectStatus] = useState<ProjectTaskStatus>("todo");
-  const [privateDate, setPrivateDate] = useState("");
-  const [privateSlotKey, setPrivateSlotKey] = useState<SlotKey>("morning");
-  const status = statusForProjectTask[item.task.status];
-  const task = useMemo<TaskState>(() => ({
-    id: `project:${item.task.id}`,
-    taskName: `${item.project.name}｜${item.task.title}`,
-    tags: item.task.tags ?? [],
-    estimateMinutes: item.task.estimateMinutes ?? 25,
-    elapsedMinutes: 0,
-    status,
-    isArchived: item.task.isArchived ?? false,
-    startAt: null,
-  }), [item, status]);
-
-  const openEditor = () => {
-    setTitle(item.task.title);
-    setDescription(item.task.description ?? "");
-    setTags((item.task.tags ?? []).join("、"));
-    setEstimate(String(item.task.estimateMinutes ?? 25));
-    setProjectStatus(item.task.status);
-    setPrivateDate(getProjectTaskPrivateDate(item.task));
-    setPrivateSlotKey(getProjectTaskPrivateSlot(item.task, timeBoxSchedule));
-    setEditorOpen(true);
+  const [swipeOpen, setSwipeOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [date, setDate] = useState(getProjectTaskPrivateDate(item.task));
+  const [slot, setSlot] = useState(getProjectTaskPrivateSlot(item.task, timeBoxSchedule));
+  const [dateError, setDateError] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const task = projectTaskState(item.task);
+  const run = async (action: () => Promise<unknown>) => {
+    if (saving) return;
+    setSaving(true);
+    try { await action(); if (alive.current) { setSwipeOpen(false); props.onCloseSwipe?.(); setMoveOpen(false); onChanged(); } }
+    catch (cause) { if (alive.current) Alert.alert("更新できません", cause instanceof Error ? cause.message : "再試行してください。"); }
+    finally { if (alive.current) setSaving(false); }
   };
-
-  const save = async () => {
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle) return;
-    if (!isValidDate(privateDate)) {
-      Alert.alert("日付を確認してください", "Private表示日は YYYY-MM-DD 形式で入力してください。");
-      return;
-    }
-    try {
-      setSaving(true);
-      if (!profile) throw new Error("アカウントにログインしてからタスクを保存してください。");
-      const savedTask = await updateProjectTask(item.task.id, {
-        title: trimmedTitle,
-        description: description.trim() || null,
-        tags: tags.split(/[、,]/).map((tag) => tag.trim()).filter(Boolean),
-        estimateMinutes: Math.max(0, Number.parseInt(estimate, 10) || 0),
-        status: projectStatus,
-        privateDate,
-        privateSlotKey,
-      });
-      const relatedMemoId = await syncProjectTaskMemo({ task: savedTask, profile });
-      if (relatedMemoId !== savedTask.relatedMemoId) {
-        await updateProjectTask(savedTask.id, { relatedMemoId });
-      }
-      setEditorOpen(false);
-      onChanged();
-    } catch (cause) {
-      Alert.alert("更新できません", cause instanceof Error ? cause.message : "もう一度お試しください。");
-    } finally {
-      setSaving(false);
-    }
+  const updateStatus = (status: ProjectTaskStatus) => { void run(() => updateProjectTask(item.task.id, { status })); };
+  const openMove = () => { setDate(getProjectTaskPrivateDate(item.task)); setSlot(getProjectTaskPrivateSlot(item.task, timeBoxSchedule)); setDateError(null); setMoveOpen(true); };
+  const shiftDate = (days: number) => { const value = new Date(`${date}T00:00:00`); if (!Number.isNaN(value.getTime())) { value.setDate(value.getDate() + days); setDate(toLocalDateString(value.getTime())); } };
+  const move = () => {
+    const value = new Date(`${date}T00:00:00`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(value.getTime()) || toLocalDateString(value.getTime()) !== date) { setDateError("日付を確認してください。"); return; }
+    void run(() => updateProjectTask(item.task.id, { privateDate: date, privateSlotKey: slot, ...(item.task.isArchived ? { isArchived: false, status: "todo" as const } : {}) }));
   };
-
-  const updateStatus = async (nextStatus: ProjectTaskStatus) => {
-    if (saving || nextStatus === item.task.status) return;
-    try {
-      setSaving(true);
-      await updateProjectTask(item.task.id, { status: nextStatus });
-      onChanged();
-    } catch (cause) {
-      Alert.alert("更新できません", cause instanceof Error ? cause.message : "もう一度お試しください。");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <TaskItem
-        styles={styles}
-        tr={tr}
-        task={task}
-        noTagLabel={noTagLabel}
-        untitledLabel={untitledLabel}
-        statusLabel={statusLabel[status]}
-        palette={statusPalette[status]}
-        isOpen={false}
-        onOpen={() => undefined}
-        onClose={() => undefined}
-        onPress={openEditor}
-        onStart={() => void updateStatus("in_progress")}
-        onPause={() => void updateStatus("paused")}
-        onDone={() => void updateStatus("completed")}
-        actions={[]}
-        completed={status === "DONE"}
-        swipeEnabled={false}
-        draggable={false}
-      />
-      <Modal visible={editorOpen} animationType="slide" onRequestClose={() => !saving && setEditorOpen(false)}>
-        <View style={editorStyles.container}>
-          <View style={editorStyles.header}>
-            <Pressable disabled={saving} onPress={() => setEditorOpen(false)}><Text style={editorStyles.cancel}>キャンセル</Text></Pressable>
-            <Text style={editorStyles.title}>プロジェクトタスクを編集</Text>
-            <Pressable disabled={saving || !title.trim()} onPress={() => void save()}><Text style={[editorStyles.done, (saving || !title.trim()) && editorStyles.disabled]}>{saving ? "保存中" : "完了"}</Text></Pressable>
-          </View>
-          <Text style={editorStyles.projectName}>{item.project.name}</Text>
-          <TextInput style={editorStyles.input} value={title} onChangeText={setTitle} placeholder="タスク名" autoFocus />
-          <TextInput style={editorStyles.input} value={tags} onChangeText={setTags} placeholder="タグ（、または , 区切り）" />
-          <TextInput style={editorStyles.input} value={estimate} onChangeText={setEstimate} keyboardType="number-pad" placeholder="予測（分）" />
-          <TextInput style={editorStyles.memo} value={description} onChangeText={setDescription} placeholder="メモ" multiline textAlignVertical="top" />
-          <Text style={editorStyles.label}>状態</Text>
-          <View style={editorStyles.row}>{(Object.keys(statusLabels) as ProjectTaskStatus[]).map((candidate) => <Pressable key={candidate} style={[editorStyles.option, projectStatus === candidate && editorStyles.optionActive]} onPress={() => setProjectStatus(candidate)}><Text style={[editorStyles.optionText, projectStatus === candidate && editorStyles.optionTextActive]}>{statusLabels[candidate]}</Text></Pressable>)}</View>
-          <Text style={editorStyles.label}>Private表示日</Text>
-          <TextInput style={editorStyles.input} value={privateDate} onChangeText={setPrivateDate} placeholder="YYYY-MM-DD" />
-          <Text style={editorStyles.label}>Private時間帯</Text>
-          <View style={editorStyles.row}>{SLOT_KEYS.map((slotKey) => <Pressable key={slotKey} style={[editorStyles.option, privateSlotKey === slotKey && editorStyles.optionActive]} onPress={() => setPrivateSlotKey(slotKey)}><Text style={[editorStyles.optionText, privateSlotKey === slotKey && editorStyles.optionTextActive]}>{SLOT_LABELS[slotKey]}</Text></Pressable>)}</View>
-        </View>
-      </Modal>
-    </>
-  );
-};
-
-const editorStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#ffffff", padding: 20, paddingTop: 72 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
-  title: { color: "#111827", fontSize: 18, fontWeight: "700" },
-  cancel: { color: "#4b5563", fontSize: 15, fontWeight: "600" },
-  done: { color: "#2563eb", fontSize: 15, fontWeight: "700" },
-  disabled: { opacity: 0.4 },
-  projectName: { marginBottom: 12, color: "#6b7280", fontSize: 13 },
-  input: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, color: "#111827", fontSize: 16, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 12 },
-  memo: { minHeight: 130, borderWidth: 1, borderColor: "#d1d5db", borderRadius: 9, color: "#111827", fontSize: 15, padding: 12 },
-  label: { marginTop: 16, marginBottom: 8, color: "#374151", fontSize: 13, fontWeight: "700" },
-  row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  option: { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
-  optionActive: { backgroundColor: "#111827", borderColor: "#111827" },
-  optionText: { color: "#4b5563", fontSize: 12, fontWeight: "600" },
-  optionTextActive: { color: "#ffffff" },
-});
-
-export default PrivateProjectTaskItem;
+  const confirmDelete = () => Alert.alert(tr("task.deleteConfirmTitle"), tr("task.deleteConfirmBody"), [
+    { text: tr("common.cancel"), style: "cancel" }, { text: tr("common.delete"), style: "destructive", onPress: () => { void run(() => deleteProjectTask(item.task.id)); } },
+  ]);
+  return <View style={{ marginTop: 10, opacity: saving ? 0.6 : 1 }} pointerEvents={saving ? "none" : "auto"}>
+    <TaskItem styles={styles} tr={tr} task={task} noTagLabel={noTagLabel} untitledLabel={untitledLabel}
+      statusLabel={statusLabel[task.status]} palette={statusPalette[task.status]} isOpen={props.isOpen ?? swipeOpen}
+      onOpen={() => { setSwipeOpen(true); props.onOpenSwipe?.(); }} onClose={() => { setSwipeOpen(false); props.onCloseSwipe?.(); }}
+      onPress={() => {
+        if (props.selectionMode) { props.onToggleSelection?.(); return; }
+        if (props.isOpen ?? swipeOpen) { setSwipeOpen(false); props.onCloseSwipe?.(); return; }
+        setEditorOpen(true);
+      }}
+      onStart={() => updateStatus("in_progress")} onPause={() => updateStatus("paused")} onDone={() => updateStatus("completed")}
+      executionActions={item.task.isArchived ? <Pressable style={styles.startButton} onPress={openMove}><Text style={styles.startButtonText}>復元</Text></Pressable> : undefined}
+      selectionMode={props.selectionMode} selected={props.selected} onToggleSelection={props.onToggleSelection}
+      onDragStart={props.onDragStart} onDragMove={props.onDragMove} onDragEnd={props.onDragEnd}
+      onDragStateChange={props.onDragStateChange} onDrop={props.onDrop} draggable={Boolean(props.onDrop)}
+      completed={task.status === "DONE"} completedTime={item.task.completedAt ? new Date(item.task.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null}
+      actions={[
+        { label: item.task.isArchived ? "復元" : tr("task.move"), onPress: openMove, style: styles.swipeMoveButton },
+        ...(!item.task.isArchived ? [{ label: tr("task.archive"), onPress: () => { void run(() => updateProjectTask(item.task.id, { isArchived: true })); }, style: styles.swipeArchiveButton }] : []),
+        { label: tr("task.delete"), onPress: confirmDelete, style: styles.swipeDeleteButton },
+      ]} />
+    <Text style={styles.mutedText}>{item.project.name} · 担当者: {props.ownerLabel ?? item.ownerLabel ?? (projectTaskOwner(item.task) ? "あなた" : "未割り当て")}</Text>
+    {editorOpen ? <ProjectTaskEditor project={item.project} task={item.task} onClose={() => setEditorOpen(false)} onChanged={onChanged} /> : null}
+    <TaskMoveModal styles={styles} visible={moveOpen} title={item.task.isArchived ? "タスクを復元" : tr("task.move")} cancelLabel={tr("common.cancel")} confirmLabel="保存" prevLabel="前日" nextLabel="翌日"
+      dateDraft={date} onChangeDateDraft={setDate} dateError={dateError} slotOptions={SLOT_KEYS.map(key => ({ key, label: SLOT_LABELS[key], active: slot === key, onPress: () => setSlot(key) }))}
+      onPrevDate={() => shiftDate(-1)} onNextDate={() => shiftDate(1)} onClose={() => !saving && setMoveOpen(false)} onConfirm={move} />
+  </View>;
+}

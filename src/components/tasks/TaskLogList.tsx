@@ -419,7 +419,7 @@ const TaskLogList = ({
                 </Text>
               </Pressable>
             </View>
-            <ScrollView
+            <ScrollView keyboardShouldPersistTaps="always"
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.logAnalysisTagRow}
@@ -485,7 +485,7 @@ const TaskLogList = ({
           untitledLabel={untitledLabel}
         />
       ) : logView === "table" ? (
-        <ScrollView
+        <ScrollView keyboardShouldPersistTaps="always"
           ref={tableScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -528,7 +528,7 @@ const TaskLogList = ({
           </View>
         </ScrollView>
       ) : (
-        <ScrollView
+        <ScrollView keyboardShouldPersistTaps="always"
           ref={boardScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}

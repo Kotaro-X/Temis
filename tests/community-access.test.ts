@@ -9,6 +9,7 @@ function render(user: any, accountUserId: string | null, authStatus: string, vis
   vm.runInNewContext(code, { exports, require: (name: string) => {
     if (name === 'react') return { Fragment: 'Fragment', createElement: (type: any, props: any, ...children: any[]) => ({ type, props: { ...props, children } }) };
     if (name === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', ActivityIndicator: 'ActivityIndicator' };
+    if (name === '@expo/vector-icons') return { Ionicons: 'Ionicons' };
     if (name.endsWith('CloudSyncContext')) return { useCloudSyncContext: () => ({ user, authStatus }) };
     if (name.endsWith('CollaborationContext')) return { useCollaboration: () => ({ accountUserId }) };
     if (name.endsWith('AppUIContext')) return { useAppUI: () => ({ openSettingsAccount() {}, openMenu() {} }) };

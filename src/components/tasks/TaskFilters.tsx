@@ -78,7 +78,7 @@ const TaskFilters = ({
         value={logQuery}
         onChangeText={onChangeLogQuery}
       />
-      <ScrollView
+      <ScrollView keyboardShouldPersistTaps="always"
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.filterRow}

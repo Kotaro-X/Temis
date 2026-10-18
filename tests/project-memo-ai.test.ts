@@ -73,7 +73,7 @@ test("combined evidence is relevance ordered, deduplicated, and capped", () => {
 test("combined Project search is personal-only and scope changes reset stale evidence", () => {
   const retrieval = readFileSync("src/services/collaboration/projectMemoAIRetrieval.ts", "utf8");
   const screen = readFileSync("src/screens/ProjectWorkspaceScreen.tsx", "utf8");
-  assert.equal(retrieval.includes('{ noteScope: "personal" }'), true);
+  assert.equal(retrieval.includes('noteScope: "personal"'), true);
   assert.match(screen, /const changeMemoAIScope[\s\S]*setMemoAIScope\(scope\);[\s\S]*resetMemoAI\(\);/);
 });
 

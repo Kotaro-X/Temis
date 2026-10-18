@@ -145,6 +145,7 @@ export const buildMemoTaskIndexEntries = (
         taskId: task.id,
         taskTitle: task.taskName || untitledLabel,
       });
+      for (const [day, override] of Object.entries(task.occurrenceOverrides ?? {})) entries.push({ taskId: `${task.id}@${day}`, taskTitle: override.title || task.taskName || untitledLabel });
     }
   }
   return entries;

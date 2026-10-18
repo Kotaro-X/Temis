@@ -1,6 +1,7 @@
+import Modal from "../common/KeyboardAwareModal";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAppSettings } from "../../context/AppSettingsContext";
@@ -10,7 +11,6 @@ import { useSubscription } from "../../context/SubscriptionContext";
 import { hasStaffFreeAccess } from "../../services/subscription/staffAccess";
 import { t } from "../../i18n";
 import appChromeStyles from "../../styles/appChromeStyles";
-import AppLanguageBridge from "../app-bridges/AppLanguageBridge";
 import { useDirectMessages } from "../../context/DirectMessagesContext";
 import AppMenuBridge from "../app-bridges/AppMenuBridge";
 import AppNoticeBridge from "../app-bridges/AppNoticeBridge";
@@ -101,11 +101,6 @@ const BottomTabBar = ({
         onPress={() => onTabPress("tasks")}
       />
       <TabButton
-        label={t(appLanguage, "tab.todos")}
-        active={activeTab === "todo"}
-        onPress={() => onTabPress("todo")}
-      />
-      <TabButton
         label={t(appLanguage, "tab.memos")}
         active={activeTab === "memos"}
         onPress={() => onTabPress("memos")}
@@ -140,8 +135,6 @@ const AppChromeShell = ({
 }: Props) => {
   const {
     cloudSyncEnabled,
-    languagePickerOpen,
-    selectInitialLanguage,
     storageReady,
     tr,
   } = useAppSettings();
@@ -233,7 +226,7 @@ const AppChromeShell = ({
             style={appChromeStyles.scopePickerDismiss}
             onPress={() => setScopePickerOpen(false)}
           />
-          <ScrollView
+          <ScrollView keyboardShouldPersistTaps="always"
             style={[appChromeStyles.scopePicker, { top: insetsTop + 42 }]}
             contentContainerStyle={appChromeStyles.scopePickerContent}
             bounces={false}
@@ -329,10 +322,6 @@ const AppChromeShell = ({
         onNextMonth={() => shiftDatePickerMonth(1)}
         onSelectDate={selectDateFromCalendar}
         onConfirm={applyDateDraft}
-      />
-      <AppLanguageBridge
-        visible={languagePickerOpen}
-        onSelectLanguage={selectInitialLanguage}
       />
       <AppNoticeBridge
         visible={downloadCompleteNoticeOpen}

@@ -40,3 +40,6 @@ export const markEmbeddingJobFailed = (
 export const shouldCompleteEmbeddingJob = (
   remainingChunks: number,
 ): boolean => remainingChunks === 0;
+
+/** An external AI queue must not transfer a previous account's deferred work. */
+export const canRunAccountEmbeddingJob = (ownerUid: string | null | undefined, currentUid: string | null): boolean => Boolean(ownerUid && currentUid && ownerUid === currentUid);

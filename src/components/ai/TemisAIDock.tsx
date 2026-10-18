@@ -1,3 +1,5 @@
+import { requireAIConsent } from '../../services/ai/aiConsent';
+import { Alert } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import {
@@ -40,6 +42,7 @@ export default function TemisAIDock({
   inputProps,
   children,
 }: Props) {
+  const searchWithConsent = () => { if (searchDisabled) return; void requireAIConsent(true).then(onSearch).catch(cause => Alert.alert('Temis AI', cause.message)); };
   return (
     <View style={[
       styles.dock,
@@ -63,10 +66,10 @@ export default function TemisAIDock({
           placeholderTextColor="#9ca3af"
           value={query}
           onChangeText={onChangeQuery}
-          onSubmitEditing={onSearch}
+          onSubmitEditing={searchWithConsent}
           returnKeyType="search"
         />
-        <Pressable style={[styles.searchButton, searchDisabled && styles.searchButtonDisabled]} onPress={onSearch} disabled={searchDisabled}>
+        <Pressable style={[styles.searchButton, searchDisabled && styles.searchButtonDisabled]} onPress={searchWithConsent} disabled={searchDisabled}>
           <Text style={styles.searchButtonText}>{searchLabel}</Text>
         </Pressable>
       </View>
@@ -81,6 +84,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    zIndex: 20,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     backgroundColor: "#ffffff",
@@ -93,7 +97,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: -4 },
-    elevation: 8,
+    elevation: 20,
   },
   expanded: {
     borderTopLeftRadius: 0,

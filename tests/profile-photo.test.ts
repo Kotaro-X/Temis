@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import vm from 'node:vm';
 import { base64ByteLength, profilePhotoCrop } from '../src/services/collaboration/profilePolicy.ts';
-function fixture(failure?: string) {
+function fixture(failure?: string, environment = 'production') {
   const events: any[] = [];
   const nativeLoads: string[] = [];
   const auth = { currentUser: { uid: 'alice', getIdToken: async () => 'test-token' } };
@@ -26,6 +26,7 @@ function fixture(failure?: string) {
       getInfoAsync: async () => ({ exists: true, isDirectory: false, size: failure === 'large' ? 1500000 : 12000 }),
       deleteAsync: async (uri: string) => { events.push(['cleanup', uri]); },
     };
+    if (name.endsWith('runtimeEnvironment')) return { getAppEnvironment: () => environment, getEnvironmentEpoch: () => 0 };
     if (name.endsWith('profilePhotoUpload')) return { uploadProfilePhotoFile: async (input: any) => {
       events.push(['upload', input]);
       if (failure === 'upload') throw new Error('upload failed');
@@ -87,4 +88,13 @@ test('missing native photo modules do not break startup or photo removal and sel
     await assert.rejects(f.service.selectAndSaveProfilePhoto(), /新しいアプリビルド/);
     assert.equal(f.events.some((e) => e[0] === 'upload'), false);
   }
+});
+
+test('test photos use authenticated URLs without permanent download tokens and disable public caching', async () => {
+  const f = fixture(undefined, 'test'); await f.service.selectAndSaveProfilePhoto();
+  const upload = f.events.find(event => event[0] === 'upload')[1];
+  const commit = f.events.find(event => event[0] === 'commit');
+  assert.equal(upload.cacheControl, 'private,no-store');
+  assert.match(commit[2], /alt=media$/);
+  assert.equal(commit[2].includes('token='), false);
 });

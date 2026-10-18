@@ -13,7 +13,7 @@ const extractGuildWikiTokens = (post) => {
 const sourceRevision = (snapshot) => snapshot.updateTime
   ? `${snapshot.updateTime.seconds}:${snapshot.updateTime.nanoseconds}` : "";
 
-const createGuildIndexWriter = ({ db, FieldValue, requestEmbeddings, embeddingModel }) => async (postId) => {
+const createGuildIndexWriter = ({ db, FieldValue, requestEmbeddings, embeddingModel, requireAuthorConsent }) => async (postId) => {
   const postRef = db.collection("guildPosts").doc(postId);
   const indexRef = db.collection("guildPostAIIndex").doc(postId);
   const prepared = await db.runTransaction(async (transaction) => {
@@ -43,12 +43,28 @@ const createGuildIndexWriter = ({ db, FieldValue, requestEmbeddings, embeddingMo
     return { text, revision, reuse: !!reuse };
   });
   if (!prepared) return false;
+  let consentRevision;
+  try { if (requireAuthorConsent) consentRevision = await requireAuthorConsent((await postRef.get()).data()); }
+  catch (error) { if (error.code === 'failed-precondition') { await indexRef.delete(); return false; } throw error; }
   if (prepared.reuse) return true;
   // Wiki links are committed before calling OpenAI. Failed embeddings do not
   // prevent linked posts from being discovered, and event retries can repair them.
   const [embedding] = await requestEmbeddings([prepared.text]);
+  if (requireAuthorConsent) {
+    try { const current = await requireAuthorConsent((await postRef.get()).data()); if (current !== consentRevision) { await indexRef.delete(); return false; } }
+    catch (error) { if (error.code === 'failed-precondition') { await indexRef.delete(); return false; } throw error; }
+  }
   return db.runTransaction(async (transaction) => {
     const [snapshot, indexed] = await Promise.all([transaction.get(postRef), transaction.get(indexRef)]);
+    if (requireAuthorConsent && snapshot.exists) {
+      const post = snapshot.data();
+      const safetyCore = require('./reviewSafetyCore.cjs');
+      const permissions = [{ userId: post.authorUserId, revision: post.safety?.consentRevision }, ...post.safety?.sourceConsents || []];
+      for (const permission of permissions) {
+        const current = await transaction.get(db.doc(`aiConsents/${permission.userId}`));
+        if (!safetyCore.activeConsent(current.data()) || current.data().revision !== permission.revision) { transaction.delete(indexRef); return false; }
+      }
+    }
     if (!isPublicVisibleGuildPost(snapshot.data()) || sourceRevision(snapshot) !== prepared.revision ||
         indexed.data()?.sourceRevision !== prepared.revision) return false;
     transaction.update(indexRef, { embedding: FieldValue.vector(embedding), embeddingStatus: "completed" });

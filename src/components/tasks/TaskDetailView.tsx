@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 
 import type { SlotKey, TaskState, TaskStatus } from "../../types";
@@ -39,7 +39,10 @@ const TaskDetailView = ({
     String(task.estimateMinutes),
   );
 
+  const estimateFocused = useRef(false);
+  useEffect(() => { if (!estimateFocused.current) setEstimateText(String(task.estimateMinutes)); }, [task.estimateMinutes]);
   const handleEstimateFocus = () => {
+    estimateFocused.current = true;
     if (task.estimateMinutes === 25 && estimateText === "25") {
       setEstimateText("");
     }
@@ -84,10 +87,10 @@ const TaskDetailView = ({
           <Pressable
             style={[
               styles.startButton,
-              task.status === "DONE" && styles.startButtonDisabled,
+              (task.status === "DONE" || task.isArchived) && styles.startButtonDisabled,
             ]}
             onPress={onStart}
-            disabled={task.status === "DONE"}
+            disabled={task.status === "DONE" || task.isArchived}
           >
             <Text style={styles.startButtonText}>{tr("task.start")}</Text>
           </Pressable>
@@ -116,6 +119,7 @@ const TaskDetailView = ({
           keyboardType="number-pad"
           value={estimateText}
           onFocus={handleEstimateFocus}
+          onBlur={() => { estimateFocused.current = false; setEstimateText(String(task.estimateMinutes)); }}
           onChangeText={handleEstimateChange}
         />
       </View>

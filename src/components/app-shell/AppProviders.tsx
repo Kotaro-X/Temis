@@ -1,3 +1,5 @@
+import EnvironmentBoundary from "./EnvironmentBoundary";
+import AIConsentBoundary from '../../context/AIConsentContext';
 import React from "react";
 import { DirectMessagesProvider } from "../../context/DirectMessagesContext";
 
@@ -15,6 +17,12 @@ const AppBootstrapBoundary = ({
 }: {
   children: React.ReactNode;
 }) => {
+  const { authStatus, accountRestoreError, workspaceKey } = useCloudSyncContext();
+  if (authStatus === "restoring" || authStatus === "signingIn" || authStatus === "deleting" || accountRestoreError) return <>{children}</>;
+  return <ReadyAppBootstrap key={workspaceKey}>{children}</ReadyAppBootstrap>;
+};
+
+const ReadyAppBootstrap = ({ children }: { children: React.ReactNode }) => {
   const { syncNow } = useCloudSyncContext();
   useAppBootstrap({ syncNow });
   return <>{children}</>;
@@ -25,7 +33,7 @@ const AppProviders = ({
 }: {
   children: React.ReactNode;
 }) => (
-  <SubscriptionProvider>
+  <EnvironmentBoundary><SubscriptionProvider>
     <AppSettingsProvider>
       <CollaborationProvider>
         <TemisAIUsageProvider>
@@ -33,7 +41,7 @@ const AppProviders = ({
           <DirectMessagesProvider>
           <AppRefreshProvider>
             <CloudSyncProvider>
-              <AppBootstrapBoundary>{children}</AppBootstrapBoundary>
+              <AIConsentBoundary><AppBootstrapBoundary>{children}</AppBootstrapBoundary></AIConsentBoundary>
             </CloudSyncProvider>
           </AppRefreshProvider>
           </DirectMessagesProvider>
@@ -41,7 +49,7 @@ const AppProviders = ({
         </TemisAIUsageProvider>
       </CollaborationProvider>
     </AppSettingsProvider>
-  </SubscriptionProvider>
+  </SubscriptionProvider></EnvironmentBoundary>
 );
 
 export default AppProviders;

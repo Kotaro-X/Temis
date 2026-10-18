@@ -26,6 +26,7 @@ type Props = {
   restoreModalProps: Omit<TaskRestoreModalProps, "onConfirm">;
   onOpenRestoreModal: (item: ArchivedTaskItem) => RestoreOpenResult;
   onApplyRestoreTask: () => Promise<RestoreResult>;
+  children?: React.ReactNode;
 };
 
 const TaskArchiveScreen = ({
@@ -40,6 +41,7 @@ const TaskArchiveScreen = ({
   restoreModalProps,
   onOpenRestoreModal,
   onApplyRestoreTask,
+  children,
 }: Props) => {
   const archiveListProps = useMemo<TaskArchiveListProps>(
     () => ({
@@ -75,7 +77,7 @@ const TaskArchiveScreen = ({
 
   return (
     <>
-      <ScrollView
+      <ScrollView keyboardShouldPersistTaps="always"
         contentContainerStyle={[
           styles.content,
           { paddingTop: contentPaddingTop },
@@ -92,6 +94,7 @@ const TaskArchiveScreen = ({
         />
         <View style={styles.archiveBox}>
           <TaskArchiveList {...archiveListProps} />
+          {children}
         </View>
       </ScrollView>
       <TaskRestoreModal {...resolvedRestoreModalProps} />

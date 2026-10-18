@@ -1,3 +1,4 @@
+import { completeDMReport, listDMReports, type DMReport } from '../services/dm/dmReports';
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -32,6 +33,8 @@ const formatDate = (value: number | null) =>
 
 const GuildAdminScreen = ({ visible, contentPaddingTop, onBack }: Props) => {
   const { accessGrant } = useSubscription();
+  const [dmReports, setDMReports] = useState<DMReport[]>([]);
+  const [tab, setTab] = useState<'posts' | 'dm'>('posts');
   const [reports, setReports] = useState<GuildModerationReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -45,14 +48,15 @@ const GuildAdminScreen = ({ visible, contentPaddingTop, onBack }: Props) => {
     else setLoading(true);
     setError(null);
     try {
-      setReports(await listGuildReports());
+      if (tab === 'posts') setReports(await listGuildReports());
+      else setDMReports(await listDMReports());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "通報を読み込めませんでした。");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isStaff]);
+  }, [isStaff, tab]);
 
   useEffect(() => {
     if (visible) void loadReports();
@@ -117,7 +121,8 @@ const GuildAdminScreen = ({ visible, contentPaddingTop, onBack }: Props) => {
         <Text style={styles.title}>運営画面</Text>
         <View style={styles.headerSpacer} />
       </View>
-      {loading ? (
+      <View style={{ flexDirection: 'row', gap: 16, padding: 12 }}><Pressable onPress={() => setTab('posts')}><Text style={{ color: tab === 'posts' ? '#2563eb' : '#64748b' }}>投稿の通報</Text></Pressable><Pressable onPress={() => setTab('dm')}><Text style={{ color: tab === 'dm' ? '#2563eb' : '#64748b' }}>DMの通報</Text></Pressable></View>
+      {tab === 'dm' ? <FlatList data={dmReports} keyExtractor={item => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadReports(true)} />} ListEmptyComponent={<Text style={styles.empty}>{error || (loading ? '読み込み中…' : '通報はありません。')}</Text>} contentContainerStyle={styles.list} renderItem={({ item }) => <View style={styles.card}><Text style={styles.author}>DM通報: {item.reason}</Text><Text style={styles.meta}>対象ユーザー: {item.reportedUserId}</Text><Text selectable>{item.evidence.text}</Text><Text style={styles.meta}>{formatDate(item.evidence.createdAt)}</Text><Pressable disabled={completingReportId !== null} style={styles.action} onPress={() => { setCompletingReportId(item.id); void completeDMReport(item.id).then(() => setDMReports(current => current.filter(report => report.id !== item.id))).catch(cause => Alert.alert('対応を完了できません', cause.message)).finally(() => setCompletingReportId(null)); }}><Text style={styles.actionText}>対応を完了</Text></Pressable></View>} /> : loading ? (
         <View style={styles.center}><ActivityIndicator color="#2563eb" /></View>
       ) : error && reports.length === 0 ? (
         <View style={styles.center}>
@@ -125,7 +130,7 @@ const GuildAdminScreen = ({ visible, contentPaddingTop, onBack }: Props) => {
           <Pressable onPress={() => void loadReports()}><Text style={styles.retry}>再試行</Text></Pressable>
         </View>
       ) : (
-        <FlatList
+        <FlatList keyboardShouldPersistTaps="always"
           data={reports}
           keyExtractor={(item) => item.id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadReports(true)} />}

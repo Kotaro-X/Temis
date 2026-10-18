@@ -1,7 +1,7 @@
+import Modal from "../common/KeyboardAwareModal";
 import React, { useMemo } from "react";
 import {
   Linking,
-  Modal,
   PanResponder,
   Pressable,
   Text,
@@ -32,7 +32,6 @@ type Props = {
 const AppMenuBridge = ({
   visible,
   onCloseMenu,
-  onOpenTodo,
   onOpenDM,
   dmUnread,
   onOpenSettings,
@@ -108,15 +107,6 @@ const AppMenuBridge = ({
             tr={tr}
             onCloseMenu={onCloseMenu}
           />
-          <Pressable
-            style={appChromeStyles.sheetItem}
-            onPress={() => {
-              onOpenTodo();
-              onCloseMenu();
-            }}
-          >
-            <Text style={appChromeStyles.sheetItemText}>{tr("menu.todos")}</Text>
-          </Pressable>
           <Pressable style={appChromeStyles.sheetItem} accessibilityRole="button" onPress={() => { onOpenDM(); onCloseMenu(); }}>
             <View style={appChromeStyles.sheetItemInline}>
               <Ionicons name="chatbubbles-outline" size={16} color="#111827" />

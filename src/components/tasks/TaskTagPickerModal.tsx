@@ -1,5 +1,6 @@
+import Modal from "../common/KeyboardAwareModal";
 import React from "react";
-import { FlatList, Modal, Pressable, Text, View } from "react-native";
+import { FlatList, Pressable, Text, View } from "react-native";
 
 import type { Tag } from "../../types";
 
@@ -44,11 +45,10 @@ const TaskTagPickerModal = ({
               <Text style={styles.tagPickerCloseText}>{closeLabel}</Text>
             </Pressable>
           </View>
-          <FlatList
+          <FlatList keyboardShouldPersistTaps="always"
             data={tagOptions}
             keyExtractor={(tag) => tag}
             style={styles.tagPickerList}
-            keyboardShouldPersistTaps="handled"
             renderItem={({ item: tag }) => {
               const selected = selectedTags.includes(tag);
               return (

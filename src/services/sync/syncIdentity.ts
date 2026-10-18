@@ -5,6 +5,7 @@ import type { SyncIdentity } from "../../types";
 import { isSyncFirebaseUser, toSyncUser } from "../auth/syncUser";
 import { getFirebaseAuth } from "./firebaseApp";
 import { ensureSyncAuthToken } from "./syncAuth";
+import { assertSyncAccount } from "./syncAccountGuard";
 
 export const getOrCreateDeviceId = async (): Promise<string> => {
   const existing = await loadSyncDeviceId();
@@ -17,6 +18,7 @@ export const getOrCreateDeviceId = async (): Promise<string> => {
 };
 
 export const getSyncIdentity = async (): Promise<SyncIdentity> => {
+  await getFirebaseAuth().authStateReady();
   const [deviceId] = await Promise.all([getOrCreateDeviceId()]);
   const firebaseUser = getFirebaseAuth().currentUser;
   if (!firebaseUser || !isSyncFirebaseUser(firebaseUser)) {
@@ -25,6 +27,7 @@ export const getSyncIdentity = async (): Promise<SyncIdentity> => {
   // The first sync can run immediately after Google sign-in. Wait for Firebase
   // Auth to mint/restore its ID token before issuing Firestore requests.
   await ensureSyncAuthToken(() => firebaseUser.getIdToken());
+  assertSyncAccount(firebaseUser.uid);
   return {
     userId: toSyncUser(firebaseUser).id,
     deviceId,

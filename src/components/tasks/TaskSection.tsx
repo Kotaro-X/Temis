@@ -198,6 +198,11 @@ const TaskSection = ({
           statusLabel={statusLabel}
           statusPalette={statusPalette}
           timeBoxSchedule={timeBoxSchedule}
+          isOpen={openSwipeTaskId === `project:${item.task.id}`} onOpenSwipe={() => onOpenSwipe(`project:${item.task.id}`)} onCloseSwipe={() => onCloseSwipe(`project:${item.task.id}`)}
+          selectionMode={selectionMode} selected={selectedSet.has(`project:${item.task.id}`)}
+          onToggleSelection={() => onToggleSelection(`project:${item.task.id}`)}
+          onDragStart={onTaskDragStart} onDragMove={onTaskDragMove} onDragEnd={onTaskDragEnd} onDragStateChange={onTaskDragStateChange}
+          onDrop={pageY => onDropTask(section.slotKey, `project:${item.task.id}`, pageY)}
           onChanged={onProjectTaskChanged}
         />
       ))}
@@ -256,6 +261,11 @@ const TaskSection = ({
                   statusLabel={statusLabel}
                   statusPalette={statusPalette}
                   timeBoxSchedule={timeBoxSchedule}
+                  isOpen={openSwipeTaskId === `project:${item.task.id}`} onOpenSwipe={() => onOpenSwipe(`project:${item.task.id}`)} onCloseSwipe={() => onCloseSwipe(`project:${item.task.id}`)}
+                  selectionMode={selectionMode} selected={selectedSet.has(`project:${item.task.id}`)}
+                  onToggleSelection={() => onToggleSelection(`project:${item.task.id}`)}
+                  onDragStart={onTaskDragStart} onDragMove={onTaskDragMove} onDragEnd={onTaskDragEnd} onDragStateChange={onTaskDragStateChange}
+                  onDrop={pageY => onDropTask(section.slotKey, `project:${item.task.id}`, pageY)}
                   onChanged={onProjectTaskChanged}
                 />
               ))}

@@ -1,6 +1,7 @@
+import Modal from "../common/KeyboardAwareModal";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { useCollaboration } from "../../context/CollaborationContext";
 import { projectInvitationErrorMessage } from "../../services/freemium/freemiumErrors";
@@ -113,7 +114,7 @@ export default function CommonsRequestsButton() {
       <SafeAreaProvider>
         <SafeAreaView style={styles.screen}>
           <View style={styles.header}><Text style={styles.title}>繋がり申請・スカウト</Text><Pressable accessibilityRole="button" accessibilityLabel="申請一覧を閉じる" disabled={!!busy} style={styles.icon} onPress={close}><Ionicons name="close" size={26} color="#111" /></Pressable></View>
-          <ScrollView contentContainerStyle={styles.content}>
+          <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.content}>
             {hasError ? <View style={styles.card}><Text style={styles.error}>{[errors.connections, errors.invitations].filter(Boolean).join("\n")}</Text><Pressable accessibilityRole="button" style={styles.secondary} onPress={() => setRetry((value) => value + 1)}><Text>再読み込み</Text></Pressable></View> : null}
             <Text style={styles.section}>繋がり申請</Text>
             {!loaded.connections && !errors.connections ? <ActivityIndicator /> : null}

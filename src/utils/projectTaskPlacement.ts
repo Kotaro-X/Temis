@@ -12,7 +12,7 @@ export const toLocalDateString = (timestamp: number) => {
 
 /** Keeps existing project tasks visible before they have an explicit Private placement. */
 export const getProjectTaskPrivateDate = (task: ProjectTask) =>
-  task.privateDate ?? toLocalDateString(task.dueAt ?? task.createdAt);
+  task.privateDate === null ? 'undated' : task.privateDate ?? toLocalDateString(task.dueAt ?? task.createdAt);
 
 export const getProjectTaskPrivateSlot = (
   task: ProjectTask,

@@ -1,3 +1,6 @@
+import { accountWorkspace } from '../account/accountWorkspace';
+import { cancelTaskReminderSchedules } from '../../features/taskPlanning/taskNotificationLifecycle';
+import { isTestEnvironment } from "../environment/runtimeEnvironment";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import * as Notifications from 'expo-notifications';
@@ -27,11 +30,12 @@ export const initializeNotificationHandler = () => {
     handleNotification: async (notification) => {
       const data = notification.request.content.data;
       const isDM = data.type === 'dm';
+      if (isTestEnvironment() || (data.environment && data.environment !== "production")) return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
       const target = dmNotificationTarget(data, notificationUserId);
-      const suppressed = isDM && (!target || (AppState.currentState === 'active' && target.conversationId === focusedConversation));
+      const suppressed = (data.taskPlanning && data.scope !== accountWorkspace.scope()) || (isDM && (!target || (AppState.currentState === 'active' && target.conversationId === focusedConversation)));
       return {
         shouldShowBanner: !suppressed, shouldShowList: !suppressed,
-        shouldPlaySound: isDM && !suppressed, shouldSetBadge: false,
+        shouldPlaySound: Boolean((isDM || data.taskPlanning) && !suppressed), shouldSetBadge: false,
       };
     },
   });
@@ -45,6 +49,7 @@ const installationId = async () => {
 };
 export const syncDMNotifications = (uid: string, enable: boolean, requestPermission = false) => serialize(async () => {
   if (!['ios', 'android'].includes(Platform.OS)) throw new Error('プッシュ通知はiOS・Androidアプリで利用できます。');
+  if (isTestEnvironment()) return false;
   if (getFirebaseAuth().currentUser?.uid !== uid) return false;
   if (!enable && !await AsyncStorage.getItem("dm.notifications.installation")) return false;
   const deviceId = await installationId();
@@ -65,6 +70,7 @@ export const syncDMNotifications = (uid: string, enable: boolean, requestPermiss
     throw new Error('端末の設定でTemisの通知を許可してください。DM自体は通知なしでも使えます。');
   }
   const token = (await Notifications.getExpoPushTokenAsync({ projectId: appConfig.expo.extra.eas.projectId })).data;
+  if (isTestEnvironment()) return false;
   if (getFirebaseAuth().currentUser?.uid !== uid) return false;
   // Save the registration intent first so logout can clean up after an ambiguous response.
   await AsyncStorage.setItem('dm.notifications.registeredUser', uid);
@@ -74,16 +80,24 @@ export const syncDMNotifications = (uid: string, enable: boolean, requestPermiss
   return true;
 });
 export const unregisterDMNotificationsBeforeSignOut = (accountDeleted = false) => serialize(async () => {
+  await cancelTaskReminderSchedules();
   const uid = getFirebaseAuth().currentUser?.uid;
   if (!uid || await AsyncStorage.getItem('dm.notifications.registeredUser') !== uid) return;
   if (!accountDeleted) await setDirectMessageDevice({ installationId: await installationId(), platform: Platform.OS, enabled: false });
   await AsyncStorage.removeItem('dm.notifications.registeredUser');
   notificationUserId = null;
   focusedConversation = null;
-  // Leave ToDo reminder notifications alone.
   try {
     const presented = await Notifications.getPresentedNotificationsAsync();
     await Promise.all(presented.filter((item) => item.request.content.data.type === 'dm')
       .map((item) => Notifications.dismissNotificationAsync(item.request.identifier)));
   } catch { /* Notification presentation cleanup must not prevent local logout. */ }
 });
+
+/** Local reminder IDs are held by the owning environment; its bootstrap restores them on return. */
+export const unregisterEnvironmentReminders = async (environment: 'production' | 'test') => {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(scheduled.filter(item => (item.content.data?.type === 'todo' || !item.content.data?.type) && (item.content.data?.environment ?? 'production') === environment)
+    .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+};

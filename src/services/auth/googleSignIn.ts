@@ -1,3 +1,5 @@
+import { signOutAllEnvironments } from "../environment/environmentSession";
+import { isTestEnvironment } from "../environment/runtimeEnvironment";
 import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import {
   GoogleAuthProvider,
@@ -59,6 +61,7 @@ export const getCurrentGoogleSyncUser = (): GoogleSyncUser | null => {
 };
 
 export const restoreGoogleSyncUser = async (): Promise<GoogleSyncUser | null> => {
+  if (isTestEnvironment()) return null;
   configureGoogleSignin();
   const currentUser = getCurrentGoogleSyncUser();
   if (currentUser) {
@@ -79,6 +82,7 @@ export const restoreGoogleSyncUser = async (): Promise<GoogleSyncUser | null> =>
 };
 
 export const signInGoogleSyncUser = async (): Promise<GoogleSyncUser | null> => {
+  if (isTestEnvironment()) throw new Error("テスト環境では専用アカウントを使用します。");
   configureGoogleSignin();
   const result = await GoogleSignin.signIn();
   if (result.type !== "success") {
@@ -97,7 +101,7 @@ export const signOutSyncUser = async (options?: { accountDeleted?: boolean }): P
   const auth = getFirebaseAuth();
   const shouldSignOutGoogle = isGoogleFirebaseUser(auth.currentUser);
   await unregisterDMNotificationsBeforeSignOut(Boolean(options?.accountDeleted));
-  await firebaseSignOut(auth);
+  await signOutAllEnvironments();
   if (shouldSignOutGoogle) {
     configureGoogleSignin();
     await GoogleSignin.signOut();

@@ -1,5 +1,5 @@
 const ACCESS_LEASE_MS = 24 * 60 * 60 * 1000;
-const AI_WEEKLY_LIMIT = 10;
+const AI_WEEKLY_LIMIT = 5;
 const RESERVATION_TTL_MS = 10 * 60 * 1000;
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
@@ -43,7 +43,7 @@ const getJstWeek = (now = Date.now()) => {
 const validRequestId = (value) =>
   typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value);
 
-const createTemisAccessService = ({ db, HttpsError, verifyRevenueCat }) => {
+const createTemisAccessService = ({ db, HttpsError, verifyRevenueCat, resolveTestPlan }) => {
   const accessRef = (uid) => db.doc(`temisAccessStates/${uid}`);
 
   const readValidLease = async (uid, now = Date.now()) => {
@@ -54,6 +54,12 @@ const createTemisAccessService = ({ db, HttpsError, verifyRevenueCat }) => {
 
   const refreshAccess = async (uid, { force = false } = {}) => {
     const now = Date.now();
+    if (resolveTestPlan) {
+      const tier = await resolveTestPlan(uid) === 'plus' ? 'plus' : 'free';
+      const state = { userId: uid, tier, source: 'operator_test', verifiedAt: now, verifiedUntil: now + 900000, updatedAt: now };
+      await accessRef(uid).set(state);
+      return state;
+    }
     const existing = await readValidLease(uid, now);
     if (existing && !force) return existing;
 

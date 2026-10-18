@@ -10,6 +10,7 @@ import {
   type TokenIndexHit,
 } from "../db/tokenIndexRepo";
 import { getEmbeddingProvider } from "./EmbeddingProvider";
+import { getWorkspaceEpoch } from "./account/workspaceEpoch";
 import { extractTokens, normalizeParens } from "../utils/wikiLink";
 
 export type HybridSearchResult = {
@@ -158,7 +159,7 @@ export const hybridSearch = async (
 
   const topK = options.topK ?? DEFAULT_TOP_K;
   const topN = options.topN ?? DEFAULT_TOP_N;
-  const cacheKey = `${normalizedQuery}::${topK}::${topN}`;
+  const cacheKey = `${getWorkspaceEpoch()}::${normalizedQuery}::${topK}::${topN}`;
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.results;

@@ -27,7 +27,6 @@ import {
 } from "../freemium/temisFreemiumService";
 import { type Connection, type ProjectMembership } from "../../types/collaboration";
 import {
-  extractGuildTags,
   normalizeGuildTags,
   validateGuildPostInput,
   type GuildFeedCursor,
@@ -89,6 +88,8 @@ const pageQuery = (tags: string[], cursor: GuildFeedCursor | null) => {
   const constraints: QueryConstraint[] = [
     where("status", "==", "published"),
     where("moderation.visibility", "==", "visible"),
+    where("safety.status", "==", "approved"),
+    where("safety.version", "==", 1),
   ];
   if (tags.length) constraints.push(where("tags", "array-contains-any", tags));
   constraints.push(orderBy("publishedAt", "desc"), orderBy(documentId(), "desc"));
@@ -113,7 +114,7 @@ export const listGuildPosts = async ({
     loadViewerRelationships(userId),
   ]);
   let posts = snapshot.docs.map((item) => item.data() as GuildPost);
-  posts = posts.filter((post) => !relationships.blockedUserIds.has(post.authorUserId));
+  posts = posts.filter((post) => !relationships.blockedUserIds.has(post.authorUserId) && post.safety?.status === 'approved' && post.safety.version === 1);
 
   if (feed === "connected") {
     posts = posts.filter((post) => post.authorUserId === userId
@@ -133,7 +134,7 @@ export const getGuildPost = async (postId: string): Promise<GuildFeedPost | null
   const snapshot = await getDocFromServer(postRef(postId));
   if (!snapshot.exists()) return null;
   const post = snapshot.data() as GuildPost;
-  if (post.status !== "published" || post.moderation.visibility !== "visible") return null;
+  if (post.status !== "published" || post.moderation.visibility !== "visible" || post.safety?.status !== 'approved' || post.safety.version !== 1) return null;
   const relationships = await loadViewerRelationships(userId);
   if (relationships.blockedUserIds.has(post.authorUserId)) return null;
   return (await resolveGuildAuthors([omitSource(post)]))[0];
@@ -179,14 +180,9 @@ export const createGuildPost = async (
 };
 
 export const updateGuildPost = async (postId: string, input: Pick<GuildPostInput, "title" | "body" | "type" | "projectId">): Promise<void> => {
-  const userId = requireUserId();
-  const tags = extractGuildTags(input.body);
-  if (!input.body.trim() || (input.type !== "personal" && !input.projectId)) throw new Error("投稿内容を確認してください。");
-  await runTransaction(db(), async (transaction) => {
-    const snapshot = await transaction.get(postRef(postId));
-    if (!snapshot.exists() || snapshot.data()?.authorUserId !== userId) throw new Error("この投稿は編集できません。");
-    transaction.update(postRef(postId), { title: input.title?.trim() || null, body: input.body.trim(), tags, type: input.type, projectId: input.projectId, updatedAt: now() });
-  });
+  requireUserId();
+  void postId; void input;
+  throw new Error('公開内容は元メモで編集してください。');
 };
 
 export const setGuildPostStatus = async (postId: string, status: "published" | "unpublished" | "deleted"): Promise<void> => {
@@ -194,10 +190,8 @@ export const setGuildPostStatus = async (postId: string, status: "published" | "
   await runTransaction(db(), async (transaction) => {
     const snapshot = await transaction.get(postRef(postId));
     if (!snapshot.exists() || snapshot.data()?.authorUserId !== userId) throw new Error("この投稿は変更できません。");
-    const existing = snapshot.data() as GuildPost;
-    if (existing.status === "deleted" && status === "published") throw new Error("削除した投稿は再公開できません。");
-    if (status === "published" && existing.source.memoId.length === 0) throw new Error("元メモがない投稿は再公開できません。");
-    transaction.update(postRef(postId), { status, publishedAt: status === "published" ? now() : null, updatedAt: now() });
+    if (status === 'published') throw new Error('元メモから再公開してください。');
+    transaction.update(postRef(postId), { status, publishedAt: null, updatedAt: now() });
   });
 };
 

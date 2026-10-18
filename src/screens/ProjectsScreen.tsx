@@ -276,7 +276,7 @@ const ProjectsScreen = ({
           <View style={styles.headerSide} />
         </View>
 
-        <ScrollView
+        <ScrollView keyboardShouldPersistTaps="always"
           contentContainerStyle={styles.detailContent}
           showsVerticalScrollIndicator={false}
         >
@@ -437,7 +437,7 @@ const ProjectsScreen = ({
         </View>
       </View>
 
-      <FlatList
+      <FlatList keyboardShouldPersistTaps="always"
         data={projects}
         keyExtractor={(project) => project.id}
         contentContainerStyle={styles.listContent}

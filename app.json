@@ -3,7 +3,7 @@
     "name": "Temis",
     "slug": "temis",
     "scheme": "exp+temis",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "usesAppleSignIn": true,
-      "buildNumber": "85",
+      "buildNumber": "120",
       "bundleIdentifier": "com.anonymous.WeMemo",
       "googleServicesFile": "./config/GoogleService-Info.plist",
       "icon": "./assets/icon.png",

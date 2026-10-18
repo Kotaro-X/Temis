@@ -1,3 +1,5 @@
+import { pauseOtherTaskTimers } from '../features/taskPlanning/planningCore';
+import { emitTaskChanges } from '../features/taskPlanning/taskEvents';
 import {
   createEmptyTask as createEmptyTaskState,
   loadAllTodayStates,
@@ -112,6 +114,7 @@ const saveTasksImpl = async (
   }
 
   await Promise.all(syncJobs);
+  emitTaskChanges();
 };
 
 export const loadTaskLogs = async (): Promise<LogEntry[]> => loadStoredLogs();
@@ -168,6 +171,7 @@ const saveTaskLogsImpl = async (
   }
 
   await Promise.all(syncJobs);
+  emitTaskChanges();
 };
 
 export const createTask = (
@@ -440,6 +444,7 @@ export const replaceAllTaskStates = async (
   states: TodayState[],
 ): Promise<void> => {
   await saveAllTodayStates(states);
+    emitTaskChanges();
 };
 
 export const findTaskById = (
@@ -457,3 +462,50 @@ export const findTaskById = (
 
 export const createEmptyTask = (defaultTag?: Tag): TaskState =>
   createEmptyTaskState(defaultTag);
+
+/** Serialized across the whole task domain: moving a task emits one upsert, not a delete/upsert race. */
+export const writePlannedTask = (task: TaskState, date: string, slotKey: SlotKey, deleted = false): Promise<void> =>
+  withLocalEntityMutation('task', async () => {
+    const states = await loadAllTodayStates();
+    for (const state of states) for (const key of SLOT_KEYS) state.slots[key].tasks = state.slots[key].tasks.filter(item => item.id !== task.id);
+    if (!deleted) {
+      let target = states.find(state => state.date === date);
+      if (!target) { target = { date, slots: { morning: { tasks: [] }, forenoon: { tasks: [] }, afternoon: { tasks: [] }, night: { tasks: [] } } }; states.push(target); }
+      target.slots[slotKey].tasks.push(task);
+    }
+    const deviceId = await loadSyncDeviceId();
+    // Persist the durable envelope first. A retry uses the same entity ID.
+    await persistAndEnqueueSyncEnvelope(buildTaskSyncEnvelope({ date, slotKey, task, deviceId, updatedAt: Date.now(), deletedAt: deleted ? Date.now() : null }));
+    await saveAllTodayStates(states);
+    emitTaskChanges();
+  });
+
+export const mutatePlannedTask = (id: string, updater: (current: { task: TaskState; date: string; slotKey: SlotKey }) => { task: TaskState; date: string; slotKey: SlotKey }): Promise<void> =>
+  withLocalEntityMutation('task', async () => {
+    const states = await loadAllTodayStates();
+    const found = states.flatMap(state => SLOT_KEYS.flatMap(slotKey => state.slots[slotKey].tasks.filter(task => task.id === id).map(task => ({ task, date: state.date, slotKey })) ))[0];
+    if (!found) throw new Error('タスクが見つかりません。再読み込みしてください。');
+    const next = updater(found);
+    const activeOccurrence = Object.entries(next.task.occurrenceOverrides ?? {}).find(([, value]) => value.executionStatus === 'IN_PROGRESS')?.[0] ?? null;
+    if (next.task.isArchived) next.task = pauseOtherTaskTimers(next.task, Date.now());
+    else if (next.task.status === 'IN_PROGRESS' || activeOccurrence) {
+      const timestamp = Date.now();
+      for (const state of states) for (const key of SLOT_KEYS) {
+        for (let index = 0; index < state.slots[key].tasks.length; index++) {
+          const other = state.slots[key].tasks[index];
+          if (other.id === id) { next.task = pauseOtherTaskTimers(next.task, timestamp, next.task.status === 'IN_PROGRESS' && !activeOccurrence, activeOccurrence); continue; }
+          const paused = pauseOtherTaskTimers(other, timestamp);
+          if (paused === other) continue;
+          state.slots[key].tasks[index] = paused;
+          await persistAndEnqueueSyncEnvelope(buildTaskSyncEnvelope({ date: state.date, slotKey: key, task: paused, deviceId: await loadSyncDeviceId(), updatedAt: timestamp }));
+        }
+      }
+    }
+    for (const state of states) for (const key of SLOT_KEYS) state.slots[key].tasks = state.slots[key].tasks.filter(task => task.id !== id);
+    let target = states.find(state => state.date === next.date);
+    if (!target) { target = { date: next.date, slots: { morning: { tasks: [] }, forenoon: { tasks: [] }, afternoon: { tasks: [] }, night: { tasks: [] } } }; states.push(target); }
+    target.slots[next.slotKey].tasks.push(next.task);
+    await persistAndEnqueueSyncEnvelope(buildTaskSyncEnvelope({ ...next, deviceId: await loadSyncDeviceId(), updatedAt: Date.now() }));
+    await saveAllTodayStates(states);
+    emitTaskChanges();
+  });

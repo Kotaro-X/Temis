@@ -75,7 +75,7 @@ test("OpenAI embedding provider reports missing Firebase authentication without 
 
 test("Cloud Function keeps the OpenAI key server-side and requires Firebase auth", async () => {
   const testDir = dirname(fileURLToPath(import.meta.url));
-  const source = await readFile(resolve(testDir, "../functions/index.js"), "utf8");
+  const source = await readFile(resolve(testDir, "../functions/commonHandlers.js"), "utf8");
 
   assert.equal(source.includes('defineSecret("OPENAI_API_KEY")'), true);
   assert.equal(source.includes("if (!request.auth)"), true);
@@ -85,9 +85,7 @@ test("Cloud Function keeps the OpenAI key server-side and requires Firebase auth
   assert.equal(source.includes("maxInstances: 3"), true);
   assert.equal(source.includes("MAX_INPUTS = 20"), true);
   assert.equal(
-    source.includes(
-      "temis-embeddings@temis-c05aa.iam.gserviceaccount.com",
-    ),
+    source.includes("runtime.runtimeServiceAccount"),
     true,
   );
 });

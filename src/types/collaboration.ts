@@ -1,3 +1,4 @@
+import type { TaskPlanning } from './taskPlanning';
 export const USERNAME_PATTERN = /^(?!.*\.\.)(?!\.)(?!.*\.$)[a-z0-9._]{3,30}$/;
 
 export const RESERVED_USERNAMES = new Set([
@@ -60,6 +61,7 @@ export type Connection = {
   recipientUserId: string;
   status: "pending" | "connected" | "blocked";
   blockedByUserId?: string | null;
+  blockedByUserIds?: string[];
   createdAt: number;
   updatedAt: number;
 };
@@ -129,7 +131,7 @@ export type ProjectTaskStatus = "todo" | "in_progress" | "paused" | "completed";
 export type ProjectTaskPriority = "low" | "medium" | "high";
 export type ProjectTaskKind = "task" | "todo";
 
-export type ProjectTask = {
+export type ProjectTask = Omit<TaskPlanning, "reminder"> & {
   id: string;
   ownerUserId: string | null;
   creatorUserId: string | null;
@@ -144,19 +146,17 @@ export type ProjectTask = {
   title: string;
   description?: string | null;
   status: ProjectTaskStatus;
-  /**
-   * Project tasks keep the same task-editing fields as personal tasks. They
-   * deliberately do not have elapsed/start timestamps: project work does not
-   * calculate or display remaining time.
-   */
+  /** Shared wall-clock timer; old records start at zero. */
+  elapsedMinutes?: number;
+  startAt?: number | null;
   tags?: string[];
   estimateMinutes?: number;
   isArchived?: boolean;
   priority?: ProjectTaskPriority | null;
   dueAt?: number | null;
-  /** Date shown in the creator's Private workspace (YYYY-MM-DD). */
+  /** Shared scheduled date (YYYY-MM-DD). */
   privateDate?: string | null;
-  /** Time box shown in the creator's Private workspace. */
+  /** Shared scheduled time box. */
   privateSlotKey?: "morning" | "forenoon" | "afternoon" | "night" | null;
   relatedMemoId?: string | null;
   createdAt: number;
@@ -166,6 +166,9 @@ export type ProjectTask = {
 };
 
 export type ProjectSharedNote = {
+  /** Only linked task memos allow shared task-editor writes. */
+  sourceTaskId?: string | null;
+  deletedAt?: number | null;
   id: string;
   ownerUserId: string | null;
   /** Snapshot of the owner name at the time this shared note was created. */
@@ -219,11 +222,9 @@ export const canEditProjectTask = (
   role: ProjectRole | null,
   userId: string,
 ): boolean =>
-  role === "owner" ||
-  role === "member" ||
-  task.ownerUserId === userId ||
-  task.creatorUserId === userId ||
-  task.assigneeUserId === userId;
+  Boolean(userId) && role !== null && (role === "owner" || role === "member" ||
+    ((task.kind ?? "task") === "task" && role === "viewer") ||
+    task.ownerUserId === userId || task.creatorUserId === userId || task.assigneeUserId === userId);
 
 /** True when the current user owns or originally created project content. */
 export const isProjectContentCreatedBy = (

@@ -1,6 +1,6 @@
-import { deleteNoteById, getFreeNoteById, setNoteScope, upsertFreeNote, upsertNoteRecord } from "../../db/noteRepo";
+import { deleteNoteById, getFreeNoteById, setNoteScope, upsertNoteRecord } from "../../db/noteRepo";
 import type { ProjectTask, UserProfile } from "../../types/collaboration";
-import { removeProjectSharedNote, upsertProjectSharedNote } from "./collaborationService";
+import { updateProjectTask, removeProjectSharedNote, upsertProjectSharedNote } from "./collaborationService";
 
 type SyncProjectTaskMemoInput = {
   task: ProjectTask;
@@ -17,6 +17,10 @@ export const syncProjectTaskMemo = async ({
   task,
   profile,
 }: SyncProjectTaskMemoInput): Promise<string | null> => {
+  if ((task.kind ?? "task") === "task") {
+    const saved = await updateProjectTask(task.id, { description: task.description ?? null });
+    return saved.relatedMemoId ?? null;
+  }
   const body = task.description?.trim() ?? "";
 
   if (!body) {
@@ -29,27 +33,12 @@ export const syncProjectTaskMemo = async ({
   const existing = task.relatedMemoId
     ? await getFreeNoteById(task.relatedMemoId)
     : null;
-  const note = existing
-    ? await upsertFreeNote({
-      id: existing.id,
-      title: task.title,
-      body,
-    })
-    : task.relatedMemoId
-      ? await upsertNoteRecord({
-        id: task.relatedMemoId,
-        type: "free",
-        date: null,
-        title: task.title,
-        body,
-        scope: "project",
-        projectId: task.projectId,
-        updatedAt: Date.now(),
-      })
-      : await upsertFreeNote({
-        title: task.title,
-        body,
-      });
+  // Persist Project scope together with the body, before any background embedding can see it.
+  const note = await upsertNoteRecord({
+    id: existing?.id ?? task.relatedMemoId ?? `project-todo-${task.id}`,
+    type: "free", date: null, title: task.title, body,
+    scope: "project", projectId: task.projectId, updatedAt: Date.now(),
+  });
 
   const scopedNote = await setNoteScope(note.id, {
     scope: "project",

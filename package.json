@@ -25,7 +25,9 @@
     "ios:device:debug": "bash ./scripts/ios-device-debug.sh",
     "ios:device:logs": "bash ./scripts/ios-device-logs.sh",
     "ios:check-profile-native": "node scripts/check-ios-profile-native.mjs",
-    "ios:prepare-profile-native": "node scripts/prepare-ios-profile-native.mjs"
+    "ios:prepare-profile-native": "node scripts/prepare-ios-profile-native.mjs",
+    "firebase:prepare-operator-test": "node scripts/generate-environment-rules.mjs && node scripts/prepare-test-functions.mjs",
+    "test:environment-rules": "firebase emulators:exec --project demo-wememo --only firestore,storage \"node --experimental-strip-types --test tests/environment-rules.emulator.ts\""
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

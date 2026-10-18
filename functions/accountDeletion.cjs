@@ -1,15 +1,16 @@
+const runtime = require("./environmentRuntime.cjs");
 const { createHash } = require("node:crypto");
 
-const { getApp, initializeApp } = require("firebase-admin/app");
+const { getApp, getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getStorage } = require("firebase-admin/storage");
 const { getFirestore } = require("firebase-admin/firestore");
 const { logger } = require("firebase-functions");
-const { HttpsError, onCall } = require("firebase-functions/v2/https");
-const { defineSecret } = require("firebase-functions/params");
+const { HttpsError, onCall } = require("./environmentRuntime.cjs");
+const { defineSecret } = require("./environmentRuntime.cjs");
 const { runAccountDeletionStages, safeFailureCode, validateAppleDeletionConfig, validateRevenueCatProjectId, externalDeletionFailure } = require("./accountDeletionCore.cjs");
 
-initializeApp();
+if (!getApps().length) initializeApp();
 
 const APPLE_TEAM_ID = defineSecret("APPLE_TEAM_ID");
 const APPLE_KEY_ID = defineSecret("APPLE_KEY_ID");
@@ -199,6 +200,9 @@ const deleteCoreAccountData = async (uid) => {
     ["guild_author", async () => { await firestore.doc(`guildAuthors/${uid}`).set({ displayName: "匿名ユーザー", photoUrl: null, deleted: true }); await deleteDocuments((await queryByUser("guildPublicationStates", "userId", "==", uid)).docs); }],
     ["profile_photos", () => require("./profileIdentityCore.cjs").deleteAccountPhotos(getStorage().bucket(), uid)],
     ["profile", async () => {
+      const reports = await Promise.all([queryByUser("dmReports", "reporterUserId", "==", uid), queryByUser("dmReports", "reportedUserId", "==", uid)]);
+      await deleteDocuments(dedupeDocuments(reports));
+      await firestore.doc(`aiConsents/${uid}`).delete();
       const usernames = await firestore.collection("usernames").where("userId", "==", uid).get();
       for (const document of usernames.docs) await document.ref.delete();
       await firestore.doc(`profiles/${uid}`).delete();
@@ -549,7 +553,7 @@ exports.deleteAccount = onCall(
     region: ACCOUNT_DELETION_REGION,
     timeoutSeconds: 120,
     memory: "256MiB",
-    secrets: [
+    secrets: runtime.secrets([
       APPLE_TEAM_ID,
       APPLE_KEY_ID,
       APPLE_PRIVATE_KEY,
@@ -557,7 +561,7 @@ exports.deleteAccount = onCall(
       REVENUECAT_V2_SECRET_API_KEY,
       CRASHLYTICS_IOS_APP_ID,
       SYNC_LOG_SALT,
-    ],
+    ]),
   },
   async (request) => {
     if (!request.auth?.uid) {
@@ -571,6 +575,10 @@ exports.deleteAccount = onCall(
       throw new HttpsError("failed-precondition", "Shared data requires resolution before account deletion.", {
         stage: "shared_data", reason: "shared_data", completedStages: [],
       });
+    }
+    if (runtime.isTest) {
+      const completedStages = await deleteCoreAccountData(uid);
+      return { deleted: true, completedStages, appleAuthorizationRevoked: false, externalCleanupPending: [] };
     }
     // Provider linkage, not the last sign-in method, determines Apple revocation.
     let authUser;

@@ -14,7 +14,7 @@ function lifecycle(options: { apple?: boolean; cancel?: boolean; localFailure?: 
       useCallback: (fn: unknown) => fn,
       useEffect: () => {},
       useRef: (current: unknown) => ({ current }),
-      useState: (initial: unknown) => [initial, () => {}],
+      useState: (initial: unknown) => [initial === "restoring" ? "signedIn" : initial, () => {}],
     },
     "../services/sync/syncService": { runCloudSync: options.sync ?? (async () => ({})) },
     "../services/auth/googleSignIn": {
@@ -29,6 +29,11 @@ function lifecycle(options: { apple?: boolean; cancel?: boolean; localFailure?: 
       },
     },
     "../services/auth/syncUser": { isSyncFirebaseUser: Boolean, toSyncUser: (value: unknown) => value },
+    "../services/auth/restoreSyncSession": { restoreSyncSession: async () => user },
+    "../services/auth/accountEntry": {},
+    "../services/account/accountWorkspace": {},
+    "../services/sync/localMutationLock": {},
+    "../services/hybridSearch": {},
     "../services/sync/firebaseApp": { getFirebaseAuth: () => ({ currentUser: user }) },
     "../services/collaboration/profileCompletionCache": { clearCompletedProfile: async (uid: string) => {
       assert.equal(uid, 'test-user'); events.push('profile-cache-clear');

@@ -1,3 +1,4 @@
+import { requireAIConsent, validateConsentReceipt } from '../ai/aiConsent';
 import { resolveGuildAuthors } from "./guildAuthorService";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
@@ -32,8 +33,9 @@ export const searchGuildPostsWithAI = async (
   question: string,
   requestId: string,
 ): Promise<GuildAISearchResult> => {
+  const receipt = await requireAIConsent();
   const functions = getFunctions(getFirebaseApp(), region());
-  const callable = httpsCallable<{ question: string; requestId: string }, GuildAISearchResult>(
+  const callable = httpsCallable<{ question: string; requestId: string; consentRevision: string; userId: string }, GuildAISearchResult>(
     functions,
     "searchGuildPostsWithAI",
     { timeout: 60_000 },
@@ -41,8 +43,11 @@ export const searchGuildPostsWithAI = async (
   try {
     // A deployed legacy search endpoint must not bypass the new quota service.
     await getTemisAIUsage();
-    const result = (await callable({ question, requestId })).data;
-    return { ...result, evidencePosts: await resolveGuildAuthors(result.evidencePosts) };
+    const result = (await callable({ question, requestId, consentRevision: receipt.revision, userId: receipt.uid })).data;
+    await validateConsentReceipt(receipt);
+    const evidencePosts = await resolveGuildAuthors(result.evidencePosts);
+    await validateConsentReceipt(receipt);
+    return { ...result, evidencePosts };
   } catch (cause) {
     const code = (cause as { code?: string })?.code;
     const messages: Record<string, string> = {

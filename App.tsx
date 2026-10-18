@@ -4,11 +4,13 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppResetProvider } from "./src/context/AppResetContext";
 import MainNavigator from "./src/navigation/MainNavigator";
 
+import KeyboardDismissBoundary from "./src/components/common/KeyboardDismissBoundary";
+
 export default function App() {
   return (
     <SafeAreaProvider>
       <AppResetProvider>
-        <MainNavigator />
+        <KeyboardDismissBoundary><MainNavigator /></KeyboardDismissBoundary>
       </AppResetProvider>
     </SafeAreaProvider>
   );

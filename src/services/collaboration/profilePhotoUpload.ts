@@ -36,7 +36,7 @@ const uploadError = (status: number, stage: UploadStage, body?: any): ProfilePho
 
 // Firebase's resumable protocol uses JSON metadata, then raw file bytes. No JS Blob is needed.
 export async function uploadProfilePhotoFile(input: {
-  uri: string; size: number; bucket: string; path: string; token: string;
+  uri: string; size: number; bucket: string; path: string; token: string; cacheControl?: string;
   isCurrentAccount: () => boolean;
 }): Promise<void> {
   const assertCurrent = () => {
@@ -56,7 +56,7 @@ export async function uploadProfilePhotoFile(input: {
   try {
     response = await fetch(`${origin}/v0/b/${encodeURIComponent(input.bucket)}/o?name=${encodeURIComponent(input.path)}`, {
       method: 'POST', headers,
-      body: JSON.stringify({ name: input.path, contentType: 'image/jpeg', cacheControl: 'public,max-age=86400' }),
+      body: JSON.stringify({ name: input.path, contentType: 'image/jpeg', cacheControl: input.cacheControl ?? 'public,max-age=86400' }),
     });
   } catch { throw uploadError(0, 'start'); }
   if (!response.ok) {

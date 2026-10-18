@@ -1,3 +1,4 @@
+import { isTestEnvironment } from "../environment/runtimeEnvironment";
 import { Platform } from "react-native";
 import { nanoid } from "nanoid/non-secure";
 import { sha256 } from "js-sha256";
@@ -25,6 +26,7 @@ type CrashlyticsModule = typeof import("@react-native-firebase/crashlytics");
 export const syncDiagnosticReporter = createSyncDiagnosticReporter({
   writeConsole: (message) => console.info(message),
   sink: async (event, options) => {
+    if (isTestEnvironment()) return;
     const isDebugBuild = typeof __DEV__ !== "undefined" && __DEV__;
     if (!shouldSendSyncDiagnosticsToCrashlytics(isDebugBuild)) {
       return;

@@ -1,5 +1,7 @@
+import TaskPlanningProvider from '../features/taskPlanning/TaskPlanningProvider';
 import CommunityAccessBoundary from "../components/CommunityAccessBoundary";
 import ProfileSetupBoundary from "../screens/ProfileSetupScreen";
+import AccountEntryBoundary from "../screens/AccountEntryScreen";
 import React, { useEffect } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -10,7 +12,6 @@ import AppProviders from "../components/app-shell/AppProviders";
 import MemoWorkspaceShell from "../components/memo-shell/MemoWorkspaceShell";
 import SettingsShell from "../components/settings-shell/SettingsShell";
 import TaskWorkspaceShell from "../components/task-shell/TaskWorkspaceShell";
-import TodoWorkspaceShell from "../components/todo-shell/TodoWorkspaceShell";
 import ProjectsScreen from "../screens/ProjectsScreen";
 import ProjectWorkspaceScreen from "../screens/ProjectWorkspaceScreen";
 import GuildScreen from "../screens/GuildScreen";
@@ -25,7 +26,6 @@ const AppContent = () => {
   const {
     rootScreen,
     openTasks,
-    openTodo,
     openMemos,
     openProjects,
     openGuild,
@@ -40,13 +40,15 @@ const AppContent = () => {
   const { accessGrant } = useSubscription();
   const hasGuildAdminAccess = hasStaffFreeAccess(accessGrant);
   const activeTab: AppChromeTab | null =
-    rootScreen === "dm" ? null : rootScreen === "memos" ? "memos" : rootScreen === "todo" ? "todo" : rootScreen === "projects" ? "projects" : rootScreen === "guild" ? "guild" : "tasks";
+    rootScreen === "dm" ? null : rootScreen === "memos" ? "memos" : rootScreen === "projects" ? "projects" : rootScreen === "guild" ? "guild" : "tasks";
   const settingsContentPaddingTop = insets.top + 16;
   // Private workspace headers start at the safe-area edge. Keep project
   // workspace headers on the exact same baseline rather than using Settings'
   // extra 16px content inset.
   const workspaceContentPaddingTop = insets.top;
   const isPrivateWorkspace = workspaceScope === "private";
+
+  useEffect(() => { if (rootScreen === "todo") openTasks("today"); }, [rootScreen, openTasks]);
 
   useEffect(() => {
     if (!hasGuildAdminAccess && rootScreen === "guildAdmin") {
@@ -79,7 +81,7 @@ const AppContent = () => {
       return;
     }
     if (tab === "todo") {
-      openTodo();
+      openTasks();
       return;
     }
     openMemos();
@@ -90,11 +92,6 @@ const AppContent = () => {
       active={isPrivateWorkspace && rootScreen === "memos"}
     >
       {(memoWorkspace) => (
-        <TodoWorkspaceShell
-          active={isPrivateWorkspace && rootScreen === "todo"}
-          viewConfig={{ insetsTop: insets.top }}
-        >
-          {(todoWorkspace) => (
             <TaskWorkspaceShell
               active={isPrivateWorkspace && rootScreen === "tasks"}
               viewConfig={{
@@ -109,14 +106,13 @@ const AppContent = () => {
                   insetsBottom={insets.bottom}
                   activeTab={activeTab}
                   onTabPress={handleTabPress}
-                  onOpenTodo={openTodo}
+                  onOpenTodo={() => openTasks("today")}
                   onOpenSettings={openSettingsHome}
                   onOpenAccountSettings={openSettingsAccount}
                 >
                   <>
                     {taskWorkspace}
                     {memoWorkspace}
-                    {todoWorkspace}
                     <SettingsShell
                       active={rootScreen === "settings"}
                       contentPaddingTop={settingsContentPaddingTop}
@@ -134,11 +130,6 @@ const AppContent = () => {
                         <ProjectWorkspaceScreen
                           active={workspaceScope === "projects" && rootScreen === "tasks"}
                           tab="tasks"
-                          contentPaddingTop={workspaceContentPaddingTop}
-                        />
-                        <ProjectWorkspaceScreen
-                          active={workspaceScope === "projects" && rootScreen === "todo"}
-                          tab="todo"
                           contentPaddingTop={workspaceContentPaddingTop}
                         />
                         <ProjectWorkspaceScreen
@@ -166,8 +157,6 @@ const AppContent = () => {
                 </AppChromeShell>
               )}
             </TaskWorkspaceShell>
-          )}
-        </TodoWorkspaceShell>
       )}
     </MemoWorkspaceShell>
   );
@@ -176,7 +165,7 @@ const AppContent = () => {
 export default function MainNavigator() {
   return (
     <AppProviders>
-      <ProfileSetupBoundary><AppContent /></ProfileSetupBoundary>
+      <AccountEntryBoundary><ProfileSetupBoundary><TaskPlanningProvider><AppContent /></TaskPlanningProvider></ProfileSetupBoundary></AccountEntryBoundary>
     </AppProviders>
   );
 }

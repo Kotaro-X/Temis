@@ -88,6 +88,7 @@ export const syncQueuedEnvelopes = async <
 >(
   entityType: TType,
   pushEnvelope: (envelope: SyncEntityEnvelope<TType>) => Promise<void>,
+  assertCurrent: () => void = () => {},
 ): Promise<{
   queue: SyncQueueItem[];
   firstError: Error | null;
@@ -101,6 +102,7 @@ export const syncQueuedEnvelopes = async <
   const result = await processSyncQueue(entityType, queue, now, pushEnvelope);
 
   await withSyncStoreMutation(async () => {
+    assertCurrent();
     await saveSyncQueue(reconcileProcessedQueue(queue, result.queue, await loadSyncQueue()));
   });
   return result;

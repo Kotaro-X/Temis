@@ -1,3 +1,4 @@
+import Modal from "../components/common/KeyboardAwareModal";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -5,7 +6,6 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Linking,
-  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -468,7 +468,7 @@ const ResearchScreen = ({
           })}
         </View>
 
-        <FlatList
+        <FlatList keyboardShouldPersistTaps="always"
           data={filteredNotes}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}

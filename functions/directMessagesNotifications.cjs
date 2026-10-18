@@ -77,7 +77,7 @@ const processNotificationJob = async (db, ref, post = postExpo) => {
       const tickets = await post('send', [{
         to: token, title: thread.data()?.memberProfiles?.[job.senderUserId]?.displayName || 'Temisユーザー',
         body: data.text.slice(0, 100), sound: 'default', channelId: 'direct-messages',
-        data: { type: 'dm', recipientUserId: job.recipientUserId, conversationId: job.conversationId, messageId: job.messageId },
+        data: { environment: process.env.GCLOUD_PROJECT === 'temis-test-c05aa' ? 'test' : 'production', type: 'dm', recipientUserId: job.recipientUserId, conversationId: job.conversationId, messageId: job.messageId },
       }]);
       const ticket = tickets?.[0];
       if (!ticket || (ticket.status !== 'ok' && !ticket.details?.error)) throw new Error('invalid-ticket');

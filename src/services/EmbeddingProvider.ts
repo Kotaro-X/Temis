@@ -2,8 +2,8 @@ export type EmbeddingVector = number[];
 export type EmbeddingBatch = number[][];
 
 export interface EmbeddingProvider {
-  embed: (text: string) => Promise<EmbeddingVector>;
-  embedBatch: (texts: string[]) => Promise<EmbeddingBatch>;
+  embed: (text: string, options?: { expectedUid?: string }) => Promise<EmbeddingVector>;
+  embedBatch: (texts: string[], options?: { expectedUid?: string }) => Promise<EmbeddingBatch>;
   getDim: () => number;
   getModel: () => string;
   getModelVersion: () => string;

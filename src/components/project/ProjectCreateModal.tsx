@@ -1,5 +1,6 @@
+import Modal from "../common/KeyboardAwareModal";
 import React, { useEffect, useState } from "react";
-import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useCollaboration } from "../../context/CollaborationContext";
 import type { Project } from "../../types/collaboration";

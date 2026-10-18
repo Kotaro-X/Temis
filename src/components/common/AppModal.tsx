@@ -1,5 +1,6 @@
+import Modal from "./KeyboardAwareModal";
 import React from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, View } from "react-native";
 
 type Props = {
   styles: Record<string, any>;

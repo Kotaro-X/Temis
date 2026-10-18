@@ -1,9 +1,10 @@
+import type { TaskPlanning } from './taskPlanning';
 import type { Tag } from "./tag";
 import type { SlotKey } from "./timer";
 
 export type TaskStatus = "TODO" | "IN_PROGRESS" | "PAUSED" | "DONE";
 
-export type TaskState = {
+export type TaskState = TaskPlanning & {
   id: string;
   taskName: string;
   tags: Tag[];

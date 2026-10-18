@@ -34,6 +34,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   chip: {
+    maxWidth: "100%",
     backgroundColor: "#eef2ff",
     borderColor: "#c7d2fe",
     borderWidth: 1,

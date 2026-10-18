@@ -9,7 +9,7 @@ const toMillis = (value) => {
 };
 
 const isPublicVisibleGuildPost = (post) =>
-  post?.status === "published" && post?.moderation?.visibility === "visible";
+  post?.status === "published" && post?.moderation?.visibility === "visible" && post?.safety?.status === "approved" && post?.safety?.version === 1;
 
 const buildGuildIndexText = (post) => {
   const title = typeof post?.title === "string" ? post.title.trim() : "";

@@ -1,3 +1,4 @@
+import { getAppEnvironment, getEnvironmentEpoch } from "../environment/runtimeEnvironment";
 import * as Crypto from 'expo-crypto';
 import { getDownloadURL, getStorage, ref } from 'firebase/storage';
 import { getFirebaseApp, getFirebaseAuth } from '../sync/firebaseApp';
@@ -9,6 +10,8 @@ import type { UserProfile } from '../../types/collaboration';
 
 // Immutable object names keep old download URLs from pointing at a new image.
 export const selectAndSaveProfilePhoto = async (): Promise<UserProfile | null> => {
+  const environment = getAppEnvironment();
+  const epoch = getEnvironmentEpoch();
   const userId = getFirebaseAuth().currentUser?.uid;
   if (!userId) throw new Error('アカウントにログインしてください。');
   // Older native builds may receive newer JS. Never load optional photo modules at app startup.
@@ -28,13 +31,16 @@ export const selectAndSaveProfilePhoto = async (): Promise<UserProfile | null> =
   try {
     const file = await FileSystem.getInfoAsync(image.uri);
     if (!file.exists || file.isDirectory || !file.size || file.size > 1024 * 1024) throw new Error('写真の容量が大きすぎるか、読み込めませんでした。別の写真を選択してください。');
-    const isCurrentAccount = () => getFirebaseAuth().currentUser?.uid === userId;
+    const isCurrentAccount = () => epoch === getEnvironmentEpoch() && getFirebaseAuth().currentUser?.uid === userId;
     if (!isCurrentAccount()) throw new Error('アカウントが切り替わりました。もう一度お試しください。');
     const path = `profilePhotos/${userId}/${Crypto.randomUUID()}.jpg`;
     const object = ref(getStorage(getFirebaseApp()), path);
     const token = await getFirebaseAuth().currentUser!.getIdToken();
-    await uploadProfilePhotoFile({ uri: image.uri, size: file.size, bucket: object.bucket, path, token, isCurrentAccount });
-    const url = await getDownloadURL(object);
+    await uploadProfilePhotoFile({ uri: image.uri, size: file.size, bucket: object.bucket, path, token, isCurrentAccount, cacheControl: environment === "test" ? "private,no-store" : undefined });
+    // Test photos use authenticated reads rather than permanent bearer download URLs.
+    const url = environment === 'test'
+      ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(object.bucket)}/o/${encodeURIComponent(path)}?alt=media`
+      : await getDownloadURL(object);
     if (!isCurrentAccount()) throw new Error('アカウントが切り替わりました。もう一度お試しください。');
     // Uncertain remote commits are cleaned up server-side after reference checks.
     return await updateProfilePhoto(userId, url, path);

@@ -150,3 +150,11 @@ test("note and research writes enqueue embeddings instead of generating them syn
   assert.equal(researchSource.includes("await enqueueMemoEmbeddingJob(documentId)"), true);
   assert.equal(chunkIndexSource.includes("await provider.embedBatch"), false);
 });
+
+test("deferred external embedding jobs remain isolated across account changes", async () => {
+  const { canRunAccountEmbeddingJob } = await import('../src/services/embeddingJobPolicy.ts');
+  assert.equal(canRunAccountEmbeddingJob('alice', 'alice'), true);
+  assert.equal(canRunAccountEmbeddingJob('alice', 'bob'), false);
+  assert.equal(canRunAccountEmbeddingJob('alice', null), false);
+  assert.equal(canRunAccountEmbeddingJob(null, 'bob'), false);
+});

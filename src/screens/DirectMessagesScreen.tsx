@@ -1,3 +1,7 @@
+import { Alert } from 'react-native';
+import ReportReasonModal from '../components/common/ReportReasonModal';
+import { reportDirectMessage } from '../services/dm/dmReports';
+import { setConnectionBlocked } from '../services/collaboration/collaborationService';
 import UserAvatar from "../components/UserAvatar";
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View, type ViewToken } from 'react-native';
@@ -18,6 +22,8 @@ const displayTime = (value: number) => new Date(value).toLocaleString(undefined,
 const Conversation = ({ userId, recipient, thread }: { userId: string; recipient: DMRecipient; thread?: DMConversation }) => {
   const { connections } = useDirectMessages();
   const { openDM } = useAppUI();
+  const [reportTarget, setReportTarget] = useState<string | null>(null);
+  const [blocking, setBlocking] = useState(false);
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState<{ id: string; text: string } | null>(null);
@@ -34,7 +40,7 @@ const Conversation = ({ userId, recipient, thread }: { userId: string; recipient
   const sendLock = useRef(false);
   const seen = useRef(0);
   const readInFlight = useRef(false);
-  const canSend = !thread?.closed && connections.some((item) => item.status === 'connected' && item.userIds.includes(recipient.userId));
+  const canSend = !blocking && !thread?.closed && connections.some((item) => item.status === 'connected' && item.userIds.includes(recipient.userId));
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => setActive(state === 'active'));
@@ -97,9 +103,11 @@ const Conversation = ({ userId, recipient, thread }: { userId: string; recipient
     finally { if (alive.current) setLoadingOlder(false); }
   };
   return <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <Action text={blocking ? '処理中…' : 'このユーザーをブロック'} disabled={blocking} onPress={() => Alert.alert('ブロックしますか？', 'この相手との新しいメッセージと通知を停止し、Commonsの投稿を非表示にします。', [{ text: 'キャンセル', style: 'cancel' }, { text: 'ブロック', style: 'destructive', onPress: () => { setBlocking(true); void setConnectionBlocked(recipient.userId, true, userId).then(() => { if (alive.current) { setDraft(''); setPending(null); } }).catch(cause => { if (alive.current) setError(cause.message); }).finally(() => { if (alive.current) setBlocking(false); }); } }])} />
+    <ReportReasonModal visible={Boolean(reportTarget)} onClose={() => setReportTarget(null)} onSubmit={reason => { if (!thread || !reportTarget) return Promise.reject(new Error('対象が見つかりません。')); return reportDirectMessage(thread.id, reportTarget, reason, userId); }} />
     {loading ? <ActivityIndicator style={styles.space} /> : null}
-    <FlatList
-      inverted data={messages} keyExtractor={(item) => item.id} keyboardShouldPersistTaps="handled"
+    <FlatList keyboardShouldPersistTaps="always"
+      inverted data={messages} keyExtractor={(item) => item.id}
       contentContainerStyle={styles.messages} onViewableItemsChanged={viewable} viewabilityConfig={viewabilityConfig}
       ListEmptyComponent={!loading ? <Text style={styles.empty}>メッセージを送って会話を始めましょう。</Text> : null}
       ListFooterComponent={messages.length >= 50 && hasOlder ? <Action text={loadingOlder ? '読み込み中…' : '過去のメッセージ'} disabled={loadingOlder} onPress={() => { void older(); }} /> : null}
@@ -111,6 +119,7 @@ const Conversation = ({ userId, recipient, thread }: { userId: string; recipient
           <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
           <Text selectable style={styles.body}>{deleted ? '削除されたメッセージ' : item.text}</Text>
           <Text style={styles.time}>{displayTime(item.createdAt)}</Text>
+          {!mine && !deleted ? <Pressable accessibilityRole="button" style={{ paddingVertical: 8 }} onPress={() => setReportTarget(item.id)}><Text style={{ color: "#b91c1c", fontSize: 12 }}>通報</Text></Pressable> : null}
           </View>
         </View>;
       }}
@@ -163,7 +172,7 @@ function DirectMessagesContent({ contentPaddingTop }: { contentPaddingTop: numbe
       : choosing ? <View style={styles.flex}>
         {recipientLoading ? <ActivityIndicator /> : null}
         {recipientError ? <View style={styles.notice}><Text style={styles.error}>{recipientError}</Text><Action text="再試行" onPress={() => { void loadRecipients(); }} /></View> : null}
-        <FlatList data={recipients} keyExtractor={(item) => item.userId} ListEmptyComponent={!recipientLoading ? <Text style={styles.empty}>繋がりが成立したユーザーがここに表示されます。</Text> : null}
+        <FlatList keyboardShouldPersistTaps="always" data={recipients} keyExtractor={(item) => item.userId} ListEmptyComponent={!recipientLoading ? <Text style={styles.empty}>繋がりが成立したユーザーがここに表示されます。</Text> : null}
           renderItem={({ item }) => <Pressable style={styles.row} onPress={() => {
             const existing = conversations.find((candidate) => candidate.userIds.includes(item.userId));
             setChoosing(false);
@@ -177,7 +186,7 @@ function DirectMessagesContent({ contentPaddingTop }: { contentPaddingTop: numbe
         {pushError ? <Text style={[styles.error, styles.notice]}>{pushError}</Text> : null}
         {error ? <View style={styles.notice}><Text style={styles.error}>{error}</Text><Action text="再試行" onPress={refresh} /></View> : null}
         {loading ? <ActivityIndicator /> : null}
-        <FlatList data={conversations} keyExtractor={(item) => item.id} onRefresh={refresh} refreshing={loading}
+        <FlatList keyboardShouldPersistTaps="always" data={conversations} keyExtractor={(item) => item.id} onRefresh={refresh} refreshing={loading}
           ListEmptyComponent={!loading ? <Text style={styles.empty}>まだ会話はありません。繋がりのある相手にメッセージを送ってみましょう。</Text> : null}
           renderItem={({ item }) => {
             const other = item.userIds.find((id) => id !== userId) || '';

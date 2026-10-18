@@ -65,7 +65,7 @@ const TodoWorkspaceContent = ({
   return (
     <ScrollView
       contentContainerStyle={[styles.content, { paddingTop: insetsTop }]}
-      keyboardShouldPersistTaps="handled"
+      keyboardShouldPersistTaps="always"
     >
       <Header styles={styles} title={title} left={headerLeft} right={headerRight} />
       <View style={styles.todoViewSwitch}>
@@ -105,7 +105,7 @@ const TodoWorkspaceContent = ({
       <View style={styles.todoList}>
         {todoViewMode === "list" ? (
           <>
-            <ScrollView
+            <ScrollView keyboardShouldPersistTaps="always"
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.filterRow}

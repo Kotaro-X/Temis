@@ -179,7 +179,7 @@ const upsertMemoForTaskImpl = async (
         updatedAt: now,
       };
     } else {
-      const memoId = nanoid();
+      const memoId = taskId.startsWith("todo-task:") ? `task-memo:${taskId}` : nanoid();
       await executeSql(
         "INSERT INTO memos (id, task_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
         [memoId, taskId, body, now, now],

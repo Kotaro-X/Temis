@@ -1,4 +1,6 @@
+import { requireAIConsent, getAIAccountUid, AIConsentRequiredError } from './ai/aiConsent';
 import { nanoid } from "nanoid/non-secure";
+import { getWorkspaceEpoch } from "./account/workspaceEpoch";
 
 import {
   countChunksNeedingEmbeddingForMemo,
@@ -13,6 +15,7 @@ import { invalidateHybridSearchCache } from "./hybridSearch";
 import { getEmbeddingProvider } from "./EmbeddingProvider";
 import { OpenAIEmbeddingAuthenticationError } from "./OpenAIEmbeddingProvider";
 import {
+  canRunAccountEmbeddingJob,
   canRunEmbeddingJob,
   EmbeddingJobStatus,
   markEmbeddingJobFailed as resolveFailedJob,
@@ -21,6 +24,7 @@ import {
 type EmbeddingJobRow = {
   id: string;
   memo_id: string;
+  account_user_id?: string | null;
   status: EmbeddingJobStatus;
   attempts: number;
   max_attempts: number;
@@ -56,6 +60,7 @@ type RebuildProgressRow = {
 export type EmbeddingJobRecord = {
   id: string;
   memoId: string;
+  accountUserId?: string | null;
   status: EmbeddingJobStatus;
   attempts: number;
   maxAttempts: number;
@@ -103,6 +108,7 @@ const STALE_PROCESSING_JOB_MS = 5 * 60 * 1_000;
 const toJobRecord = (row: EmbeddingJobRow): EmbeddingJobRecord => ({
   id: row.id,
   memoId: row.memo_id,
+  accountUserId: row.account_user_id ?? null,
   status: row.status,
   attempts: row.attempts,
   maxAttempts: row.max_attempts,
@@ -151,7 +157,7 @@ export const enqueueMemoEmbeddingJob = async (
   const embeddingModelVersion =
     options?.embeddingModelVersion ?? getEmbeddingProvider().getModelVersion();
   await executeSql(
-    "INSERT INTO embedding_jobs (id, memo_id, status, attempts, max_attempts, embedding_model_version, next_run_at, locked_at, last_error, created_at, updated_at) VALUES (?, ?, 'pending', 0, ?, ?, ?, NULL, NULL, ?, ?) ON CONFLICT(memo_id, embedding_model_version) DO UPDATE SET status = 'pending', attempts = 0, max_attempts = excluded.max_attempts, next_run_at = excluded.next_run_at, locked_at = NULL, last_error = NULL, updated_at = excluded.updated_at",
+    "INSERT INTO embedding_jobs (id, memo_id, status, attempts, max_attempts, embedding_model_version, next_run_at, locked_at, last_error, created_at, updated_at, account_user_id) VALUES (?, ?, 'pending', 0, ?, ?, ?, NULL, NULL, ?, ?, ?) ON CONFLICT(memo_id, embedding_model_version) DO UPDATE SET status = 'pending', attempts = 0, max_attempts = excluded.max_attempts, next_run_at = excluded.next_run_at, locked_at = NULL, last_error = NULL, updated_at = excluded.updated_at",
     [
       nanoid(),
       memoId,
@@ -160,6 +166,7 @@ export const enqueueMemoEmbeddingJob = async (
       now,
       now,
       now,
+      getAIAccountUid(),
     ],
   );
 };
@@ -181,7 +188,7 @@ export const listRunnableEmbeddingJobs = async (
 ): Promise<EmbeddingJobRecord[]> => {
   await ensureDbReady();
   const result = await executeSql(
-    "SELECT id, memo_id, status, attempts, max_attempts, embedding_model_version, next_run_at, locked_at, last_error, created_at, updated_at FROM embedding_jobs WHERE status IN ('pending', 'failed') AND attempts < max_attempts AND next_run_at <= ? ORDER BY next_run_at ASC, created_at ASC LIMIT ?",
+    "SELECT id, memo_id, account_user_id, status, attempts, max_attempts, embedding_model_version, next_run_at, locked_at, last_error, created_at, updated_at FROM embedding_jobs WHERE status IN ('pending', 'failed') AND attempts < max_attempts AND next_run_at <= ? ORDER BY next_run_at ASC, created_at ASC LIMIT ?",
     [now, Math.max(1, limit)],
   );
   return (result.rows._array as EmbeddingJobRow[]).map(toJobRecord);
@@ -279,6 +286,7 @@ const deleteJob = async (jobId: string): Promise<void> => {
 export const runEmbeddingJob = async (
   job: EmbeddingJobRecord,
 ): Promise<EmbeddingJobRunResult> => {
+  const epoch = getWorkspaceEpoch();
   await ensureDbReady();
   const startedAt = Date.now();
   if (!canRunEmbeddingJob(job, startedAt)) {
@@ -304,6 +312,20 @@ export const runEmbeddingJob = async (
     };
   }
 
+  // Shared notes use server-loaded canonical text and author consent in Project AI.
+  // Never send a locally cached shared note through the personal background queue.
+  if (job.memoId.startsWith('note:') && getEmbeddingProvider().getModel().startsWith('text-embedding-')) {
+    const { getNoteById } = await import('../db/noteRepo');
+    const note = await getNoteById(job.memoId.slice(5));
+    if (note?.scope === 'project') {
+      await deferJobUntilAuthenticated(job.id, Date.now());
+      return { jobId: job.id, memoId: job.memoId, status: 'pending', chunkCount: 0, error: null };
+    }
+  }
+  if (getEmbeddingProvider().getModel().startsWith('text-embedding-') && !canRunAccountEmbeddingJob(job.accountUserId, getAIAccountUid())) {
+    await executeSql("UPDATE embedding_jobs SET status = 'pending', next_run_at = ?, locked_at = NULL, last_error = NULL WHERE id = ?", [Date.now() + AUTHENTICATION_RETRY_DELAY_MS, job.id]);
+    return { jobId: job.id, memoId: job.memoId, status: 'pending', chunkCount: 0, error: null };
+  }
   await markJobProcessing(job, startedAt);
   const target = getCurrentEmbeddingTarget();
 
@@ -329,7 +351,9 @@ export const runEmbeddingJob = async (
     await markEmbeddingChunksProcessing(chunks.map((chunk) => chunk.chunkId));
     const embeddings = await target.provider.embedBatch(
       chunks.map((chunk) => chunk.text),
+      { expectedUid: job.accountUserId || undefined },
     );
+    if (getWorkspaceEpoch() !== epoch) throw new Error("Account workspace changed.");
     if (embeddings.length !== chunks.length) {
       throw new Error("EmbeddingProvider returned invalid batch size.");
     }
@@ -373,7 +397,8 @@ export const runEmbeddingJob = async (
       error: null,
     };
   } catch (error) {
-    if (error instanceof OpenAIEmbeddingAuthenticationError) {
+    if (getWorkspaceEpoch() !== epoch) throw error;
+    if (error instanceof OpenAIEmbeddingAuthenticationError || error instanceof AIConsentRequiredError || (error as { details?: { reason?: string } })?.details?.reason === 'ai-consent-required') {
       await markMemoEmbeddingPending(job.memoId, target.embeddingModelVersion);
       await deferJobUntilAuthenticated(job.id, Date.now());
       invalidateHybridSearchCache();
@@ -402,11 +427,13 @@ export const runEmbeddingJob = async (
 export const runPendingEmbeddingJobs = async (options?: {
   limit?: number;
 }): Promise<EmbeddingJobsRunSummary> => {
+  const epoch = getWorkspaceEpoch();
   await recoverStaleEmbeddingJobs();
   const jobs = await listRunnableEmbeddingJobs(options?.limit ?? DEFAULT_JOB_LIMIT);
   let completedJobs = 0;
   let failedJobs = 0;
   for (const job of jobs) {
+    if (getWorkspaceEpoch() !== epoch) throw new Error("Account workspace changed.");
     const result = await runEmbeddingJob(job);
     if (result.status === "completed") {
       completedJobs += 1;
@@ -489,7 +516,7 @@ export const rebuildAllMemoEmbeddings = async (options?: {
           updatedAt: now,
         };
 
-  const params: Array<string | number> = [];
+  const params: (string | number)[] = [];
   let cursorSql = "";
   if (progress.cursorMemoId) {
     cursorSql = "WHERE id > ?";
@@ -532,4 +559,14 @@ export const rebuildAllMemoEmbeddings = async (options?: {
   };
   await saveRebuildProgress(nextProgress);
   return nextProgress;
+};
+
+// Explicit agreement adopts only unassigned local jobs. Other accounts' jobs stay isolated.
+export const resumeConsentedEmbeddingJobs = async (expectedUid: string) => {
+  const receipt = await requireAIConsent();
+  const uid = getAIAccountUid(); if (!uid || uid !== expectedUid || receipt.uid !== expectedUid) return;
+  await ensureDbReady();
+  if (getAIAccountUid() !== uid) return;
+  await executeSql("UPDATE embedding_jobs SET account_user_id = ?, next_run_at = ? WHERE status = 'pending' AND (account_user_id IS NULL OR account_user_id = ?)", [uid, Date.now(), uid]);
+  await runPendingEmbeddingJobs({ limit: 20 });
 };

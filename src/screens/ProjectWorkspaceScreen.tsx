@@ -1,5 +1,8 @@
+import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
+import MemoSearchField from "../components/memo/MemoSearchField";
+import Modal from "../components/common/KeyboardAwareModal";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -7,7 +10,6 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   LayoutChangeEvent,
-  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -18,13 +20,14 @@ import {
   View,
 } from "react-native";
 
+import ProjectTasksWorkspace from "../components/project/ProjectTasksWorkspace";
+
 import TokenChips from "../components/TokenChips";
 import AIAnswerEvidencePanel from "../components/ai/AIAnswerEvidencePanel";
 import TemisAIDock from "../components/ai/TemisAIDock";
 import SwipeableRow from "../components/common/SwipeableRow";
-import MemoEditorFields from "../components/memo/MemoEditorFields";
+import ProjectMemoDetail from "../components/memo/ProjectMemoDetail";
 import MemoListCard from "../components/memo/MemoListCard";
-import { getFreeNoteById, setNoteScope, upsertFreeNote, upsertNoteRecord } from "../db/noteRepo";
 import { useCollaboration } from "../context/CollaborationContext";
 import { useAppUI } from "../context/AppUIContext";
 import { useAppSettings } from "../context/AppSettingsContext";
@@ -38,7 +41,6 @@ import {
   listProjectTasks,
   removeProjectSharedNote,
   updateProjectTask,
-  upsertProjectSharedNote,
 } from "../services/collaboration/collaborationService";
 import { syncProjectTaskMemo } from "../services/collaboration/projectTaskMemoService";
 import type {
@@ -50,7 +52,7 @@ import type {
 import { SLOT_KEYS, SLOT_LABELS, type AIEvidence, type SlotKey } from "../types";
 import { getSlotForTime } from "../hooks/tasks/taskUtils";
 import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot, toLocalDateString } from "../utils/projectTaskPlacement";
-import { extractTokens } from "../utils/wikiLink";
+import { extractTokens, normalizeParens, normalizeSearchToken } from "../utils/wikiLink";
 import {
   projectNoteIdFromEvidence,
   searchProjectMemoAIContext,
@@ -96,21 +98,7 @@ const parseDueAt = (value: string): number | null => {
 const taskUpdate = (
   task: ProjectTask,
   changes: Partial<Parameters<typeof updateProjectTask>[1]>,
-): Parameters<typeof updateProjectTask>[1] => ({
-  title: task.title,
-  description: task.description ?? null,
-  status: task.status,
-  tags: task.tags ?? [],
-  estimateMinutes: task.estimateMinutes ?? 25,
-  isArchived: task.isArchived ?? false,
-  priority: task.priority ?? null,
-  dueAt: task.dueAt ?? null,
-  privateDate: task.privateDate ?? null,
-  privateSlotKey: task.privateSlotKey ?? null,
-  assigneeUserId: task.assigneeUserId ?? null,
-  relatedMemoId: task.relatedMemoId ?? null,
-  ...changes,
-});
+): Parameters<typeof updateProjectTask>[1] => changes;
 
 const ProjectTaskRow = ({
   task,
@@ -212,13 +200,18 @@ const ProjectWorkspaceScreen = ({
   contentPaddingTop: number;
 }) => {
   const { profile, projects, overflowProjects } = useCollaboration();
-  const { addTag, tagOptions, timeBoxSchedule } = useAppSettings();
+  const { addTag, tagOptions, timeBoxSchedule, appLanguage } = useAppSettings();
   const { activeProjectId, openMenu, openProjects, openMemoDetail } = useAppUI();
+  const screenContext = `${activeProjectId}:${profile?.userId}:${tab}`;
+  const screenContextRef = useRef(screenContext); screenContextRef.current = screenContext;
+  const refreshSequence = useRef(0);
   const [notes, setNotes] = useState<ProjectSharedNote[]>([]);
   const [tasks, setTasks] = useState<ProjectTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [composerSession, setComposerSession] = useState<string | null>(null);
   const [composer, setComposer] = useState<ComposerKind>(null);
+  const [memoCloseRequest, setMemoCloseRequest] = useState(0);
   const [editingNote, setEditingNote] = useState<ProjectSharedNote | null>(null);
   const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -269,8 +262,8 @@ const ProjectWorkspaceScreen = ({
     return anonymous ? myRole === "owner" : note.ownerUserId === profile?.userId;
   }, [canCreateMemo, myRole, profile?.userId]);
   const retrieveProjectMemoEvidence = useCallback(
-    async (question: string) => project
-      ? searchProjectMemoAIContext(question, project.id, notes, memoAIScope)
+    async (question: string, retrievalOptions: { expectedUid?: string }) => project
+      ? searchProjectMemoAIContext(question, project.id, notes, memoAIScope, retrievalOptions.expectedUid)
       : [],
     [memoAIScope, notes, project],
   );
@@ -304,7 +297,9 @@ const ProjectWorkspaceScreen = ({
   }, [labeledMemoEvidence, memoAICitedEvidenceKeys]);
 
   const loadCreatorNames = useCallback(async (userIds: (string | null | undefined)[]) => {
+    const context = screenContextRef.current;
     const profiles = await listProjectCreatorProfiles(userIds);
+    if (context !== screenContextRef.current) return;
     setCreatorNames((current) => ({
       ...current,
       ...Object.fromEntries(profiles.map((item) => [item.userId, item.displayName?.trim() || `@${item.username}`])),
@@ -321,14 +316,14 @@ const ProjectWorkspaceScreen = ({
     return creatorNames[userId] || snapshot?.trim() || `ユーザー ${userId.slice(0, 8)}`;
   }, [creatorNames, profile?.userId]);
   const filteredNotes = useMemo(() => {
-    const keyword = memoQuery.trim().toLocaleLowerCase();
-    if (!keyword) return notes;
-    return notes.filter((note) => [note.title ?? "", note.body, creatorLabelFor(
+    const keyword = normalizeSearchToken(memoQuery).toLocaleLowerCase();
+    if (!keyword) return notes.filter(note => note.projectId === activeProjectId);
+    return notes.filter((note) => note.projectId === activeProjectId && [note.title ?? "", note.body, creatorLabelFor(
       note.ownerUserId,
       note.creatorDisplayName,
       note.anonymizedReason,
-    )].some((value) => value.toLocaleLowerCase().includes(keyword)));
-  }, [creatorLabelFor, memoQuery, notes]);
+    )].some((value) => normalizeParens(value).toLocaleLowerCase().includes(keyword)));
+  }, [activeProjectId, creatorLabelFor, memoQuery, notes]);
 
   const refresh = useCallback(async () => {
     if (!project) {
@@ -336,15 +331,21 @@ const ProjectWorkspaceScreen = ({
       setTasks([]);
       return;
     }
+    const context = `${project.id}:${profile?.userId}:${tab}`;
+    const sequence = ++refreshSequence.current;
+    const valid = () => context === screenContextRef.current && sequence === refreshSequence.current;
     setLoading(true);
     setError(null);
     try {
       if (tab === "memos") {
-        const nextNotes = await listProjectSharedNotes(project.id);
+        const [nextNotes, linkedTasks] = await Promise.all([listProjectSharedNotes(project.id), listProjectTasks(project.id)]);
+        if (!valid()) return;
+        setTasks(linkedTasks);
         setNotes(nextNotes);
         await loadCreatorNames(nextNotes.map((note) => note.ownerUserId));
       } else {
         const nextTasks = await listProjectTasks(project.id, config.taskKind);
+        if (!valid()) return;
         const tasksWithBackfilledMemos = profile
           ? await Promise.all(nextTasks.map(async (task) => {
             if (task.ownerUserId !== profile.userId || task.relatedMemoId || !task.description?.trim()) {
@@ -354,27 +355,29 @@ const ProjectWorkspaceScreen = ({
             return updateProjectTask(task.id, { relatedMemoId });
           }))
           : nextTasks;
+        if (!valid()) return;
         setTasks(tasksWithBackfilledMemos);
         await loadCreatorNames(tasksWithBackfilledMemos.map((task) => task.creatorUserId));
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "プロジェクトの内容を読み込めませんでした。");
+      if (valid()) setError(cause instanceof Error ? cause.message : "プロジェクトの内容を読み込めませんでした。");
     } finally {
-      setLoading(false);
+      if (valid()) setLoading(false);
     }
   }, [config.taskKind, loadCreatorNames, profile, project, tab]);
 
   useEffect(() => {
-    if (active) void refresh();
-  }, [active, refresh]);
+    if (active && tab !== "tasks") void refresh();
+  }, [active, refresh, tab]);
 
   useEffect(() => {
+    setNotes([]); setTasks([]); setCreatorNames({});
     setMemoQuery("");
     setMemoAIQuery("");
     setMemoAIScope("project");
     setMemoAIExpanded(false);
     resetMemoAI();
-  }, [activeProjectId, resetMemoAI, setMemoAIQuery]);
+  }, [activeProjectId, profile?.userId, resetMemoAI, setMemoAIQuery]);
 
   useEffect(() => {
     setSelectedTaskIds((current) => current.filter((taskId) => tasks.some((task) => task.id === taskId && !task.isArchived)));
@@ -426,45 +429,15 @@ const ProjectWorkspaceScreen = ({
       setPrivateDateDraft(task ? getProjectTaskPrivateDate(task) : toLocalDateString(Date.now()));
       setPrivateSlotKeyDraft(task ? getProjectTaskPrivateSlot(task, timeBoxSchedule) : getSlotForTime(timeBoxSchedule, new Date()));
     }
+    setComposerSession(`${project.id}:${profile?.userId}`);
     setComposer(kind);
   };
 
   const saveComposer = async () => {
-    if (!project || !composer || (composer !== "memos" && !titleDraft.trim())) return;
+    if (!project || !composer || composer === "memos" || !titleDraft.trim()) return;
     try {
       setSaving(true);
-      if (composer === "memos") {
-        if (!profile) throw new Error("アカウントにログインしてからメモを作成してください。");
-        if (!canEditNote(editingNote)) throw new Error("この共有メモを編集する権限がありません。");
-        const editingAnonymous = editingNote?.anonymizedReason === "project_exit" || editingNote?.ownerUserId == null;
-        if (editingNote && editingAnonymous) {
-          await upsertProjectSharedNote({
-            ...editingNote,
-            title: titleDraft.trim(),
-            body: bodyDraft,
-            updatedAt: Date.now(),
-          });
-          closeComposer();
-          await refresh();
-          return;
-        }
-        const sourceNoteId = editingNote?.sourceNoteId ?? null;
-        const localSource = sourceNoteId ? await getFreeNoteById(sourceNoteId) : null;
-        const note = sourceNoteId && !localSource
-          ? await upsertNoteRecord({
-              id: sourceNoteId,
-              type: "free",
-              date: null,
-              title: titleDraft.trim() || null,
-              body: bodyDraft,
-              scope: "project",
-              projectId: project.id,
-              updatedAt: Date.now(),
-            })
-          : await upsertFreeNote({ id: sourceNoteId, title: titleDraft.trim() || null, body: bodyDraft });
-        if (!editingNote) await setNoteScope(note.id, { scope: "project", projectId: project.id });
-        await upsertProjectSharedNote({ id: note.id, ownerUserId: profile.userId, creatorDisplayName: profile.displayName?.trim() || `@${profile.username}`, creatorAnonymizedAt: null, anonymizedReason: null, projectId: project.id, sourceNoteId: note.id, title: note.title, body: note.body, updatedAt: note.updatedAt });
-      } else {
+      {
         if (!profile) throw new Error("アカウントにログインしてからタスクを保存してください。");
         const estimateMinutes = Math.max(0, Number.parseInt(estimateDraft, 10) || 0);
         const update = {
@@ -500,14 +473,7 @@ const ProjectWorkspaceScreen = ({
     }
   };
 
-  const handleProjectMemoBack = () => {
-    if (saving) return;
-    if (!canEditNote(editingNote)) {
-      closeComposer();
-      return;
-    }
-    void saveComposer();
-  };
+  const handleProjectMemoBack = () => setMemoCloseRequest(current => current + 1);
 
   const changeMemoAIScope = (scope: ProjectMemoSearchScope) => {
     if (scope === memoAIScope) return;
@@ -661,11 +627,10 @@ const ProjectWorkspaceScreen = ({
           <Text style={styles.tagPickerCloseText}>キャンセル</Text>
         </Pressable>
       </View>
-      <FlatList
+      <FlatList keyboardShouldPersistTaps="always"
         data={tagOptions}
         keyExtractor={(tag) => tag}
         style={styles.tagPickerList}
-        keyboardShouldPersistTaps="handled"
         renderItem={({ item: tag }) => {
           const selected = tagDraft.includes(tag);
           return <Pressable accessibilityRole="button" accessibilityState={{ selected }} style={styles.tagPickerItem} onPress={() => { toggleDraftTag(tag); closeTagPicker(); }}><Text style={[styles.tagPickerItemText, selected && styles.tagPickerItemTextSelected]}>{tag}</Text></Pressable>;
@@ -674,6 +639,8 @@ const ProjectWorkspaceScreen = ({
       <View style={styles.tagAddFooter}>{addingTag ? <><TextInput style={styles.newTagInput} value={newTagDraft} onChangeText={setNewTagDraft} placeholder="新しいタグ名" autoFocus returnKeyType="done" onSubmitEditing={() => void createAndSelectTag()} /><View style={styles.newTagActionRow}><Pressable style={styles.newTagCancelButton} onPress={() => { setAddingTag(false); setNewTagDraft(""); }}><Text style={styles.newTagCancelText}>キャンセル</Text></Pressable><Pressable disabled={!newTagDraft.trim() || addingTagSaving} style={[styles.newTagSaveButton, (!newTagDraft.trim() || addingTagSaving) && styles.saveActionDisabled]} onPress={() => void createAndSelectTag()}><Text style={styles.newTagSaveText}>{addingTagSaving ? "追加中" : "追加"}</Text></Pressable></View></> : <Pressable accessibilityRole="button" accessibilityLabel="新しいタグを追加" style={styles.addTagButton} onPress={() => setAddingTag(true)}><Ionicons name="add" size={18} color="#2563eb" /><Text style={styles.addTagButtonText}>タグの追加</Text></Pressable>}</View>
     </View>
   );
+
+  if (tab === "tasks" && project) return <ProjectTasksWorkspace key={`${profile?.userId}:${project.id}`} project={project} active={active} contentPaddingTop={contentPaddingTop} />;
 
   return (
     <View style={[styles.container, { paddingTop: contentPaddingTop }]}>
@@ -687,17 +654,10 @@ const ProjectWorkspaceScreen = ({
       </View>
 
       {tab === "memos" && project ? (
-        <View style={styles.memoSearchRow}>
-          <TextInput
-            style={styles.memoSearchInput}
-            placeholder="メモを検索"
-            value={memoQuery}
-            onChangeText={setMemoQuery}
-          />
-        </View>
+        <MemoSearchField value={memoQuery} onChangeText={setMemoQuery} tokens={notes.flatMap(note => extractTokens(note.body))} placeholder={appLanguage === "en" ? "Search memos" : "メモを検索"} />
       ) : null}
 
-      <ScrollView contentContainerStyle={[styles.content, tab === "memos" && styles.memoContent]} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void refresh()} />} keyboardShouldPersistTaps="handled">
+      <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={[styles.content, tab === "memos" && styles.memoContent]} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void refresh()} />}>
         {!project ? (
           <View style={styles.emptySurface}><Ionicons name="folder-open-outline" size={22} color="#9ca3af" /><View style={styles.emptyBody}><Text style={styles.emptyTitle}>プロジェクトを選択してください</Text><Text style={styles.caption}>Projects から参加中のプロジェクトを開けます。</Text><Pressable style={styles.openProjectsButton} onPress={openProjects}><Text style={styles.openProjectsLabel}>Projects を開く</Text></Pressable></View></View>
         ) : (
@@ -714,7 +674,7 @@ const ProjectWorkspaceScreen = ({
                 new Date(note.updatedAt).toLocaleDateString("ja-JP"),
               ]}
               onPress={() => openComposer("memos", note)}
-              onDelete={canEditNote(note) ? () => confirmDeleteNote(note) : undefined}
+              onDelete={!note.sourceTaskId && !tasks.some(task => task.relatedMemoId === note.id) && canEditNote(note) ? () => confirmDeleteNote(note) : undefined}
             />) : tab === "tasks" ? <>
               <View style={styles.projectTaskBox}>
                 <View style={styles.projectTaskBoxHeader}>
@@ -767,7 +727,7 @@ const ProjectWorkspaceScreen = ({
             : memoAIAnswerLoading ? <Text style={styles.aiHelper}>回答を生成しています…</Text>
               : memoAIError ? <Text accessibilityRole="alert" style={styles.aiHelper}>{memoAIError}</Text>
                 : memoAISearched && labeledMemoEvidence.length === 0 ? <Text style={styles.aiHelper}>関連するメモが見つかりませんでした。</Text>
-                  : <ScrollView style={styles.aiResults} contentContainerStyle={styles.aiResultsContent} nestedScrollEnabled showsVerticalScrollIndicator>
+                  : <ScrollView keyboardShouldPersistTaps="always" style={styles.aiResults} contentContainerStyle={styles.aiResultsContent} nestedScrollEnabled showsVerticalScrollIndicator>
                     <AIAnswerEvidencePanel
                       answerText={memoAIAnswerText}
                       errorText={memoAIError}
@@ -799,37 +759,13 @@ const ProjectWorkspaceScreen = ({
         </TemisAIDock>
       ) : null}
 
-      <Modal visible={composer !== null} animationType="slide" onRequestClose={composer === "memos" ? handleProjectMemoBack : closeComposer}>
+      <Modal visible={composer !== null && composerSession === `${activeProjectId}:${profile?.userId}`} animationType="slide" onRequestClose={composer === "memos" ? handleProjectMemoBack : closeComposer}>
         <View style={styles.composerModalRoot}>
-          {composer === "memos" ? (
-            <KeyboardAvoidingView style={[styles.composer, { paddingTop: contentPaddingTop }]} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-              <View style={styles.memoEditorHeader}>
-                <Pressable style={styles.memoEditorBackButton} onPress={handleProjectMemoBack}>
-                  <Ionicons name="chevron-back" size={18} color="#2563eb" />
-                  <Text style={styles.memoEditorBackText}>{saving ? "保存中" : "戻る"}</Text>
-                </Pressable>
-                <Text style={styles.memoEditorHeaderTitle}>Note</Text>
-                {editingNote && canEditNote(editingNote) ? (
-                  <Pressable style={styles.memoEditorDeleteButton} onPress={() => confirmDeleteNote(editingNote)}>
-                    <Text style={styles.memoEditorDeleteText}>消去</Text>
-                  </Pressable>
-                ) : <View style={styles.memoEditorHeaderSpacer} />}
-              </View>
-              <ScrollView contentContainerStyle={styles.projectMemoEditorContent} keyboardShouldPersistTaps="handled">
-                <Text style={styles.projectMemoDisplayTitle}>{titleDraft.trim() || "無題"}</Text>
-                <Text style={styles.projectMemoMeta}>{project?.name ?? "Project"} · 作成者: {editingNote ? creatorLabelFor(editingNote.ownerUserId, editingNote.creatorDisplayName, editingNote.anonymizedReason) : "あなた"}</Text>
-                {!canEditNote(editingNote) ? <Text style={styles.projectMemoReadOnly}>このメモは読み取り専用です。</Text> : null}
-                <MemoEditorFields
-                  title={titleDraft}
-                  body={bodyDraft}
-                  editable={canEditNote(editingNote)}
-                  language="ja"
-                  tokens={memoTokens}
-                  onChangeTitle={setTitleDraft}
-                  onChangeBody={setBodyDraft}
-                />
-              </ScrollView>
-            </KeyboardAvoidingView>
+          {composerSession !== `${activeProjectId}:${profile?.userId}` ? null : composer === "memos" && project && composerSession === `${activeProjectId}:${profile?.userId}` ? (
+            <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+            <ProjectMemoDetail key={`${project.id}:${profile?.userId}:${editingNote?.id ?? "new"}`} project={project} initialNote={editingNote} tasks={tasks} language={appLanguage}
+              closeRequest={memoCloseRequest} onBack={closeComposer} onChanged={() => { void refresh(); }} />
+            </SafeAreaProvider>
           ) : <View style={[styles.composer, { paddingTop: contentPaddingTop }]}>
           <View style={styles.editorHeader}>
             <View style={styles.editorHeaderLeft}>
@@ -839,7 +775,7 @@ const ProjectWorkspaceScreen = ({
             <Text numberOfLines={1} style={styles.editorTitle}>{composerTitle}</Text>
             <View style={styles.editorHeaderRight}><Pressable style={styles.editorCancelAction} onPress={closeComposer}><Text style={styles.editorCancelText}>キャンセル</Text></Pressable><Pressable disabled={saving || !titleDraft.trim()} style={[styles.editorDoneAction, (!titleDraft.trim() || saving) && styles.saveActionDisabled]} onPress={() => void saveComposer()}><Text style={styles.editorDoneText}>{saving ? "保存中" : "完了"}</Text></Pressable></View>
           </View>
-          <ScrollView contentContainerStyle={styles.composerContent} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={styles.composerContent} keyboardShouldPersistTaps="always">
             <View style={styles.taskEditorCard}>
               <View style={styles.taskEditorTopRow}>
                 <Text numberOfLines={1} style={styles.taskEditorName}>{titleDraft || "未設定"}</Text>

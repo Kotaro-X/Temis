@@ -25,6 +25,7 @@ import {
 } from "./syncDiagnosticObserver";
 import { syncDiagnosticReporter } from "./syncTelemetry";
 import { withLocalEntityMutation } from "./localMutationLock";
+import { assertSyncAccount } from "./syncAccountGuard";
 
 type EnvelopeEntityType = Exclude<SyncEntityType, "tag">;
 
@@ -45,6 +46,7 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
   let retryCount = 0;
 
   try {
+    assertSyncAccount(identity.userId);
     await diagnostics.phase("load_local_changes");
     metadata = {
       ...metadata,
@@ -64,8 +66,9 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
 
     await diagnostics.phase("upload_local_changes");
     const queueResult = await syncQueuedEnvelopes(entityType, async (envelope) => {
+      assertSyncAccount(identity.userId);
       await pushSyncEnvelope(identity.userId, envelope);
-    });
+    }, () => assertSyncAccount(identity.userId));
     retryCount = queueResult.retryCount;
     await diagnostics.phase("upload_local_changes", {
       successCount: queueResult.pushedCount,
@@ -76,6 +79,7 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
     const pullResult = await runIncrementalPull({
       metadata,
       pullPage: async (request) => {
+        assertSyncAccount(identity.userId);
         await diagnostics.phase("fetch_remote_changes", { retryCount });
         const page = await pullSyncEnvelopePage(
           identity.userId,
@@ -97,6 +101,7 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
         await diagnostics.phase("resolve_conflicts", { retryCount });
         await diagnostics.phase("write_local_db", { retryCount });
         await withLocalEntityMutation(entityType, async () => {
+          assertSyncAccount(identity.userId);
           // Include edits made while the remote request was in flight.
           const merged = mergeSyncEnvelopes(await loadLocalRecords(), remotePage);
           await applyMergedRecords(merged);
@@ -104,6 +109,7 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
         });
       },
       saveProgress: async (progress) => {
+        assertSyncAccount(identity.userId);
         metadata = progress;
         await saveSyncEntityMetadata(identity.userId, entityType, progress);
       },
@@ -128,6 +134,7 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
     }
 
     await diagnostics.phase("mark_synced", { retryCount });
+    assertSyncAccount(identity.userId);
     metadata = completeSyncEntityMetadata(
       metadata,
       queueResult.pushedCount > 0 ? Date.now() : null,
@@ -148,6 +155,7 @@ export const runEnvelopeEntitySync = async <TType extends EnvelopeEntityType>(
       classifiedError.classification.errorCode,
     );
     try {
+      assertSyncAccount(identity.userId);
       await saveSyncEntityMetadata(identity.userId, entityType, metadata);
     } catch {
       // Preserve the primary failure; diagnostics and recovery metadata are best effort.

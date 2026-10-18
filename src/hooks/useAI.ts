@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { requireAIConsent, validateConsentReceipt, subscribeAIInvalidation } from '../services/ai/aiConsent';
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { searchAndGenerateAnswer } from "../ai/aiService";
 import type { AIEvidence } from "../types";
@@ -38,7 +39,7 @@ export const useAI = (messages: {
   begin: (surface: "memo", requestId: string) => Promise<unknown>;
   refresh: () => Promise<void>;
 }, options?: {
-  retrieveEvidence?: (query: string, options: { topK: number; topN: number }) => Promise<EvidenceInput[]>;
+  retrieveEvidence?: (query: string, options: { topK: number; topN: number; expectedUid?: string }) => Promise<EvidenceInput[]>;
 }) => {
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
@@ -52,6 +53,10 @@ export const useAI = (messages: {
   const lastRunQueryRef = useRef("");
   const requestIdRef = useRef(0);
 
+  useEffect(() => subscribeAIInvalidation(() => {
+    requestIdRef.current++; setAnswerText(''); setAllEvidence([]); setCitedEvidenceKeys([]);
+    setSearchLoading(false); setAnswerLoading(false); setError(null); setSearched(false);
+  }), []);
   const run = useCallback(
     async (nextQuery?: string) => {
       const runQuery = (nextQuery ?? query).trim();
@@ -71,11 +76,15 @@ export const useAI = (messages: {
 
       setSearchLoading(true);
       try {
+        const receipt = await requireAIConsent();
         const quotaRequestId = createAIRequestId("memo");
         await usage?.begin("memo", quotaRequestId);
+        await validateConsentReceipt(receipt);
+        if (requestIdRef.current !== requestId) return;
         const result = await withTimeout(
           searchAndGenerateAnswer(runQuery, {
             requestId: quotaRequestId,
+            expectedUid: receipt.uid,
             retrieveEvidence: options?.retrieveEvidence,
           }),
           DEFAULT_SEARCH_TIMEOUT_MS + DEFAULT_ANSWER_TIMEOUT_MS,
@@ -84,6 +93,8 @@ export const useAI = (messages: {
         if (requestIdRef.current !== requestId) {
           return;
         }
+        await validateConsentReceipt(receipt);
+        if (requestIdRef.current !== requestId) return;
         setAllEvidence(result.allEvidence);
         setSearchLoading(false);
         if (result.allEvidence.length === 0) {

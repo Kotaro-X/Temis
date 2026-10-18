@@ -19,6 +19,7 @@ export type OpenAIEmbeddingProviderOptions = {
   requestEmbeddings: (
     input: string[],
     region: string,
+    expectedUid?: string,
   ) => Promise<{ model: string; embeddings: number[][] }>;
 };
 
@@ -53,8 +54,8 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
   getModelVersion = (): string => OPENAI_EMBEDDING_MODEL;
 
-  embed = async (text: string): Promise<EmbeddingVector> => {
-    const embeddings = await this.embedBatch([text]);
+  embed = async (text: string, options?: { expectedUid?: string }): Promise<EmbeddingVector> => {
+    const embeddings = await this.embedBatch([text], options);
     const first = embeddings[0];
     if (!first) {
       throw new Error("OpenAI embedding response did not include a vector.");
@@ -62,7 +63,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     return first;
   };
 
-  embedBatch = async (texts: string[]): Promise<EmbeddingBatch> => {
+  embedBatch = async (texts: string[], options?: { expectedUid?: string }): Promise<EmbeddingBatch> => {
     if (texts.length === 0) {
       return [];
     }
@@ -71,6 +72,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       response = await this.requestEmbeddings(
         texts.map((text) => this.normalizeInput(text)),
         this.region,
+        options?.expectedUid,
       );
     } catch (error) {
       if (isCallableAuthenticationError(error)) {

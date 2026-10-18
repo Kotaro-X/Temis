@@ -1,6 +1,8 @@
+import { subscribeAIInvalidation, requireAIConsent } from '../services/ai/aiConsent';
+import Modal from "./common/KeyboardAwareModal";
 import React, { useEffect, useState } from "react";
 import {
-  Modal,
+  Alert,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -41,6 +43,7 @@ const MemoSearchModal = ({
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SearchMemo[]>([]);
   const [mode, setMode] = useState<SearchMode>("keyword");
+  useEffect(() => subscribeAIInvalidation(() => { setMode('keyword'); setResults([]); setLoading(false); }), []);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -154,7 +157,7 @@ const MemoSearchModal = ({
             </Pressable>
             <Pressable
               style={[styles.modeButton, mode === "ai" && styles.modeButtonActive]}
-              onPress={() => setMode("ai")}
+              onPress={() => { void requireAIConsent(true).then(() => setMode("ai")).catch(cause => Alert.alert("Temis AI", cause.message)); }}
             >
               <Text style={[styles.modeText, mode === "ai" && styles.modeTextActive]}>
                 Temis AI
@@ -191,7 +194,7 @@ const MemoSearchModal = ({
               {language === "en" ? "No matching memos" : "該当メモがありません"}
             </Text>
           ) : (
-            <ScrollView contentContainerStyle={styles.listBody}>
+            <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.listBody}>
               {results.map((item) => (
                 <Pressable
                   key={item.key}

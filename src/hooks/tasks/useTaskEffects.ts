@@ -118,6 +118,6 @@ export const useTaskEffects = ({
       return;
     }
     const existingIds = new Set(flatTasks.map((item) => item.task.id));
-    setSelectedTaskIds((prev) => prev.filter((id) => existingIds.has(id)));
+    setSelectedTaskIds((prev) => prev.filter((id) => id.startsWith("project:") || existingIds.has(id)));
   }, [flatTasks, selectionMode, setSelectedTaskIds]);
 };

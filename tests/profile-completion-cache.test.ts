@@ -13,7 +13,7 @@ function fixture(fail = false) {
     removeItem: async (key: string) => { data.delete(key); },
   };
   const code = ts.transpileModule(readFileSync('src/services/collaboration/profileCompletionCache.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
-  vm.runInNewContext(code, { exports, require: (name: string) => name.includes('async-storage') ? storage : { isProfileComplete } });
+  vm.runInNewContext(code, { exports, require: (name: string) => name.endsWith('runtimeEnvironment') ? { getEnvironmentEpoch: () => 0 } : name.includes('async-storage') || name.endsWith('accountWorkspace') ? storage : { isProfileComplete } });
   return { cache: exports, data };
 }
 test('completion cache validates UID, policy version and required fields; never shares accounts', async () => {

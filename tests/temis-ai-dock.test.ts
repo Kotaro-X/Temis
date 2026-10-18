@@ -22,6 +22,7 @@ const loadDock = () => {
   } }).outputText;
   const exports: Record<string, any> = {};
   vm.runInNewContext(code, { exports, require: (name: string) => {
+    if (name.endsWith("aiConsent")) return { requireAIConsent: async () => ({}) };
     if (name === "react") return reactMock;
     if (name === "react-native") return {
       Pressable: "Pressable", Text: "Text", TextInput: "TextInput", View: "View",
@@ -44,7 +45,7 @@ const collect = (node: unknown, output: Element[] = []): Element[] => {
   return output;
 };
 
-test("shared Temis AI dock keeps the same controls while expanding only its result body", () => {
+test("shared Temis AI dock keeps the same controls while expanding only its result body", async () => {
   const Dock = loadDock();
   let toggles = 0;
   let searches = 0;
@@ -69,11 +70,20 @@ test("shared Temis AI dock keeps the same controls while expanding only its resu
   assert.ok(input);
   input.props.onChangeText("new question");
   input.props.onSubmitEditing();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(query, "new question");
   assert.equal(searches, 1);
   closed.find((item) => item.type === "Pressable")?.props.onPress();
   assert.equal(toggles, 1);
   const open = collect(render(true));
+  const dockStyles = Object.assign({}, ...open[0].props.style.filter(Boolean));
+  const searchSource = readFileSync(resolve("src/components/memo/MemoSearchField.tsx"), "utf8");
+  const searchZIndex = Number(searchSource.match(/zIndex:\s*(\d+)/)?.[1]);
+  assert.ok(dockStyles.zIndex > searchZIndex, "AI dock must cover memo search and suggestions");
+  assert.ok(dockStyles.elevation > searchZIndex);
+  assert.equal(dockStyles.top, 42);
+  assert.equal(dockStyles.bottom, 0);
+  assert.equal(dockStyles.backgroundColor, "#ffffff");
   assert.equal(open.some((item) => item.type === "Result"), true);
   assert.equal(open.some((item) => item.type === "Badge"), true);
   assert.equal(open.some((item) => item.type === "Controls"), true);
@@ -82,11 +92,13 @@ test("shared Temis AI dock keeps the same controls while expanding only its resu
 test("Project memo screen reuses the memo UI and exposes explicit AI scopes", () => {
   const projectMemo = readFileSync(resolve("src/screens/ProjectWorkspaceScreen.tsx"), "utf8");
   assert.equal(projectMemo.includes("<MemoListCard"), true);
-  assert.equal(projectMemo.includes("<MemoEditorFields"), true);
+  assert.equal(projectMemo.includes("<ProjectMemoDetail"), true);
+  const editor = readFileSync(resolve("src/components/memo/ProjectMemoDetail.tsx"), "utf8");
+  assert.equal(editor.includes("<MemoEditorFields"), true);
   assert.equal(projectMemo.includes("<TemisAIDock"), true);
   assert.equal(projectMemo.includes("Projectのみ"), true);
   assert.equal(projectMemo.includes("Project＋Private"), true);
-  assert.equal(projectMemo.includes("このメモは読み取り専用です。"), true);
+  assert.equal(editor.includes("このメモは読み取り専用です。"), true);
 });
 
 test("Projects visibility action is constrained inside the row", () => {

@@ -38,7 +38,12 @@ const todoRecordSchema = z.object({
   isDeleted: z.boolean(),
 });
 
+const reminderSchema = z.object({ enabled: z.boolean(), mode: z.enum(['start', 'custom']), offsetMinutes: finiteNumber.min(0).max(60), at: nullableFiniteNumber });
+const occurrenceSchema = z.object({ date: z.string(), slot: z.enum(['morning','forenoon','afternoon','night']), plannedStartAt: nullableFiniteNumber, plannedEndAt: nullableFiniteNumber, estimateMinutes: finiteNumber.min(0), executionStatus: z.enum(['TODO','IN_PROGRESS','PAUSED','DONE']).optional(), elapsedMinutes: finiteNumber.min(0).optional(), startAt: nullableFiniteNumber.optional(), title: z.string().optional(), memo: z.string().optional(), tags: tags.optional(), completed: z.boolean().optional(), deleted: z.boolean().optional() });
 const taskStateSchema = z.object({
+  plannedStartAt: nullableFiniteNumber.optional(), plannedEndAt: nullableFiniteNumber.optional(),
+  repeat: z.enum(['none','daily','weekly','monthly','yearly']).optional(), repeatAnchorDate: nullableString.optional(),
+  occurrenceOverrides: z.record(z.string(), occurrenceSchema).optional(), reminder: reminderSchema.optional(), migratedTodoId: z.string().optional(),
   id: z.string().min(1),
   taskName: z.string(),
   tags,
@@ -47,7 +52,10 @@ const taskStateSchema = z.object({
   status: z.enum(["TODO", "IN_PROGRESS", "PAUSED", "DONE"]),
   isArchived: z.boolean(),
   startAt: nullableFiniteNumber,
-});
+}).refine(task => {
+  const start = task.plannedStartAt ?? null, end = task.plannedEndAt ?? null;
+  return start == null && end == null || start != null && end != null && end - start >= 300000;
+}, { message: 'planned start/end must be paired and at least five minutes apart' });
 
 const taskLogSchema = z.object({
   id: z.string().min(1),
