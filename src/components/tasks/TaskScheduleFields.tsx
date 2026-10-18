@@ -1,42 +1,20 @@
-import React from 'react';
-import { Pressable, Text, TextInput, View, StyleSheet } from 'react-native';
-import type { TaskPlanning, TaskReminder } from '../../types/taskPlanning';
-import type { SlotKey, TimeBoxSchedule } from '../../types/timer';
-import { NO_REMINDER, UNDATED_TASKS, validDate, localDate, slotAt, scheduledPatch } from '../../features/taskPlanning/planningCore';
+import React, { useState } from 'react';
+import { Keyboard, Pressable, Text, View, StyleSheet } from 'react-native';
+import SchedulePicker from './SchedulePicker';
+import type { ScheduleDraft } from '../../features/taskPlanning/scheduleDraft';
 import { SLOT_KEYS, SLOT_LABELS } from '../../types/timer';
+export { clockText, parseSchedule, scheduleDraft, type ScheduleDraft } from '../../features/taskPlanning/scheduleDraft';
 
-export type ScheduleDraft = { date: string; slot: SlotKey; start: string; end: string; endDate: string; repeat: NonNullable<TaskPlanning['repeat']>; reminder: TaskReminder; reminderDate: string; reminderTime: string };
-export const clockText = (at: number | null | undefined) => at == null ? '' : new Date(at).toTimeString().slice(0, 5);
-export const scheduleDraft = (value: TaskPlanning, date: string, slot: SlotKey): ScheduleDraft => ({
-  date: date === UNDATED_TASKS ? '' : date, slot, start: clockText(value.plannedStartAt), end: clockText(value.plannedEndAt),
-  endDate: value.plannedEndAt == null ? (date === UNDATED_TASKS ? '' : date) : localDate(value.plannedEndAt),
-  repeat: value.repeat ?? 'none', reminder: value.reminder ?? { ...NO_REMINDER }, reminderDate: value.reminder?.at == null ? '' : localDate(value.reminder.at), reminderTime: clockText(value.reminder?.at),
-});
-const parseTime = (date: string, time: string, snap = true) => {
-  if (!validDate(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('日付はYYYY-MM-DD、時刻はHH:MMで入力してください。');
-  if (snap && Number(time.slice(3)) % 5 !== 0) throw new Error('時刻は5分刻みで入力してください。');
-  return new Date(`${date}T${time}:00`).getTime();
-};
-export function parseSchedule(draft: ScheduleDraft, schedule: TimeBoxSchedule) {
-  if (draft.date && !validDate(draft.date)) throw new Error('実在する日付を入力してください。');
-  if (Boolean(draft.start) !== Boolean(draft.end)) throw new Error('開始と終了を両方設定してください。');
-  let plannedStartAt: number | null = null, plannedEndAt: number | null = null;
-  if (draft.start) { plannedStartAt = parseTime(draft.date, draft.start); plannedEndAt = parseTime(draft.endDate || draft.date, draft.end); scheduledPatch(plannedStartAt, plannedEndAt); }
-  if (draft.repeat !== 'none' && !draft.date) throw new Error('繰り返しには開始日を設定してください。');
-  const reminder = { ...draft.reminder };
-  if (reminder.enabled) {
-    if (reminder.mode === 'custom') reminder.at = parseTime(draft.reminderDate, draft.reminderTime, false);
-    else if (plannedStartAt == null) throw new Error('開始時刻または個別の通知日時を設定してください。');
-  }
-  return { date: draft.date || UNDATED_TASKS, slot: plannedStartAt == null ? draft.slot : slotAt(schedule, plannedStartAt),
-    planning: { plannedStartAt, plannedEndAt, repeat: draft.repeat, repeatAnchorDate: draft.repeat === 'none' ? null : draft.date || null, reminder },
-    ...(plannedStartAt != null && plannedEndAt != null ? { estimateMinutes: (plannedEndAt - plannedStartAt) / 60000 } : {}) };
-}
 export default function TaskScheduleFields({ draft, onChange, disabled = false }: { draft: ScheduleDraft; onChange: (draft: ScheduleDraft) => void; disabled?: boolean }) {
   const update = (patch: Partial<ScheduleDraft>) => onChange({ ...draft, ...patch });
-  const input = (label: string, value: string, change: (text: string) => void, placeholder: string) => <View style={s.row}><Text style={s.label}>{label}</Text><TextInput editable={!disabled} accessibilityLabel={label} style={s.input} value={value} onChangeText={change} placeholder={placeholder} autoCapitalize="none" /></View>;
+  const [picker, setPicker] = useState<{ label: string; value: string; kind: 'date' | 'time'; change: (value: string) => void; clear?: boolean } | null>(null);
+  const input = (label: string, value: string, change: (text: string) => void, placeholder: string) => {
+    const kind = placeholder === 'HH:MM' ? 'time' : 'date';
+    const personal = label.startsWith('通知');
+    return <View style={s.fieldRow}><Text style={s.fieldLabel}>{label}</Text><Pressable disabled={disabled && !personal} accessibilityRole="button" accessibilityLabel={`${label} ${value || '未定'}`} style={s.input} onPress={() => { Keyboard.dismiss(); setPicker({ label, value, kind, change, clear: label === '日付' }); }}><Text style={{ color: value ? '#111827' : '#9ca3af', fontSize: 16 }}>{value || '未定'}</Text></Pressable></View>;
+  };
   return <View style={s.root}>
-    {input('日付（空欄＝未定）', draft.date, date => update({ date, endDate: !draft.endDate || draft.endDate === draft.date ? date : draft.endDate }), 'YYYY-MM-DD')}
+    {input('日付', draft.date, date => update({ date, endDate: !draft.endDate || draft.endDate === draft.date ? date : draft.endDate, ...(!date ? { start: '', end: '', repeat: 'none' as const } : {}) }), 'YYYY-MM-DD')}
     <View style={s.row}>{SLOT_KEYS.map(slot => <Pressable disabled={disabled} accessibilityRole="button" key={slot} onPress={() => update({ slot })} style={[s.chip, draft.slot === slot && s.selected]}><Text>{SLOT_LABELS[slot]}</Text></Pressable>)}</View>
     <Text style={s.hint}>時刻設定時は開始時刻に対応するボックスへ所属します。予定の長さが見積時間になります。</Text>
     {input('開始', draft.start, start => update({ start }), 'HH:MM')}
@@ -51,6 +29,7 @@ export default function TaskScheduleFields({ draft, onChange, disabled = false }
       {draft.reminder.mode === 'custom' ? <>{input('通知日', draft.reminderDate, reminderDate => update({ reminderDate }), 'YYYY-MM-DD')}{input('通知時刻', draft.reminderTime, reminderTime => update({ reminderTime }), 'HH:MM')}</> : null}
       <Text style={s.hint}>端末の通知が許可されている場合に届きます。繰り返し予定を個別に変更した場合は、定期的にアプリを開いて通知を更新してください。</Text>
     </> : null}
+    {picker ? <SchedulePicker kind={picker.kind} label={picker.label} value={picker.value} allowClear={picker.clear} onCancel={() => setPicker(null)} onSelect={value => { picker.change(value); setPicker(null); }} /> : null}
   </View>;
 }
-const s = StyleSheet.create({ root: { gap: 8, paddingVertical: 12 }, row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }, label: { color: '#374151', fontSize: 14 }, input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, minHeight: 44, minWidth: 135, padding: 8, flex: 1, color: '#111827' }, chip: { padding: 10, backgroundColor: '#f3f4f6', borderRadius: 8, minHeight: 40 }, selected: { backgroundColor: '#dbeafe', borderColor: '#2563eb', borderWidth: 1 }, hint: { color: '#6b7280', fontSize: 12 } });
+const s = StyleSheet.create({ root: { gap: 8, paddingVertical: 12 }, row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }, label: { color: '#374151', fontSize: 14 }, fieldRow: { flexDirection: 'row', gap: 12, alignItems: 'center' }, fieldLabel: { width: 64, color: '#374151', fontSize: 14 }, input: { justifyContent: 'center', borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, minHeight: 44, minWidth: 135, padding: 8, flex: 1, color: '#111827' }, chip: { padding: 10, backgroundColor: '#f3f4f6', borderRadius: 8, minHeight: 40 }, selected: { backgroundColor: '#dbeafe', borderColor: '#2563eb', borderWidth: 1 }, hint: { color: '#6b7280', fontSize: 12 } });

@@ -16,6 +16,11 @@ export class MemoDraftQueue {
     this.saved = isNew ? null : initial;
   }
   update(draft: MemoDraft) { this.latest = draft; }
+  receiveExternal(draft: MemoDraft): boolean {
+    if (!this.active || this.running || !equal(this.saved, this.latest)) return false;
+    this.saved = { ...draft }; this.latest = { ...draft };
+    return true;
+  }
   invalidate() { this.active = false; this.generation++; }
   resume() { this.active = true; }
   assertActive = () => {

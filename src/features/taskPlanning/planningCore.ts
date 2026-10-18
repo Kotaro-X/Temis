@@ -12,7 +12,7 @@ export const localDate = (value: number | Date) => {
 };
 export const validDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && localDate(new Date(`${date}T12:00:00`)) === date;
 export const addDays = (date: string, n: number) => { const d = new Date(`${date}T12:00:00`); d.setDate(d.getDate() + n); return localDate(d); };
-export const weekDates = (date: string) => { const d = new Date(`${date}T12:00:00`); const monday = addDays(date, -((d.getDay() + 6) % 7)); return Array.from({ length: 7 }, (_, i) => addDays(monday, i)); };
+export const weekDates = (date: string) => Array.from({ length: 7 }, (_, i) => addDays(date, i));
 export const snapMinutes = (minutes: number) => Math.round(minutes / 5) * 5;
 export const initialDuration = (minutes?: number) => minutes && minutes > 0 ? Math.max(5, Math.ceil(minutes / 5) * 5) : 30;
 export const timeMinutes = (value: string) => { const [h, m] = value.split(':').map(Number); return h * 60 + m; };

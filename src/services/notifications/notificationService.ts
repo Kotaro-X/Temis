@@ -1,6 +1,7 @@
 import { accountWorkspace } from '../account/accountWorkspace';
 import { cancelTaskReminderSchedules } from '../../features/taskPlanning/taskNotificationLifecycle';
-import { isTestEnvironment } from "../environment/runtimeEnvironment";
+import { suppressTaskNotification } from "./taskNotificationPolicy";
+import { getAppEnvironment, isTestEnvironment } from "../environment/runtimeEnvironment";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import * as Notifications from 'expo-notifications';
@@ -30,9 +31,9 @@ export const initializeNotificationHandler = () => {
     handleNotification: async (notification) => {
       const data = notification.request.content.data;
       const isDM = data.type === 'dm';
-      if (isTestEnvironment() || (data.environment && data.environment !== "production")) return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
+      if (!data.taskPlanning && (isTestEnvironment() || (data.environment && data.environment !== "production"))) return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
       const target = dmNotificationTarget(data, notificationUserId);
-      const suppressed = (data.taskPlanning && data.scope !== accountWorkspace.scope()) || (isDM && (!target || (AppState.currentState === 'active' && target.conversationId === focusedConversation)));
+      const suppressed = (data.taskPlanning && suppressTaskNotification(data, getAppEnvironment(), accountWorkspace.scope())) || (isDM && (!target || (AppState.currentState === 'active' && target.conversationId === focusedConversation)));
       return {
         shouldShowBanner: !suppressed, shouldShowList: !suppressed,
         shouldPlaySound: Boolean((isDM || data.taskPlanning) && !suppressed), shouldSetBadge: false,

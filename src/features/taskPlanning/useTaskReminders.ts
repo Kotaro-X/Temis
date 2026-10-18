@@ -10,11 +10,17 @@ import { buildReminderRequests } from './reminderCore';
 const openedNotifications = new Set<string>();
 export async function requestTaskReminderPermission() {
   const epoch = getWorkspaceEpoch();
-  const permission = await Notifications.getPermissionsAsync();
-  if (epoch !== getWorkspaceEpoch()) return false;
-  if (permission.granted || permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL) return true;
-  const next = await Notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowSound: true, allowBadge: true } });
-  return next.granted || next.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
+  try {
+    const permission = await Notifications.getPermissionsAsync();
+    if (epoch !== getWorkspaceEpoch()) return false;
+    if (permission.granted || permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL) return true;
+    if (!permission.canAskAgain) return false;
+    const next = await Notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowSound: true, allowBadge: true } });
+    return epoch === getWorkspaceEpoch() && (next.granted || next.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL);
+  } catch {
+    // Permission and OS failures must not prevent saving the task itself.
+    return false;
+  }
 }
 export function useTaskReminders(items: PlanningItem[], onOpen?: (id: string, projectId: string | null) => void) {
   const [revision, setRevision] = useState(0); const [permission, setPermission] = useState('通知の許可を確認中');

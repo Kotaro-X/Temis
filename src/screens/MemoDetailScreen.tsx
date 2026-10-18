@@ -1,3 +1,5 @@
+import { useAppRefresh } from '../context/AppRefreshContext';
+import { subscribeMemoChanges } from '../features/taskPlanning/memoEvents';
 import { getEnvironmentEpoch } from "../services/environment/runtimeEnvironment";
 import { saveRecoveryDraft, loadRecoveryDraft, clearRecoveryDraft } from "../services/environment/recoveryDrafts";
 import { registerEnvironmentSaveHandler } from "../services/environment/switchLifecycle";
@@ -11,6 +13,7 @@ import MemoPublicationControls from "../components/guild/MemoPublicationControls
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  AppState,
   Keyboard,
   Pressable,
   StyleSheet,
@@ -148,6 +151,7 @@ const MemoDetailScreen = ({
   onBack,
   language, closeRequest, referenceProjectId, initialReferenceToken, initialReferenceFilter, onSelectProjectReference,
 }: Props) => {
+  const { touchDomains } = useAppRefresh();
   const tr = (key: string) => t(language, key);
   const { profile, projects } = useCollaboration();
   const [activeMemoId, setActiveMemoId] = useState(memoId);
@@ -297,6 +301,7 @@ const MemoDetailScreen = ({
       if (sessionEpochRef.current !== getEnvironmentEpoch()) throw new Error("接続環境が切り替わりました。");
       if (!deletedRef.current) {
         lastSavedRef.current = snapshot;
+        touchDomains(["memos"]);
         await clearRecoveryDraft(snapshot.memoId);
       }
     } finally {
@@ -341,6 +346,21 @@ const MemoDetailScreen = ({
     return () => { active = false; };
   }, [loading, detail, activeMemoId]);
 
+  useEffect(() => subscribeMemoChanges(change => {
+    if (detail?.kind !== 'task' || detail.taskId !== change.taskId || savingRef.current) return;
+    if (latestSnapshotRef.current && hasChanges(latestSnapshotRef.current, lastSavedRef.current)) return;
+    setReloadEpoch(previous => previous + 1);
+  }), [detail]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active' || savingRef.current || sessionEpochRef.current !== getEnvironmentEpoch()) return;
+      if (latestSnapshotRef.current && hasChanges(latestSnapshotRef.current, lastSavedRef.current)) return;
+      setReloadEpoch(previous => previous + 1);
+    });
+    return () => subscription.remove();
+  }, []);
+
   const closeBodyEditor = () => {
     Keyboard.dismiss();
     void flushDraft().then(() => setBodyEditorOpen(false)).catch(() => Alert.alert(
@@ -352,11 +372,13 @@ const MemoDetailScreen = ({
   const handleTitleChange = (text: string) => {
     userEditedRef.current = true;
     setTitleDraft(text);
+    if (detail) latestSnapshotRef.current = buildSnapshot(detail, bodyDraft, text);
   };
 
   const handleBodyChange = (text: string) => {
     userEditedRef.current = true;
     setBodyDraft(text);
+    if (detail) latestSnapshotRef.current = buildSnapshot(detail, text, titleDraft);
   };
 
   const handlePressToken = (token: string) => {
@@ -433,7 +455,7 @@ const MemoDetailScreen = ({
         if (activeMemoId.startsWith("note:")) {
           const noteId = activeMemoId.slice("note:".length);
           const note = await getNoteById(noteId);
-          if (!active) {
+          if (!active || userEditedRef.current) {
             return;
           }
           if (!note) {
@@ -472,7 +494,7 @@ const MemoDetailScreen = ({
         if (activeMemoId.startsWith("tankyu:")) {
           const tankyuId = activeMemoId.slice("tankyu:".length);
           const note = await getResearchNoteById(tankyuId);
-          if (!active) {
+          if (!active || userEditedRef.current) {
             return;
           }
           if (!note) {
@@ -497,7 +519,7 @@ const MemoDetailScreen = ({
           return;
         }
         const memo = await loadMemoById(activeMemoId);
-        if (!active) {
+        if (!active || userEditedRef.current) {
           return;
         }
         if (!memo) {
@@ -505,7 +527,7 @@ const MemoDetailScreen = ({
           return;
         }
         const info = await findTaskInfoById(memo.taskId);
-        if (!active) {
+        if (!active || userEditedRef.current) {
           return;
         }
         const date = info?.date ?? dateFromTimestamp(memo.updatedAt);

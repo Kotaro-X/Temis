@@ -40,3 +40,22 @@ test("resuming after a rejected delete cannot revive an old in-flight generation
   queue.update(draft("edited")); const pending = queue.flush(); queue.invalidate(); queue.resume(); gate.resolve();
   await assert.rejects(pending); assert.equal(stages, 0); await queue.flush(); assert.equal(stages, 1);
 });
+
+test('shared task memo refresh updates a clean editor without writing back', async () => {
+  const writes: string[] = [];
+  const queue = new MemoDraftQueue(draft('old'), async current => { writes.push(current.body); }, () => true);
+  assert.equal(queue.receiveExternal(draft('edited in task')), true);
+  await queue.flush(); assert.deepEqual(writes, []);
+  queue.update(draft('edited in memo')); await queue.flush();
+  assert.deepEqual(writes, ['edited in memo']);
+});
+test('shared refresh preserves unsaved, failed and in-flight drafts', async () => {
+  const gate = deferred();
+  const queue = new MemoDraftQueue(draft('old'), async () => { await gate.promise; throw new Error('offline'); }, () => true);
+  queue.update(draft('local edit'));
+  assert.equal(queue.receiveExternal(draft('remote edit')), false);
+  const saving = queue.flush();
+  assert.equal(queue.receiveExternal(draft('remote edit')), false);
+  gate.resolve(); await assert.rejects(saving);
+  assert.equal(queue.receiveExternal(draft('remote edit')), false);
+});

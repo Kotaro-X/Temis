@@ -1,3 +1,4 @@
+import { emitMemoChanges } from '../features/taskPlanning/memoEvents';
 import { nanoid } from "nanoid/non-secure";
 import { withLocalEntityMutation } from "../services/sync/localMutationLock";
 
@@ -210,6 +211,7 @@ const upsertMemoForTaskImpl = async (
       }),
     );
   }
+  emitMemoChanges(memo.taskId);
   return memo;
 };
 
@@ -243,6 +245,7 @@ export const upsertMemoRecord = async (
     throw error;
   }
   runMemoEmbeddingJobAsync(record.id);
+  emitMemoChanges(record.taskId);
   return record;
 };
 

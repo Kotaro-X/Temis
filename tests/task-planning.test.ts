@@ -12,8 +12,8 @@ test('five minute snapping and initial duration do not modify recorded actual ti
   assert.throws(() => scheduledPatch(1000, 2000));
   assert.equal(scheduledPatch(at('2026-10-19'), at('2026-10-19','10:15')).estimateMinutes, 75);
 });
-test('week starts Monday and uses local calendar dates across year boundaries', () => {
-  assert.deepEqual(weekDates('2027-01-03'), ['2026-12-28','2026-12-29','2026-12-30','2026-12-31','2027-01-01','2027-01-02','2027-01-03']);
+test('week starts at the selected day and spans seven local dates across year boundaries', () => {
+  assert.deepEqual(weekDates('2027-01-03'), ['2027-01-03','2027-01-04','2027-01-05','2027-01-06','2027-01-07','2027-01-08','2027-01-09']);
   assert.equal(addDays('2026-12-31',1), '2027-01-01');
 });
 test('slot follows start time and gaps use the preceding box including midnight', () => {

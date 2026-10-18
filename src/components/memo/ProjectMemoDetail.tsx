@@ -1,3 +1,4 @@
+import { getWorkspaceEpoch } from '../../services/account/workspaceEpoch';
 import { saveRecoveryDraft, loadRecoveryDraft, clearRecoveryDraft } from "../../services/environment/recoveryDrafts";
 import { registerEnvironmentSaveHandler } from "../../services/environment/switchLifecycle";
 import { changedProjectTaskFields } from "../../services/collaboration/projectTaskCore";
@@ -11,7 +12,7 @@ import type { Project, ProjectSharedNote, ProjectTask } from "../../types/collab
 import { useCollaboration } from "../../context/CollaborationContext";
 import { getFirebaseAuth } from "../../services/sync/firebaseApp";
 import { deleteNoteById, getNoteById, upsertNoteRecord } from "../../db/noteRepo";
-import { listProjectSharedNotes, removeProjectSharedNote, upsertProjectSharedNote } from "../../services/collaboration/collaborationService";
+import { subscribeProjectTasks, listProjectSharedNotes, removeProjectSharedNote, upsertProjectSharedNote } from "../../services/collaboration/collaborationService";
 import { MemoDraftQueue, type MemoDraft } from "../../services/collaboration/memoDraftQueue";
 import { projectMemoEvidenceId, projectNoteIdFromEvidence } from "../../services/collaboration/projectMemoAIRetrievalCore";
 import { listWikiReferencesByToken, type WikiReferenceItem } from "../../services/wikiReferenceService";
@@ -94,10 +95,11 @@ function ProjectMemoSession({ project, initialNote, tasks, language, onBack, onC
   const owns = !anonymous && (!initialNote || initialNote.ownerUserId === ownerUid);
   const linkedTaskId = initialNote?.sourceTaskId ?? tasks.find(task => (task.kind ?? "task") === "task" && !task.deletedAt && task.relatedMemoId === id)?.id;
   const linkedTaskMemo = Boolean(linkedTaskId);
-  const editable = linkedTaskMemo ? Boolean(role) : (!initialNote || initialNote.projectId === project.id) && (anonymous ? role === "owner" : owns && (role === "owner" || role === "member"));
+  const editable = linkedTaskMemo ? (role === "owner" || role === "member") : (!initialNote || initialNote.projectId === project.id) && (anonymous ? role === "owner" : owns && (role === "owner" || role === "member"));
   const access = useRef({ editable, readable: Boolean(role), uid: profile?.userId });
   access.current = { editable, readable: Boolean(role), uid: profile?.userId };
   const alive = useRef(true);
+  const workspaceEpoch = useRef(getWorkspaceEpoch());
   const [queue] = useState(() => new MemoDraftQueue({ title: initialNote?.title ?? "", body: initialNote?.body ?? "" }, async (draft, assertActive) => {
     assertActive();
     const shared: ProjectSharedNote = { ...(noteRef.current ?? {
@@ -121,16 +123,28 @@ function ProjectMemoSession({ project, initialNote, tasks, language, onBack, onC
     if (alive.current) { setExists(true); setError(null); onSaved(shared); onChanged(); }
   }, () => alive.current && !deleted.current && access.current.editable && access.current.uid === ownerUid && getFirebaseAuth().currentUser?.uid === ownerUid, !initialNote));
   const draft = useRef<MemoDraft>({ title, body });
+  useEffect(() => {
+    if (!linkedTaskId) return;
+    return subscribeProjectTasks(project.id, currentTasks => {
+      if (!alive.current || !access.current.readable || workspaceEpoch.current !== getWorkspaceEpoch()) return;
+      const current = currentTasks.find(task => task.id === linkedTaskId);
+      if (!current) return;
+      const next = { title: current.title ?? '', body: current.description ?? '' };
+      if (!queue.receiveExternal(next)) return;
+      draft.current = next; setTitle(next.title); setBody(next.body);
+      if (noteRef.current) noteRef.current = { ...noteRef.current, title: next.title, body: next.body, updatedAt: current.updatedAt };
+    }, reportError => { if (alive.current) setError(reportError.message); });
+  }, [linkedTaskId, project.id, queue]);
   const change = (next: MemoDraft) => { draft.current = next; queue.update(next); setTitle(next.title); setBody(next.body); };
   const report = useCallback((cause: unknown) => { if (alive.current) setError(cause instanceof Error ? cause.message : "保存できませんでした。再試行してください。"); }, []);
   const flush = useCallback(async () => {
     if (!editable) {
-      if (draft.current.title !== (initialNote?.title ?? "") || draft.current.body !== (initialNote?.body ?? "")) throw new Error("編集権限が変わりました。入力内容は保持されています。");
+      if (draft.current.title !== (noteRef.current?.title ?? "") || draft.current.body !== (noteRef.current?.body ?? "")) throw new Error("編集権限が変わりました。入力内容は保持されています。");
       return;
     }
     queue.update(draft.current); await queue.flush();
     await clearRecoveryDraft(`project:${project.id}:${id}`);
-  }, [editable, initialNote?.title, initialNote?.body, queue, project.id, id]);
+  }, [editable, queue, project.id, id]);
   const recoveryId = `project:${project.id}:${id}`;
   useEffect(() => registerEnvironmentSaveHandler(flush, () => saveRecoveryDraft(recoveryId, draft.current)), [flush, recoveryId]);
   useEffect(() => {

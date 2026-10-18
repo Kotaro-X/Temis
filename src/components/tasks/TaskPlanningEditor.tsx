@@ -1,8 +1,11 @@
+import { occurrenceMemoTaskId, taskMemoBody } from '../../features/taskPlanning/memoCore';
+import { subscribeMemoChanges } from '../../features/taskPlanning/memoEvents';
+import { useAppRefresh } from '../../context/AppRefreshContext';
 import { registerEnvironmentSaveHandler } from '../../services/environment/switchLifecycle';
 import { saveRecoveryDraft, loadRecoveryDraft, clearRecoveryDraft } from '../../services/environment/recoveryDrafts';
 import sharedStyles from '../../styles/workspaceSharedStyles';
-import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, AppState, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Modal from '../common/KeyboardAwareModal';
 import TaskScheduleFields, { clockText, parseSchedule, scheduleDraft } from './TaskScheduleFields';
@@ -34,6 +37,7 @@ const statusPalette = {
 export default function TaskPlanningEditor({ item, projectId, initialDate, initialMinute, initialSlot = 'morning', onClose }: {
   item: PlanningOccurrence | null; projectId?: string; initialDate: string; initialMinute?: number; initialSlot?: SlotKey; onClose: () => void;
 }) {
+  const { refreshVersions, touchDomains } = useAppRefresh();
   const store = useTaskPlanning(); const { profile } = useCollaboration();
   const { tr, statusLabel, untitledLabel, timeBoxSchedule, tagOptions, appLanguage } = useAppSettings();
   const { openMemoSearch } = useAppUI(); const insets = useSafeAreaInsets();
@@ -41,7 +45,7 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
   const sharedRecord = store.projects.find(record => `project:${record.task.id}` === item?.id);
   const sharedBaseline = useRef<ProjectTask | undefined>(sharedRecord ? { ...sharedRecord.task, description: sharedRecord.task.description ?? '', tags: sharedRecord.task.tags ?? [], estimateMinutes: sharedRecord.task.estimateMinutes ?? 25,
     assigneeUserId: projectTaskOwner(sharedRecord.task), privateDate: getProjectTaskPrivateDate(sharedRecord.task) === UNDATED_TASKS ? null : getProjectTaskPrivateDate(sharedRecord.task), privateSlotKey: getProjectTaskPrivateSlot(sharedRecord.task, timeBoxSchedule), plannedStartAt: sharedRecord.task.plannedStartAt ?? null, plannedEndAt: sharedRecord.task.plannedEndAt ?? null, repeat: sharedRecord.task.repeat ?? 'none', repeatAnchorDate: sharedRecord.task.repeatAnchorDate ?? null } : undefined);
-  const source = sharedRecord ? projectTaskState(sharedRecord.task) : privateRecord?.task;
+  const source = useMemo(() => sharedRecord ? projectTaskState(sharedRecord.task) : privateRecord?.task, [sharedRecord, privateRecord]);
   const privateBaseline = useRef(source);
   const [task, setTask] = useState<TaskState>(() => ({ ...(source ?? createEmptyTask()), ...(!item && initialMinute != null ? { estimateMinutes: 30 } : {}), ...(item ? { taskName: item.title, tags: item.occurrenceOverrides?.[item.occurrenceDate]?.tags ?? source?.tags ?? [], estimateMinutes: item.estimateMinutes, elapsedMinutes: item.elapsedMinutes ?? source?.elapsedMinutes ?? 0, startAt: item.startAt ?? null, status: item.completed ? 'DONE' : item.executionStatus ?? source?.status ?? 'TODO' } : {}) }));
   const [schedule, setSchedule] = useState(() => {
@@ -76,12 +80,30 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
   }, [recoveryId]);
   useEffect(() => {
     let active = true; alive.current = true;
-    const occurrenceMemo = item?.occurrenceOverrides?.[item.occurrenceDate]?.memo;
-    if (occurrenceMemo !== undefined) setBody(occurrenceMemo);
-    else if (privateRecord) void (async () => { const specific = item && source?.repeat && source.repeat !== 'none' ? await loadMemoByTaskId(`${privateRecord.task.id}@${item.occurrenceDate}`) : null; return specific ?? await loadMemoByTaskId(privateRecord.task.id); })().then(memo => { if (active && !bodyEdited.current) setBody(memo?.body ?? ''); }).catch(cause => setError(cause.message));
     if (projectId) void listProjectMembers(projectId).then(async next => { const profiles = await listProjectCreatorProfiles(next.map(member => member.userId)); if (active) setMembers(next.map(member => ({ id: member.userId, name: profiles.find(p => p.userId === member.userId)?.displayName || member.userId }))); }).catch(cause => setError(cause.message));
     return () => { active = false; alive.current = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Both memo entry points read the same record; never replace a local draft.
+  useEffect(() => {
+    let active = true; let revision = 0;
+    const load = async () => {
+      const request = ++revision;
+      if (bodyEdited.current || epoch.current !== getWorkspaceEpoch()) return;
+      const repeating = source?.repeat && source.repeat !== 'none' && scope === 'this';
+      let next = sharedRecord?.task.description ?? '';
+      if (privateRecord) {
+        const specific = repeating && item ? await loadMemoByTaskId(occurrenceMemoTaskId(item.id, item.occurrenceDate)) : null;
+        const master = await loadMemoByTaskId(privateRecord.task.id);
+        next = taskMemoBody(specific, repeating && item ? source?.occurrenceOverrides?.[item.occurrenceDate]?.memo : undefined, master);
+      } else if (repeating && item) next = sharedRecord?.task.occurrenceOverrides?.[item.occurrenceDate]?.memo ?? next;
+      if (active && request === revision && !bodyEdited.current && epoch.current === getWorkspaceEpoch()) setBody(next);
+    };
+    const reload = () => { void load().catch(cause => { if (active) setError(cause.message); }); };
+    reload();
+    const unsubscribe = subscribeMemoChanges(change => { if (change.taskId === item?.id || change.taskId === `${item?.id}@${item?.occurrenceDate}`) reload(); });
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') reload(); });
+    return () => { active = false; unsubscribe(); subscription.remove(); };
+  }, [privateRecord, sharedRecord, source, item, scope, refreshVersions.memos]);
   const run = async (action: () => Promise<void>, close = true) => {
     if (lock.current || epoch.current !== getWorkspaceEpoch()) return;
     lock.current = true; setBusy(true); setError(null);
@@ -99,7 +121,7 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
     if (projectId) {
       let id = sharedRecord?.task.id ?? createdProjectId.current;
       if (!readOnly) {
-        const patch = { title: task.taskName.trim(), description: body, tags: task.tags, estimateMinutes: parsed.estimateMinutes ?? task.estimateMinutes,
+        const patch = { title: task.taskName.trim(), description: bodyEdited.current || !sharedRecord ? body : sharedRecord.task.description ?? '', tags: task.tags, estimateMinutes: parsed.estimateMinutes ?? task.estimateMinutes,
           assigneeUserId: assignee, privateDate: parsed.date === UNDATED_TASKS ? null : parsed.date, privateSlotKey: parsed.slot,
           plannedStartAt: parsed.planning.plannedStartAt ?? null, plannedEndAt: parsed.planning.plannedEndAt ?? null,
           repeat: parsed.planning.repeat, repeatAnchorDate: recurring && scope === 'all' && schedule.date === item?.date ? sharedRecord?.task.repeatAnchorDate ?? sharedRecord?.task.privateDate ?? schedule.date : parsed.planning.repeatAnchorDate };
@@ -108,8 +130,12 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
           if (patch.plannedStartAt != null && patch.plannedEndAt != null) { const duration = patch.plannedEndAt - patch.plannedStartAt; patch.plannedStartAt = new Date(`${patch.repeatAnchorDate}T${new Date(patch.plannedStartAt).toTimeString().slice(0,8)}`).getTime(); patch.plannedEndAt = patch.plannedStartAt + duration; }
         }
         if (id && recurring && scope === 'this') {
-          await updateProjectTask(id, occurrencePatch({}, item.occurrenceDate, { date: parsed.date, slot: parsed.slot, plannedStartAt: patch.plannedStartAt ?? null, plannedEndAt: patch.plannedEndAt ?? null, estimateMinutes: patch.estimateMinutes, completed: task.status === 'DONE', title: patch.title, memo: body, tags: task.tags }));
-        } else if (id) await updateProjectTask(id, sharedBaseline.current ? changedProjectTaskFields(sharedBaseline.current, { ...sharedBaseline.current, ...patch }) : patch);
+          await updateProjectTask(id, occurrencePatch({}, item.occurrenceDate, { date: parsed.date, slot: parsed.slot, plannedStartAt: patch.plannedStartAt ?? null, plannedEndAt: patch.plannedEndAt ?? null, estimateMinutes: patch.estimateMinutes, completed: task.status === 'DONE', title: patch.title, ...(bodyEdited.current ? { memo: body } : {}), tags: task.tags }));
+        } else if (id) {
+          const changes = sharedBaseline.current ? changedProjectTaskFields(sharedBaseline.current, { ...sharedBaseline.current, ...patch }) : patch;
+          if (!bodyEdited.current && sharedRecord) delete changes.description;
+          await updateProjectTask(id, changes);
+        }
         else { const created = await createProjectTask({ ...patch, projectId, kind: 'task', status: 'todo' }); id = created.id; createdProjectId.current = id; sharedBaseline.current = created; }
       }
       if (id) await saveProjectReminder(id, parsed.planning.reminder);
@@ -130,11 +156,12 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
             ...((parsed.estimateMinutes ?? task.estimateMinutes) !== item.estimateMinutes ? { estimateMinutes: parsed.estimateMinutes ?? task.estimateMinutes } : {}) } };
       });
       if (!recurring || scope === 'all') { if (bodyEdited.current) await updateMemo(item.id, body); }
-      else if (bodyEdited.current) await updateMemo(`${item.id}@${item.occurrenceDate}`, body);
+      else if (bodyEdited.current) await updateMemo(occurrenceMemoTaskId(item.id, item.occurrenceDate), body);
     } else {
       await writePlannedTask({ ...task, taskName: task.taskName.trim(), ...parsed.planning, estimateMinutes: parsed.estimateMinutes ?? task.estimateMinutes }, parsed.date, parsed.slot);
       if (body.trim()) await updateMemo(task.id, body);
     }
+    touchDomains(["memos"]);
     await store.refresh();
   }); };
   const transition = (status: TaskStatus) => {
