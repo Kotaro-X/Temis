@@ -105,7 +105,7 @@ const TaskDetailView = ({
       <View style={styles.row}>
         <Text style={styles.label}>{tr("task.tags")}</Text>
         <View style={styles.tagDropdown}>
-          <Pressable style={styles.tagDropdownButton} onPress={onOpenTagPicker}>
+          <Pressable style={[styles.tagDropdownButton, { alignSelf: 'flex-start', borderRadius: 999, borderWidth: 0, backgroundColor: '#f0f0ee', minHeight: 44, justifyContent: 'center', paddingHorizontal: 18 }]} onPress={onOpenTagPicker}>
             <Text style={styles.tagDropdownText}>
               {task.tags.length > 0 ? task.tags.join(", ") : tr("task.selectTags")}
             </Text>

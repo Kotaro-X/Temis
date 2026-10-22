@@ -24,6 +24,7 @@ import { loadMemoByTaskId, updateMemo } from '../../repositories/memoRepository'
 import { createEmptyTask } from '../../../storage';
 import { writePlannedTask, mutatePlannedTask } from '../../repositories/taskRepository';
 import { saveProjectReminder } from '../../features/taskPlanning/projectReminders';
+import { projectReminderChanged } from '../../features/taskPlanning/projectReminderChanges';
 import { requestTaskReminderPermission } from '../../features/taskPlanning/useTaskReminders';
 import { initialDuration, localDate, normalizePlanning, NO_REMINDER, occurrencePatch, UNDATED_TASKS, type PlanningOccurrence } from '../../features/taskPlanning/planningCore';
 import type { TaskState, SlotKey, TaskStatus } from '../../types';
@@ -138,7 +139,12 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
         }
         else { const created = await createProjectTask({ ...patch, projectId, kind: 'task', status: 'todo' }); id = created.id; createdProjectId.current = id; sharedBaseline.current = created; }
       }
-      if (id) await saveProjectReminder(id, parsed.planning.reminder);
+      // Task content has already committed. Only write personal notification
+      // preferences when they changed, including explicitly turning one off.
+      if (id && projectReminderChanged(store.reminders[id], parsed.planning.reminder)) {
+        try { await saveProjectReminder(id, parsed.planning.reminder); }
+        catch { throw new Error('タスクは保存しましたが、通知設定を保存できませんでした。通知設定へのアクセス権限を確認して、もう一度保存してください。'); }
+      }
     } else if (item) {
       await mutatePlannedTask(item.id, current => {
         if (recurring && scope === 'this') return { ...current, task: { ...current.task, reminder: parsed.planning.reminder,
@@ -182,7 +188,9 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
             if (schedule.start && schedule.date && estimateMinutes > 0) { const start = new Date(`${schedule.date}T${schedule.start}:00`).getTime(); if (Number.isFinite(start)) { const end = start + initialDuration(estimateMinutes) * 60000; setSchedule(previous => ({ ...previous, endDate: localDate(end), end: clockText(end) })); } }
           }}
           onStart={() => transition('IN_PROGRESS')} onPause={() => transition('PAUSED')} onDone={() => transition('DONE')}>
-          {projectId ? <><Text>担当者</Text><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>{[{ id: null, name: '未割り当て' }, ...members].map(member => <Pressable key={member.id ?? 'none'} onPress={() => setAssignee(member.id)} style={{ padding: 10, backgroundColor: member.id === assignee ? '#dbeafe' : '#f3f4f6' }}><Text>{member.name}</Text></Pressable>)}</View></> : null}
+          {projectId ? <View style={sharedStyles.row}><Text style={sharedStyles.label}>担当者</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ gap: 8 }}>
+            {[{ id: null, name: '未割り当て' }, ...members].map(member => <Pressable key={member.id ?? 'none'} accessibilityRole="button" accessibilityState={{ selected: member.id === assignee }} onPress={() => setAssignee(member.id)} style={{ minHeight: 44, justifyContent: 'center', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 18, backgroundColor: member.id === assignee ? '#dbeafe' : '#f0f0ee' }}><Text style={{ fontSize: 12, color: member.id === assignee ? '#1e40af' : '#4b5563' }}>{member.name}</Text></Pressable>)}
+          </ScrollView></View> : null}
           <TaskMemoFields body={body} setBody={value => { bodyEdited.current = true; setBody(value); }} language={appLanguage} onSearchToken={openMemoSearch} />
         </TaskDetailView>
       </View>
