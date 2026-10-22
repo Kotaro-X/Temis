@@ -16,6 +16,7 @@ import AppMenuBridge from "../app-bridges/AppMenuBridge";
 import AppNoticeBridge from "../app-bridges/AppNoticeBridge";
 import AppPickerBridge from "../app-bridges/AppPickerBridge";
 import ProjectCreateModal from "../project/ProjectCreateModal";
+import TabIcon, { type TabIconName } from "./TabIcon";
 
 export type AppChromeTab = "tasks" | "todo" | "memos" | "projects" | "guild";
 
@@ -35,15 +36,18 @@ const HELP_URL =
 
 const TabButton = ({
   label,
+  icon,
   active,
   onPress,
 }: {
   label: string;
+  icon?: TabIconName;
   active: boolean;
   onPress: () => void;
 }) => (
   <Pressable
     accessibilityRole="tab"
+    accessibilityLabel={label}
     accessibilityState={{ selected: active }}
     onPress={onPress}
     android_ripple={{ color: "#e5e7eb" }}
@@ -53,12 +57,7 @@ const TabButton = ({
       pressed && appChromeStyles.tabButtonPressed,
     ]}
   >
-    <View
-      style={[
-        appChromeStyles.tabIndicator,
-        active && appChromeStyles.tabIndicatorActive,
-      ]}
-    />
+    {icon ? <TabIcon name={icon} color={active ? "#111827" : "#6b7280"} /> : null}
     <Text
       numberOfLines={1}
       adjustsFontSizeToFit
@@ -91,34 +90,40 @@ const BottomTabBar = ({
   return (
     <View
       style={[
-        appChromeStyles.tabBar,
-        { height: 56 + bottomInset, paddingBottom: bottomInset },
+        appChromeStyles.tabBarContainer,
+        // Keep clear of the home gesture while bringing the capsule closer to it.
+        { paddingBottom: Math.max(8, bottomInset - 12) },
       ]}
     >
-      <TabButton
-        label={t(appLanguage, "tab.tasks")}
-        active={activeTab === "tasks"}
-        onPress={() => onTabPress("tasks")}
-      />
-      <TabButton
-        label={t(appLanguage, "tab.memos")}
-        active={activeTab === "memos"}
-        onPress={() => onTabPress("memos")}
-      />
-      {showProjects ? (
+      <View style={appChromeStyles.tabBar}>
         <TabButton
-          label="Projects"
-          active={activeTab === "projects"}
-          onPress={() => onTabPress("projects")}
+          label={t(appLanguage, "tab.tasks")}
+          icon="tasks"
+          active={activeTab === "tasks"}
+          onPress={() => onTabPress("tasks")}
         />
-      ) : null}
-      {showGuild ? (
         <TabButton
-          label="Commons"
-          active={activeTab === "guild"}
-          onPress={() => onTabPress("guild")}
+          label={t(appLanguage, "tab.memos")}
+          icon="memos"
+          active={activeTab === "memos"}
+          onPress={() => onTabPress("memos")}
         />
-      ) : null}
+        {showProjects ? (
+          <TabButton
+            label="Projects"
+            active={activeTab === "projects"}
+            onPress={() => onTabPress("projects")}
+          />
+        ) : null}
+        {showGuild ? (
+          <TabButton
+            label="Commons"
+            icon="commons"
+            active={activeTab === "guild"}
+            onPress={() => onTabPress("guild")}
+          />
+        ) : null}
+      </View>
     </View>
   );
 };

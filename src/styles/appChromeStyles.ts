@@ -100,19 +100,26 @@ const appChromeStyles = StyleSheet.create({
     color: "#6b7280",
     fontSize: 13,
   },
+  tabBarContainer: {
+    paddingTop: 2,
+    paddingHorizontal: 12,
+  },
   tabBar: {
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "stretch",
-    borderTopWidth: Platform.OS === "ios" ? StyleSheet.hairlineWidth : 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    padding: 3,
     borderColor:
       Platform.OS === "ios" ? "rgba(15, 23, 42, 0.12)" : "#e5e7eb",
-    backgroundColor: "#ffffff",
+    backgroundColor: "#f3f4f6",
     ...(Platform.OS === "ios"
       ? {
           shadowColor: "#0f172a",
-          shadowOpacity: 0.08,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: -6 },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 2 },
         }
       : {
           elevation: 6,
@@ -120,17 +127,20 @@ const appChromeStyles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
+    minHeight: 44,
+    borderRadius: 999,
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 10,
-    paddingBottom: 10,
+    paddingTop: 4,
+    paddingBottom: 4,
     paddingHorizontal: 4,
   },
   tabButtonActive: {
-    backgroundColor: "#f9fafb",
+    backgroundColor: "#dfe1e5",
   },
   tabButtonPressed: {
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#e5e7eb",
   },
   tabLabel: {
     flexShrink: 1,
@@ -142,18 +152,6 @@ const appChromeStyles = StyleSheet.create({
   tabLabelActive: {
     color: "#111827",
     fontWeight: "700",
-  },
-  tabIndicator: {
-    position: "absolute",
-    top: 0,
-    left: 16,
-    right: 16,
-    height: 2,
-    borderRadius: 999,
-    backgroundColor: "transparent",
-  },
-  tabIndicatorActive: {
-    backgroundColor: "#111827",
   },
   sheetOverlay: {
     flex: 1,
