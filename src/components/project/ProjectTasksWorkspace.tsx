@@ -1,3 +1,4 @@
+import { useTaskPlanning } from '../../features/taskPlanning/TaskPlanningProvider';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
@@ -19,6 +20,7 @@ import { SLOT_KEYS, type SlotKey } from "../../types";
 import type { Project, ProjectTask } from "../../types/collaboration";
 
 export default function ProjectTasksWorkspace({ project, active }: { project: Project; active: boolean; contentPaddingTop: number }) {
+  const planning = useTaskPlanning();
   const insets = useSafeAreaInsets();
   const { profile } = useCollaboration();
   const userId = profile?.userId;
@@ -49,8 +51,8 @@ export default function ProjectTasksWorkspace({ project, active }: { project: Pr
       setTasks(next.filter(task => (task.kind ?? "task") === "task")); setLoading(false); setError(null);
       void listProjectCreatorProfiles(next.map(task => projectTaskOwner(task))).then(profiles => {
         if (alive) setNames(Object.fromEntries(profiles.map(p => [p.userId, p.displayName || `@${p.username}`])));
-      });
-    }, cause => { if (alive) { setTasks([]); setError(cause.message); setLoading(false); setAddSlot(null); setArchiveOpen(false); } });
+      }).catch(() => { /* Names are optional; keep the confirmed task list. */ });
+    }, cause => { if (alive) { setError(cause.message); setLoading(false); setAddSlot(null); setArchiveOpen(false); } });
     return () => { alive = false; unsubscribe(); };
   }, [active, project.id, userId, reload]);
   useEffect(() => { setSelected([]); setSelectionMode(false); setMoveIds([]); }, [selectedDate]);
@@ -84,7 +86,7 @@ export default function ProjectTasksWorkspace({ project, active }: { project: Pr
     <TaskScreen planningProjectId={project.id} planningSelectedDate={selectedDate} styles={styles} insetsTop={insets.top} title={selectedDate}
       headerLeft={<Pressable onPress={openMenu} style={styles.menuButton}><Ionicons name="menu" size={20} /></Pressable>}
       headerRight={<View style={{ flexDirection: "row", gap: 10 }}><Pressable onPress={openDatePicker}><Ionicons name="calendar-outline" size={20} /></Pressable><Pressable onPress={() => setArchiveOpen(true)}><Ionicons name="archive-outline" size={20} /></Pressable><Pressable onPress={() => { setSelectionMode(value => !value); setSelected([]); }}><Text>{selectionMode ? "終了" : "選択"}</Text></Pressable></View>}
-      contentPaddingTop={insets.top + 40} footerPaddingBottom={90} refreshing={loading} onRefresh={() => setReload(value => value + 1)}
+      contentPaddingTop={insets.top + 40} footerPaddingBottom={90} refreshing={loading} onRefresh={() => { setReload(value => value + 1); void planning.refresh().catch(cause => setError(cause.message)); }}
       trf={trf} routineSuggestions={[]} currentSlotLabel="" onAddSuggestion={() => {}} onDismissSuggestion={() => {}}
       onOpenTaskDetail={() => {}} onDeleteTask={() => {}} onArchiveTask={() => {}} onOpenMoveModal={() => {}}
       onDeleteSelectedTasks={() => { void run(async () => { await Promise.all(selected.map(id => deleteProjectTask(id.slice(8)))); setSelected([]); setSelectionMode(false); }); }}

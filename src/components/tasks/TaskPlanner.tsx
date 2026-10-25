@@ -110,7 +110,7 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
       {view === 'timeline' ? (['day','week'] as const).map(value => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: range === value }} style={[s.button, range === value && s.active]} onPress={() => setRange(value)}><Text>{value === 'day' ? '日' : '週'}</Text></Pressable>) : null}
     </View>
     {view === 'box' ? dateControls : null}
-    {store.error ? <Text accessibilityRole="alert" style={{ color: '#b91c1c' }}>{store.error}</Text> : null}
+    {store.error ? <View><Text accessibilityRole="alert" style={{ color: '#b91c1c' }}>{store.error}</Text><Pressable accessibilityRole="button" style={s.button} onPress={() => { void store.refresh().catch(() => {}); }}><Text>再試行</Text></Pressable></View> : null}
     {view === 'timeline' ? <TaskTimeline headerControls={dateControls} onPage={direction => setDate(addDays(date, direction * (range === 'week' ? 7 : 1)))} selectedKeys={selectedKeys} onDraggingChange={onDraggingChange} dates={dates} items={occurrences} undated={undated} schedule={timeBoxSchedule} onEdit={edit} onCreate={(date, minute) => setEditor({ item: null, date, minute, projectId })} onPlace={(...args) => { void place(...args); }} canCreate={canCreate} /> : <>
       {[...SLOT_KEYS, 'undated' as const].map(slot => {
         const entries = slot === 'undated' ? undated : occurrences.filter(item => item.date === date && item.slot === slot);

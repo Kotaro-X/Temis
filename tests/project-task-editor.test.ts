@@ -138,6 +138,7 @@ test("the editing session does not install a periodic clock and long title stays
 
 test("Project list uses the actual safe-area top and reserves the complete header height", () => {
   const exports: any = {};
+  let sharedRefreshes = 0;
   const react = {
     createElement: (type: any, props: any, ...children: any[]) => ({ type, props: { ...props, children } }),
     useState: (value: any) => [typeof value === "function" ? value() : value, () => {}],
@@ -156,6 +157,7 @@ test("Project list uses the actual safe-area top and reserves the complete heade
     if (name.endsWith("AppUIContext")) return { useAppUI: () => ({ selectedDate: "2026-10-07" }) };
     if (name.endsWith("CollaborationContext")) return { useCollaboration: () => ({ profile: { userId: "alice" } }) };
     if (name.endsWith("../../types")) return { SLOT_KEYS: ["morning", "forenoon", "afternoon", "night"] };
+    if (name.endsWith("TaskPlanningProvider")) return { useTaskPlanning: () => ({ refresh: async () => { sharedRefreshes++; } }) };
     if (name.endsWith("taskSelectors")) return { buildTodaySections: () => [] };
     if (name.endsWith("i18n")) return { getSlotLabel: (_language: string, slot: string) => slot };
     return { __esModule: true, default: name };
@@ -165,6 +167,8 @@ test("Project list uses the actual safe-area top and reserves the complete heade
     const screen = flatten(tree).find(node => node.type.endsWith?.("TaskScreen"))!;
     assert.equal(screen.props.insetsTop, 59);
     assert.equal(screen.props.contentPaddingTop, 99);
+    screen.props.onRefresh();
   }
+  assert.equal(sharedRefreshes, 3);
 });
 

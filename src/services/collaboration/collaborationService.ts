@@ -8,6 +8,7 @@ import {
   getDoc,
   getDocFromServer,
   getDocs,
+  getDocsFromServer,
   limit,
   orderBy,
   onSnapshot,
@@ -397,7 +398,7 @@ export const getProjectMember = async (projectId: string, userId: string): Promi
 
 export const listProjectMembers = async (projectId: string): Promise<ProjectMember[]> => {
   const result = await getDocs(collection(db(), "projects", projectId, "members"));
-  return result.docs.map((item) => item.data() as ProjectMember);
+  return result.docs.map((item) => ({ ...item.data(), userId: item.id }) as ProjectMember);
 };
 
 export const inviteToProject = async (
@@ -697,10 +698,14 @@ export const deleteProjectTask = async (taskId: string): Promise<void> => {
 export const listProjectTasks = async (
   projectId: string,
   kind?: ProjectTask["kind"],
+  options?: { fromServer?: boolean },
 ): Promise<ProjectTask[]> => {
+  const read = options?.fromServer ? getDocsFromServer : getDocs;
   const [result, members] = await Promise.all([
-    getDocs(query(collection(db(), "projectTasks"), where("projectId", "==", projectId))),
-    listProjectMembers(projectId),
+    read(query(collection(db(), "projectTasks"), where("projectId", "==", projectId))),
+    options?.fromServer
+      ? getDocsFromServer(collection(db(), "projects", projectId, "members")).then(snapshot => snapshot.docs.map(member => ({ ...member.data(), userId: member.id }) as ProjectMember))
+      : listProjectMembers(projectId),
   ]);
   const memberIds = members.map(member => member.userId);
   return result.docs

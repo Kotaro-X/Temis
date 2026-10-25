@@ -131,14 +131,17 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
           if (patch.plannedStartAt != null && patch.plannedEndAt != null) { const duration = patch.plannedEndAt - patch.plannedStartAt; patch.plannedStartAt = new Date(`${patch.repeatAnchorDate}T${new Date(patch.plannedStartAt).toTimeString().slice(0,8)}`).getTime(); patch.plannedEndAt = patch.plannedStartAt + duration; }
         }
         if (id && recurring && scope === 'this') {
-          await updateProjectTask(id, occurrencePatch({}, item.occurrenceDate, { date: parsed.date, slot: parsed.slot, plannedStartAt: patch.plannedStartAt ?? null, plannedEndAt: patch.plannedEndAt ?? null, estimateMinutes: patch.estimateMinutes, completed: task.status === 'DONE', title: patch.title, ...(bodyEdited.current ? { memo: body } : {}), tags: task.tags }));
+          const updated = await updateProjectTask(id, occurrencePatch({}, item.occurrenceDate, { date: parsed.date, slot: parsed.slot, plannedStartAt: patch.plannedStartAt ?? null, plannedEndAt: patch.plannedEndAt ?? null, estimateMinutes: patch.estimateMinutes, completed: task.status === 'DONE', title: patch.title, ...(bodyEdited.current ? { memo: body } : {}), tags: task.tags }));
+          if (epoch.current === getWorkspaceEpoch()) store.acceptProjectTask(updated);
         } else if (id) {
           const changes = sharedBaseline.current ? changedProjectTaskFields(sharedBaseline.current, { ...sharedBaseline.current, ...patch }) : patch;
           if (!bodyEdited.current && sharedRecord) delete changes.description;
-          await updateProjectTask(id, changes);
+          const updated = await updateProjectTask(id, changes);
+          if (epoch.current === getWorkspaceEpoch()) store.acceptProjectTask(updated);
         }
-        else { const created = await createProjectTask({ ...patch, projectId, kind: 'task', status: 'todo' }); id = created.id; createdProjectId.current = id; sharedBaseline.current = created; }
+        else { const created = await createProjectTask({ ...patch, projectId, kind: 'task', status: 'todo' }); id = created.id; createdProjectId.current = id; sharedBaseline.current = created; if (epoch.current === getWorkspaceEpoch()) store.acceptProjectTask(created); }
       }
+      if (epoch.current !== getWorkspaceEpoch()) throw new Error('アカウントが切り替わりました。');
       // Task content has already committed. Only write personal notification
       // preferences when they changed, including explicitly turning one off.
       if (id && projectReminderChanged(store.reminders[id], parsed.planning.reminder)) {
@@ -168,7 +171,8 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
       if (body.trim()) await updateMemo(task.id, body);
     }
     touchDomains(["memos"]);
-    await store.refresh();
+    try { await store.refresh(); }
+    catch { throw new Error('タスクは保存しましたが、一覧を更新できませんでした。もう一度保存するか、一覧を更新してください。'); }
   }); };
   const transition = (status: TaskStatus) => {
     if (!item) { Alert.alert('タスクを保存してください', '保存後に開始・完了できます。'); return; }

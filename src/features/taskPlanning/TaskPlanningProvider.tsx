@@ -1,11 +1,11 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { useAppUI } from '../../context/AppUIContext';
 import { useCollaboration } from '../../context/CollaborationContext';
 import { useAppRefresh } from '../../context/AppRefreshContext';
 import { useAppSettings } from '../../context/AppSettingsContext';
 import { loadAllTaskStates } from '../../repositories/taskRepository';
-import { subscribeProjectTasks, updateProjectTask } from '../../services/collaboration/collaborationService';
+import { listProjectTasks, subscribeProjectTasks, updateProjectTask } from '../../services/collaboration/collaborationService';
 import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot } from '../../utils/projectTaskPlacement';
 import { projectTaskState } from '../../services/collaboration/projectTaskCore';
 import { subscribeTaskChanges } from './taskEvents';
@@ -16,10 +16,11 @@ import type { TaskState, TodayState, SlotKey } from '../../types';
 import type { ProjectTask, Project } from '../../types/collaboration';
 import type { TaskReminder } from '../../types/taskPlanning';
 import type { PlanningItem } from './planningCore';
+import { createProjectTaskFeed } from './projectTaskFeed';
 import { useTaskReminders } from './useTaskReminders';
 
 type PrivateRecord = { task: TaskState; date: string; slotKey: SlotKey };
-type Store = { items: PlanningItem[]; privateRecords: PrivateRecord[]; projects: { project: Project; task: ProjectTask; editable: boolean }[]; reminders: Record<string, TaskReminder>; refresh: () => Promise<void>; error: string | null; notificationWarning: string; requestedTaskId: string | null; clearRequestedTask: () => void };
+type Store = { items: PlanningItem[]; privateRecords: PrivateRecord[]; projects: { project: Project; task: ProjectTask; editable: boolean }[]; reminders: Record<string, TaskReminder>; acceptProjectTask: (task: ProjectTask) => void; refresh: () => Promise<void>; error: string | null; notificationWarning: string; requestedTaskId: string | null; clearRequestedTask: () => void };
 const Context = createContext<Store | null>(null);
 export const useTaskPlanning = () => { const value = useContext(Context); if (!value) throw new Error('TaskPlanningProvider missing'); return value; };
 export default function TaskPlanningProvider({ children }: { children: React.ReactNode }) {
@@ -31,13 +32,25 @@ export default function TaskPlanningProvider({ children }: { children: React.Rea
   const [states, setStates] = useState<TodayState[]>([]);
   const [shared, setShared] = useState<Record<string, ProjectTask[]>>({});
   const [reminders, setReminders] = useState<Record<string, TaskReminder>>({});
+  const [sharedErrors, setSharedErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const sharedFeed = useRef<ReturnType<typeof createProjectTaskFeed> | null>(null);
+  const localRequest = useRef(0);
+  useEffect(() => { setStates([]); setShared({}); setSharedErrors({}); localRequest.current++; }, [profile?.userId]);
   const refresh = useCallback(async () => {
     if (!storageReady) return;
     const epoch = getWorkspaceEpoch();
-    const initial = await loadAllTaskStates(); if (epoch === getWorkspaceEpoch()) setStates(initial);
+    const request = ++localRequest.current;
+    const current = () => epoch === getWorkspaceEpoch() && request === localRequest.current;
+    const sharedRefresh = sharedFeed.current?.refresh();
+    // Attach rejection handling immediately while local migration runs.
+    const sharedResult = sharedRefresh?.then(() => null, cause => cause);
+    const initial = await loadAllTaskStates(); if (current()) setStates(initial);
     await migrateLegacyTodos(); const next = await loadAllTaskStates();
-    if (epoch === getWorkspaceEpoch()) { setStates(next); setError(null); }
+    if (current()) setStates(next);
+    const sharedError = await sharedResult;
+    if (current() && sharedError) throw sharedError;
+    if (current()) setError(null);
   }, [storageReady]);
   useEffect(() => {
     let active = true;
@@ -49,25 +62,39 @@ export default function TaskPlanningProvider({ children }: { children: React.Rea
   useEffect(() => registerRefreshHandler('tasks', refresh), [refresh, registerRefreshHandler]);
   useEffect(() => { const sub = AppState.addEventListener('change', state => { if (state === 'active') void refresh().catch(cause => setError(cause.message)); }); return () => sub.remove(); }, [refresh]);
   useEffect(() => {
-    setShared({}); if (!profile?.userId) return;
+    const allowed = new Set(projects.map(project => project.id));
+    setShared(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => allowed.has(id))));
+    setSharedErrors(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => allowed.has(id))));
+    if (!profile?.userId) return;
     let active = true; const epoch = getWorkspaceEpoch(); const migrations = new Set<string>();
-    const unsubscribers = projects.map(project => subscribeProjectTasks(project.id, tasks => {
-      if (!active || epoch !== getWorkspaceEpoch()) return;
-      setShared(previous => ({ ...previous, [project.id]: tasks }));
-      const role = overflowProjects.find(item => item.project.id === project.id)?.role;
-      if (role !== 'owner' && role !== 'member') return;
-      for (const task of tasks.filter(item => item.kind === 'todo')) {
-        if (migrations.has(task.id)) continue; migrations.add(task.id);
-        void updateProjectTask(task.id, { kind: 'task', privateDate: task.privateDate ?? (task.dueAt ? getProjectTaskPrivateDate(task) : null), privateSlotKey: task.privateSlotKey ?? 'morning' })
-          .catch(cause => { migrations.delete(task.id); if (active) setError(`ProjectのToDo移行: ${cause.message}`); });
-      }
-    }, cause => { if (active) { setShared(previous => ({ ...previous, [project.id]: [] })); setError(cause.message); } }));
-    return () => { active = false; unsubscribers.forEach(unsubscribe => unsubscribe()); };
+    const current = () => active && epoch === getWorkspaceEpoch();
+    const feed = createProjectTaskFeed({
+      projectIds: projects.map(project => project.id), current,
+      load: id => listProjectTasks(id, undefined, { fromServer: true }), subscribe: subscribeProjectTasks,
+      receive: (id, tasks) => {
+        setShared(previous => ({ ...previous, [id]: tasks }));
+        setSharedErrors(previous => { const next = { ...previous }; delete next[id]; return next; });
+        const role = overflowProjects.find(item => item.project.id === id)?.role;
+        if (role !== 'owner' && role !== 'member') return;
+        for (const task of tasks.filter(item => item.kind === 'todo')) {
+          if (migrations.has(task.id)) continue; migrations.add(task.id);
+          void updateProjectTask(task.id, { kind: 'task', privateDate: task.privateDate ?? (task.dueAt ? getProjectTaskPrivateDate(task) : null), privateSlotKey: task.privateSlotKey ?? 'morning' })
+            .catch(cause => { migrations.delete(task.id); if (current()) setError(`ProjectのToDo移行: ${cause.message}`); });
+        }
+      },
+      fail: (id, cause) => setSharedErrors(previous => ({ ...previous, [id]: `Projectタスクを読み込めませんでした: ${cause.message}` })),
+    });
+    sharedFeed.current = feed;
+    feed.start();
+    return () => { active = false; feed.dispose(); if (sharedFeed.current === feed) sharedFeed.current = null; };
   }, [projects, overflowProjects, profile?.userId]);
   useEffect(() => {
     setReminders({}); if (!profile?.userId) return;
     return subscribeProjectReminders(profile.userId, setReminders, cause => setError(`通知設定: ${cause.message}`));
   }, [profile?.userId]);
+  const acceptProjectTask = useCallback((task: ProjectTask) => {
+    setShared(previous => ({ ...previous, [task.projectId]: [...(previous[task.projectId] ?? []).filter(item => item.id !== task.id), task] }));
+  }, []);
   const privateRecords = useMemo(() => states.flatMap(state => Object.entries(state.slots).flatMap(([slotKey, slot]) => slot.tasks.map(task => ({ task, date: state.date, slotKey: slotKey as SlotKey })))), [states]);
   const projectRecords = useMemo(() => projects.flatMap(project => {
     const role = overflowProjects.find(item => item.project.id === project.id)?.role;
@@ -83,5 +110,5 @@ export default function TaskPlanningProvider({ children }: { children: React.Rea
   }, [ui]);
   const notificationWarning = useTaskReminders(items, openNotification);
   useEffect(() => { touchDomains(['memos']); }, [privateRecords, touchDomains]);
-  return <Context.Provider value={{ items, privateRecords, projects: projectRecords, reminders, refresh, error, notificationWarning, requestedTaskId, clearRequestedTask: () => setRequestedTaskId(null) }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ items, privateRecords, projects: projectRecords, reminders, acceptProjectTask, refresh, error: Object.values(sharedErrors)[0] ?? error, notificationWarning, requestedTaskId, clearRequestedTask: () => setRequestedTaskId(null) }}>{children}</Context.Provider>;
 }
