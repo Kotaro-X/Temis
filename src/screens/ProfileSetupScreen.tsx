@@ -3,6 +3,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollVie
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCollaboration } from '../context/CollaborationContext';
 import { useCloudSyncContext } from '../context/CloudSyncContext';
+import StartupSkeleton from "../components/app-shell/StartupSkeleton";
 import ProfilePhotoEditor from '../components/ProfilePhotoEditor';
 
 const Button = ({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) => <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, disabled && { opacity: 0.4 }]}><Text style={styles.buttonText}>{label}</Text></Pressable>;
@@ -44,10 +45,10 @@ export default function ProfileSetupBoundary({ children }: { children: React.Rea
   const ownsProfile = Boolean(accountUserId && profile?.userId === accountUserId);
   const signedOut = profileSetupStatus === 'signed_out' && !accountUserId && !user && authStatus !== 'signedIn';
   if (!restoring && (signedOut || (ownsProfile && profileSetupStatus === 'complete'))) return <>{children}</>;
+  if (restoring || profileSetupStatus === 'checking') return <StartupSkeleton />;
   return <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#fff', paddingTop: insets.top, paddingBottom: insets.bottom }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.container}>
-      {restoring || profileSetupStatus === 'checking' ? <View style={styles.form}><ActivityIndicator /><Text>アカウントを確認しています…</Text></View>
-        : profileSetupStatus === 'error' ? <View style={styles.form}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="再試行" onPress={() => void refreshProfile()} /></View>
+      {profileSetupStatus === 'error' ? <View style={styles.form}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="再試行" onPress={() => void refreshProfile()} /></View>
           : ownsProfile ? <SetupForm key={accountUserId} /> : <ActivityIndicator />}
       {!restoring && (accountUserId || user) ? <Button label={logoutBusy ? 'ログアウト中…' : 'ログアウト'} disabled={logoutBusy} onPress={() => { setLogoutAttempted(true); setLogoutBusy(true); void signOut().finally(() => setLogoutBusy(false)); }} /> : null}
       {logoutAttempted && !logoutBusy && signOutError ? <Text accessibilityRole="alert" style={styles.error}>{signOutError}</Text> : null}

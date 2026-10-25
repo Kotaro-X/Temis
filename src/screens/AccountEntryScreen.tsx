@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAppSettings } from "../context/AppSettingsContext";
 import { useCloudSyncContext } from "../context/CloudSyncContext";
 import { isAppleSignInAvailable } from "../services/auth/appleSignIn";
 import SocialSignInButtons from "../components/settings/SocialSignInButtons";
+import StartupSkeleton from "../components/app-shell/StartupSkeleton";
 import AppLanguageBridge from "../components/app-bridges/AppLanguageBridge";
 
 export default function AccountEntryBoundary({ children }: { children: React.ReactNode }) {
@@ -20,7 +21,7 @@ export default function AccountEntryBoundary({ children }: { children: React.Rea
   }, []);
   const en = appLanguage === "en";
   if (!accountRestoreError && (!storageReady || accountEntryRequired === null || authStatus === "restoring")) {
-    return <SafeAreaView style={styles.screen}><View style={styles.center}><ActivityIndicator /><Text>{en ? "Checking your account…" : "アカウントを確認しています…"}</Text>{accountRestoreError ? <Text style={styles.error}>{accountRestoreError}</Text> : null}</View></SafeAreaView>;
+    return <StartupSkeleton />;
   }
   if (languagePickerOpen) return <SafeAreaView style={styles.screen}><AppLanguageBridge visible onSelectLanguage={selectInitialLanguage} /></SafeAreaView>;
   if (!accountEntryRequired && !accountRestoreError) return <React.Fragment key={workspaceKey}>{children}</React.Fragment>;
@@ -52,7 +53,6 @@ export default function AccountEntryBoundary({ children }: { children: React.Rea
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#fff" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, padding: 24 },
   content: { flexGrow: 1, justifyContent: "center", padding: 24, gap: 20, width: "100%", maxWidth: 560, alignSelf: "center" },
   title: { fontSize: 26, fontWeight: "700", textAlign: "center", color: "#111827" },
   body: { fontSize: 16, lineHeight: 25, color: "#374151" },
