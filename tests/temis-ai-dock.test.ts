@@ -125,8 +125,15 @@ test("Commons keeps the Temis AI search button black until a search is running",
   assert.equal(commons.includes("searchDisabled={!aiQuery.trim() || aiSearching}"), false);
 });
 
-test("Commons header title is centered independently of its action controls", () => {
+test("Commons header keeps centered title and uses a separate title row on narrow screens", () => {
   const commons = readFileSync(resolve("src/screens/GuildScreen.tsx"), "utf8");
-  assert.equal(commons.includes('header: { position: "relative"'), true);
-  assert.equal(commons.includes('headerTitle: { position: "absolute", left: 0, right: 0'), true);
+  const leftWidth = commons.match(/headerSide: \{ width: (\d+)/)?.[1];
+  const rightWidth = commons.match(/headerSideRight: \{ width: (\d+)/)?.[1];
+  assert.ok(leftWidth);
+  assert.equal(leftWidth, rightWidth);
+  assert.match(commons, /compactHeader = useWindowDimensions\(\).width < 440/);
+  assert.match(commons, /headerTitleCompact: \{ position: "absolute", top: 0, left: 16, right: 16/);
+  assert.equal(commons.includes('headerTitle: { flex: 1,'), true);
+  assert.match(commons, /<Text pointerEvents="none"[^>]*>Commons<\/Text>/);
+  assert.equal(commons.includes('onPress={onOpenMenu}'), true);
 });

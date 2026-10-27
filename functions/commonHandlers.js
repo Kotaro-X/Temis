@@ -9,6 +9,7 @@ import safetyCore from './reviewSafetyCore.cjs';
 import accountDeletion from "./accountDeletion.cjs";
 import profileIdentity from "./profileIdentity.cjs";
 import guildPublication from "./guildPublication.cjs";
+import guildEngagement from "./guildEngagement.cjs";
 import directMessages from "./directMessages.cjs";
 import groundedAnswerCore from "./groundedAnswerCore.cjs";
 import guildAICore from "./guildAICore.cjs";
@@ -24,6 +25,12 @@ export const updateAIConsent = reviewSafety.updateAIConsent;
 export const setUserBlocked = reviewSafety.setUserBlocked;
 export const reportDirectMessage = reviewSafety.reportDirectMessage;
 export const cleanupRevokedAIConsent = reviewSafety.cleanupRevokedAIConsent;
+
+export const getGuildEngagement = guildEngagement.getGuildEngagement;
+export const setGuildEngagement = guildEngagement.setGuildEngagement;
+export const listSavedGuildPosts = guildEngagement.listSavedGuildPosts;
+export const listGuildPostLikes = guildEngagement.listGuildPostLikes;
+export const cleanupGuildEngagement = guildEngagement.cleanupGuildEngagement;
 
 export const updateGuildPublication = guildPublication.updateGuildPublication;
 
