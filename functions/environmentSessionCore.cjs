@@ -35,8 +35,25 @@ const createEnvironmentSessionService = ({ projectId, auth, db, sign, verify, er
     // Read live Auth state on every renewal. A stale token claim cannot retain revoked access.
     const user = await auth.getUser(request.auth.uid);
     const issued = Number(request.auth.token?.auth_time);
-    if (user.disabled || user.customClaims?.environmentSwitcher !== true || !Number.isFinite(issued)
+    if (user.disabled || !Number.isFinite(issued)
       || issued * 1000 < Date.parse(user.tokensValidAfterTime || '1970-01-01')) fail('permission-denied', 'Operator access required.');
+    if (user.customClaims?.environmentSwitcher !== true) {
+      // A server-owned allowlist opts in individual staff invite codes. Never
+      // persist a claim that could outlive the grant or the invite's revocation.
+      const unexpired = value => value == null || (typeof value === 'number' && Number.isFinite(value) && value > now());
+      const grant = (await db.doc(`subscriptionAccess/${user.uid}`).get()).data();
+      const code = grant?.inviteCode;
+      if (grant?.active !== true || grant.grantType !== 'staff_free' || !unexpired(grant.expiresAt)
+        || typeof code !== 'string' || !code || code.includes('/') || code.length > 256) fail('permission-denied', 'Operator access required.');
+      const [policy, invite, redemption] = await Promise.all([
+        db.doc(`environmentSwitchInvites/${code}`).get(),
+        db.doc(`inviteCodes/${code}`).get(),
+        db.doc(`inviteCodes/${code}/redemptions/${user.uid}`).get(),
+      ]);
+      const invitation = invite.data();
+      if (policy.data()?.active !== true || invitation?.active !== true || invitation.grantType !== 'staff_free'
+        || !unexpired(invitation.expiresAt) || !redemption.exists) fail('permission-denied', 'Operator access required.');
+    }
     return user.uid;
   };
   return {

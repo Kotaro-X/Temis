@@ -12,7 +12,7 @@ const fixture = (options: any = {}) => {
   const used = new Set();
   const auth = { getUser: async () => ({ uid: request.auth.uid, customClaims: { environmentSwitcher: true }, tokensValidAfterTime: new Date(0).toISOString(), ...options.user }), createCustomToken: async (uid: string, claims: any) => JSON.stringify({ uid, claims }) };
   const common = { auth, now: () => now, nonce: () => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', error: (code: string, message: string) => Object.assign(new Error(message), { code }), sign: async (value: any) => { payload = value; return 'signed'; }, verify: async () => { if (options.badSignature) throw Error('bad'); return { ...payload, ...options.payload }; }, db: { ...state, collection: () => ({ doc: (id: string) => ({ create: async () => { if (used.has(id)) throw Object.assign(Error('exists'), { code: 6 }); used.add(id); } }) }) } };
-  return { production: createEnvironmentSessionService({ ...common, projectId: PRODUCTION_PROJECT }), test: createEnvironmentSessionService({ ...common, projectId: TEST_PROJECT }) };
+  return { db: state, production: createEnvironmentSessionService({ ...common, projectId: PRODUCTION_PROJECT }), test: createEnvironmentSessionService({ ...common, projectId: TEST_PROJECT }) };
 };
 test('test identity is deterministic and distinct from the production UID', () => {
   assert.equal(testUid('same'), testUid('same')); assert.notEqual(testUid('same'), 'same'); assert.notEqual(testUid('same'), testUid('other'));
@@ -83,4 +83,40 @@ test('re-entry after deletion can persist a fresh consent decision and preserves
   assert.equal((await db.doc(`dmAccounts/${old}`).get()).data().deleting, true);
   assert.equal((await db.doc(`guildAuthors/${old}`).get()).data().deleted, true);
   assert.equal((await db.doc(`aiConsents/${uid}`).get()).data().revision, consent.revision);
+});
+
+const staffFixture = async () => {
+  const f = fixture({ user: { customClaims: {} } });
+  await f.db.doc('subscriptionAccess/production-user').set({ active: true, grantType: 'staff_free', inviteCode: 'APPROVED', expiresAt: null });
+  await f.db.doc('environmentSwitchInvites/APPROVED').set({ active: true });
+  await f.db.doc('inviteCodes/APPROVED').set({ active: true, grantType: 'staff_free', expiresAt: null });
+  await f.db.doc('inviteCodes/APPROVED/redemptions/production-user').set({});
+  return f;
+};
+test('approved staff invite automatically allows capability and ticket without custom claims', async () => {
+  const f = await staffFixture();
+  assert.deepEqual(await f.production.capability(request), { allowed: true });
+  assert.equal((await f.production.issue(request)).ticket, 'signed');
+});
+for (const [name, path, patch] of [
+  ['revoked policy', 'environmentSwitchInvites/APPROVED', { active: false }],
+  ['revoked invite', 'inviteCodes/APPROVED', { active: false }],
+  ['expired invite', 'inviteCodes/APPROVED', { expiresAt: now }],
+  ['wrong invite type', 'inviteCodes/APPROVED', { grantType: 'invite_free' }],
+  ['revoked grant', 'subscriptionAccess/production-user', { active: false }],
+  ['expired grant', 'subscriptionAccess/production-user', { expiresAt: now }],
+  ['malformed expiry', 'subscriptionAccess/production-user', { expiresAt: 'future' }],
+  ['wrong grant type', 'subscriptionAccess/production-user', { grantType: 'invite_free' }],
+  ['unapproved code', 'subscriptionAccess/production-user', { inviteCode: 'OTHER' }],
+] as const) {
+  test(`staff invite fails closed for ${name}, including renewal`, async () => {
+    const f = await staffFixture(); await f.production.issue(request);
+    await f.db.doc(path).update(patch);
+    await assert.rejects(f.production.capability(request), { code: 'permission-denied' });
+    await assert.rejects(f.production.issue(request), { code: 'permission-denied' });
+  });
+}
+test('staff requires redemption and live non-disabled Auth state', async () => {
+  const f = await staffFixture(); await f.db.doc('inviteCodes/APPROVED/redemptions/production-user').delete();
+  await assert.rejects(f.production.issue(request), { code: 'permission-denied' });
 });
