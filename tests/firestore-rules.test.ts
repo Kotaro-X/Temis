@@ -1144,6 +1144,83 @@ if (!FIRESTORE_EMULATOR_HOST) {
     await assertFails(aliceDb.collection("guildPostAIIndex").doc("post-2").set({ postId: "post-2" }));
   });
 
+  test("project exit validates ownership, preserves content, revokes access and supports retry", async () => {
+    const { createRequire } = await import("node:module");
+    const require = createRequire(new URL("../functions/projectAccessCore.cjs", import.meta.url).href);
+    const { initializeApp, deleteApp } = require("firebase-admin/app");
+    const { getFirestore } = require("firebase-admin/firestore");
+    const { createProjectAccessService } = require("../functions/projectAccessCore.cjs");
+    class ExitError extends Error {
+      code: string;
+      constructor(code: string, message: string) { super(message); this.code = code; }
+    }
+    const app = initializeApp({ projectId: "demo-wememo" }, "project-exit-integration");
+    const db = getFirestore(app);
+    const service = createProjectAccessService({ db, HttpsError: ExitError,
+      getAccess: async (userId: string) => ({ userId, tier: "free" }) });
+    const member = async (projectId: string, userId: string, role: string) => {
+      const data = { id: `${projectId}__${userId}`, projectId, userId, role, joinedAt: 1 };
+      await db.doc(`projects/${projectId}/members/${userId}`).set(data);
+      await db.doc(`projectMemberships/${data.id}`).set(data);
+    };
+    try {
+      const project = await service.createProject("exit-owner", { name: "Exit", tags: [] });
+      await member(project.id, "exit-member", "member");
+      await member(project.id, "exit-viewer", "viewer");
+      const noteRef = db.doc("projectNotes/exit-note");
+      await noteRef.set({ id: "exit-note", projectId: project.id, ownerUserId: "exit-owner",
+        sourceNoteId: "private-source", creatorDisplayName: "Name", title: "Title", body: "Body" });
+      await assert.rejects(service.leaveProject("exit-owner", { projectId: project.id }), { code: "failed-precondition" });
+      await assert.rejects(service.leaveProject("exit-owner", { projectId: project.id, transferToUserId: "exit-owner" }), { code: "failed-precondition" });
+      await assert.rejects(service.leaveProject("exit-owner", { projectId: project.id, transferToUserId: "outsider" }), { code: "failed-precondition" });
+      await assert.rejects(service.leaveProject("exit-owner", { projectId: "invalid/path" }), { code: "invalid-argument" });
+      await service.leaveProject("outsider", { projectId: project.id });
+      assert.equal((await noteRef.get()).data().ownerUserId, "exit-owner");
+      assert.equal((await db.doc(`projects/${project.id}`).get()).data().ownerUserId, "exit-owner");
+
+      const result = await service.leaveProject("exit-owner", { projectId: project.id, transferToUserId: "exit-member" });
+      assert.equal(result.state.membershipCount, 0);
+      assert.equal(result.state.freeProjectId, null);
+      assert.equal((await db.doc(`projects/${project.id}`).get()).data().ownerUserId, "exit-member");
+      assert.equal((await db.doc(`projects/${project.id}/members/exit-member`).get()).data().role, "owner");
+      assert.equal((await db.doc(`projectMemberships/${project.id}__exit-member`).get()).data().role, "owner");
+      assert.equal((await db.doc(`projects/${project.id}/members/exit-owner`).get()).exists, false);
+      assert.equal((await db.doc(`projectMemberships/${project.id}__exit-owner`).get()).exists, false);
+      const note = (await noteRef.get()).data();
+      assert.equal(note.ownerUserId, null);
+      assert.equal(note.sourceNoteId, null);
+      assert.equal(note.creatorDisplayName, "匿名ユーザー");
+      assert.equal(note.title, "Title"); assert.equal(note.body, "Body");
+      const formerOwnerDb = env.authenticatedContext("exit-owner", createAppleToken()).firestore();
+      await assertFails(formerOwnerDb.collection("projectNotes").doc("exit-note").get());
+      await assertFails(formerOwnerDb.collection("projects").doc(project.id).get());
+      assert.equal((await service.leaveProject("exit-owner", { projectId: project.id, transferToUserId: "exit-member" })).state.membershipCount, 0);
+
+      const second = await service.createProject("other-owner", { name: "Other", tags: [] });
+      await member(second.id, "exit-viewer", "viewer");
+      await service.leaveProject("exit-viewer", { projectId: project.id });
+      assert.equal((await db.doc("projectAccessStates/exit-viewer").get()).data().freeProjectId, second.id);
+      await db.doc("projectTasks/exit-running").set({ id: "exit-running", projectId: second.id,
+        ownerUserId: "other-owner", creatorUserId: "other-owner", assigneeUserId: "exit-viewer",
+        title: "Assigned", status: "in_progress", startAt: Date.now() - 60000, elapsedMinutes: 2 });
+      await service.leaveProject("exit-viewer", { projectId: second.id });
+      const task = (await db.doc("projectTasks/exit-running").get()).data();
+      assert.equal(task.assigneeUserId, null); assert.equal(task.status, "paused");
+      assert.equal(task.ownerUserId, "other-owner"); assert.ok(task.elapsedMinutes >= 3);
+
+      // Failure after transfer must leave a safe, retryable member state.
+      const partial = await service.createProject("partial-owner", { name: "Partial", tags: [] });
+      await member(partial.id, "partial-target", "member");
+      const originalWriter = db.bulkWriter;
+      db.bulkWriter = () => { throw new Error("temporary failure"); };
+      try {
+        await assert.rejects(service.leaveProject("partial-owner", { projectId: partial.id, transferToUserId: "partial-target" }), /temporary failure/);
+      } finally { db.bulkWriter = originalWriter; }
+      assert.equal((await db.doc(`projects/${partial.id}/members/partial-owner`).get()).data().role, "member");
+      assert.equal((await service.leaveProject("partial-owner", { projectId: partial.id })).state.membershipCount, 0);
+    } finally { await deleteApp(app); }
+  });
+
   test("backend quota transactions serialize concurrent project creation and AI reservations", async () => {
     const { createRequire } = await import("node:module");
     const require = createRequire(new URL("../functions/projectAccessCore.cjs", import.meta.url).href);

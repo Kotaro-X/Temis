@@ -390,6 +390,16 @@ export const upsertNoteRecord = async (
   return record;
 };
 
+/** Explicit-save composers allocate their ID before the first attempt so retries upsert. */
+export const saveFreeNoteDraft = (record: NoteRecord): Promise<NoteRecord> =>
+  withLocalEntityMutation("memo", async () => {
+    if (record.type !== "free") throw new Error("新規メモの形式が正しくありません。");
+    await upsertNoteRecord(record);
+    const deviceId = await loadSyncDeviceId();
+    await persistAndEnqueueSyncEnvelope(buildNoteSyncEnvelope({ note: record, deviceId }));
+    return record;
+  });
+
 export const setNoteScope = (...args: Parameters<typeof setNoteScopeImpl>) => withLocalEntityMutation("memo", () => setNoteScopeImpl(...args));
 
 const setNoteScopeImpl = async (

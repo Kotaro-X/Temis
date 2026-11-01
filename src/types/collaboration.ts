@@ -140,6 +140,7 @@ export type ProjectTask = Omit<TaskPlanning, "reminder"> & {
   creatorAnonymizedAt?: number | null;
   anonymizedReason?: "project_exit" | null;
   assigneeUserId?: string | null;
+  assigneeUserIds?: string[];
   projectId: string;
   /** Older shared tasks are treated as `task` for backwards compatibility. */
   kind?: ProjectTaskKind;

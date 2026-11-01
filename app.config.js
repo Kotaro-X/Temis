@@ -79,6 +79,7 @@ module.exports = () => {
       ],
       "./plugins/withReactNativeFirebaseIos",
       "./plugins/withFmtAppleClang",
+      "./plugins/withTemisMemoWidget",
     ],
   };
 };

@@ -35,6 +35,7 @@ const SHARED_REFERENCES = [
   ["projectTasks", "ownerUserId", "=="],
   ["projectTasks", "creatorUserId", "=="],
   ["projectTasks", "assigneeUserId", "=="],
+  ["projectTasks", "assigneeUserIds", "array-contains"],
   ["projectNotes", "ownerUserId", "=="],
   ["guildPosts", "authorUserId", "=="],
   ["guildPosts", "moderation.hiddenByUserId", "=="],
@@ -268,6 +269,7 @@ const collectAccountDeletionBlockers = async (uid) => {
     ownedTasks,
     createdTasks,
     assignedTasks,
+    assignedArrays,
     ownedNotes,
     sentInvitations,
     receivedInvitations,
@@ -283,6 +285,7 @@ const collectAccountDeletionBlockers = async (uid) => {
     queryByUser("projectTasks", "ownerUserId", "==", uid),
     queryByUser("projectTasks", "creatorUserId", "==", uid),
     queryByUser("projectTasks", "assigneeUserId", "==", uid),
+    queryByUser("projectTasks", "assigneeUserIds", "array-contains", uid),
     queryByUser("projectNotes", "ownerUserId", "==", uid),
     queryByUser("projectInvitations", "inviterUserId", "==", uid),
     queryByUser("projectInvitations", "inviteeUserId", "==", uid),
@@ -311,7 +314,7 @@ const collectAccountDeletionBlockers = async (uid) => {
     }
   }
 
-  const taskDocuments = dedupeDocuments([ownedTasks, createdTasks, assignedTasks]);
+  const taskDocuments = dedupeDocuments([ownedTasks, createdTasks, assignedTasks, assignedArrays]);
   for (const document of [...taskDocuments, ...ownedNotes.docs]) {
     const projectId = document.data().projectId;
     if (!projectId || projectData.has(projectId)) continue;
@@ -350,7 +353,7 @@ const collectAccountDeletionBlockers = async (uid) => {
       }).length,
       assignedTaskCount: taskDocuments.filter((document) => {
         const data = document.data();
-        return data.projectId === projectId && data.assigneeUserId === uid && data.ownerUserId !== uid && data.creatorUserId !== uid;
+        return data.projectId === projectId && (Array.isArray(data.assigneeUserIds) ? data.assigneeUserIds.includes(uid) : data.assigneeUserId === uid) && data.ownerUserId !== uid && data.creatorUserId !== uid;
       }).length,
       ownedNoteCount: ownedNotes.docs.filter((document) => document.data().projectId === projectId).length,
       transferCandidates: candidates,
@@ -398,11 +401,30 @@ const deleteProjectOwnedContent = async (uid, projectId) => {
   await deleteDocuments(dedupeDocuments([ownedTasks, createdTasks])
     .filter((document) => document.data().projectId === projectId));
   await deleteDocuments(ownedNotes.docs.filter((document) => document.data().projectId === projectId));
-  const assignedTasks = await queryByUser("projectTasks", "assigneeUserId", "==", uid);
-  await updateDocuments(assignedTasks.docs.filter((document) => document.data().projectId === projectId), {
-    assigneeUserId: null,
-    updatedAt: Date.now(),
-  });
+  const [assignedTasks, assignedArrays] = await Promise.all([
+    queryByUser("projectTasks", "assigneeUserId", "==", uid),
+    queryByUser("projectTasks", "assigneeUserIds", "array-contains", uid),
+  ]);
+  for (const document of dedupeDocuments([assignedTasks, assignedArrays]).filter(item => item.data().projectId === projectId)) {
+    await getFirestore().runTransaction(async transaction => {
+      const latest = await transaction.get(document.ref);
+      if (!latest.exists || latest.data().projectId !== projectId) return;
+      const current = latest.data();
+      const ids = Array.isArray(current.assigneeUserIds) ? current.assigneeUserIds : current.assigneeUserId ? [current.assigneeUserId] : [];
+      if (!ids.includes(uid)) return;
+      const next = ids.filter(id => id !== uid);
+      const timestamp = Date.now();
+      transaction.update(document.ref, {
+        assigneeUserId: next[0] ?? null,
+        ...(Array.isArray(current.assigneeUserIds) ? { assigneeUserIds: next } : {}),
+        ...(next.length === 0 && (current.kind ?? "task") === "task" && current.status === "in_progress" ? {
+          status: "paused", startAt: null,
+          elapsedMinutes: (current.elapsedMinutes ?? 0) + (current.startAt == null ? 0 : Math.max(0, timestamp - current.startAt) / 60000),
+        } : {}),
+        updatedAt: timestamp,
+      });
+    });
+  }
 };
 
 const leaveProjectForAccountDeletion = async (uid, projectId, contentPolicy) => {
@@ -417,6 +439,12 @@ const leaveProjectForAccountDeletion = async (uid, projectId, contentPolicy) => 
   if (project.data()?.ownerUserId === uid || membership.data()?.role === "owner") {
     throw new HttpsError("failed-precondition", "Transfer or delete an owned project first.");
   }
+  await firestore.runTransaction(async transaction => {
+    const memberRef = firestore.doc(`projects/${projectId}/members/${uid}`);
+    const [currentMember, currentProject] = await Promise.all([transaction.get(memberRef), transaction.get(firestore.doc(`projects/${projectId}`))]);
+    if (currentProject.data()?.ownerUserId === uid || currentMember.data()?.role === "owner") throw new HttpsError("failed-precondition", "Transfer or delete an owned project first.");
+    if (currentMember.exists && currentMember.data()?.leavingAt == null) transaction.update(memberRef, { leavingAt: Date.now() });
+  });
   await deleteProjectOwnedContent(uid, projectId);
   await Promise.all([
     firestore.doc(`projectMemberships/${projectId}__${uid}`).delete(),

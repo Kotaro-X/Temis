@@ -16,6 +16,7 @@ import guildAICore from "./guildAICore.cjs";
 import guildAIIndex from "./guildAIIndex.cjs";
 import guildAIRetrieval from "./guildAIRetrieval.cjs";
 import projectAccessCore from "./projectAccessCore.cjs";
+import projectTaskMutationCore from "./projectTaskMutationCore.cjs";
 import temisAccessCore from "./temisAccessCore.cjs";
 
 const { HttpsError, onCall } = runtime;
@@ -290,6 +291,11 @@ const requireAuthUid = (request, message = "Sign in is required.") => {
   return uid;
 };
 
+export const mutateProjectTask = onCall(
+  { ...ACCESS_RUNTIME, region: REGION, timeoutSeconds: 60, maxInstances: 10 },
+  request => projectTaskMutationCore.createProjectTaskMutation(db, { allowedRoles: ["owner", "member"] })(requireAuthUid(request), request.data),
+);
+
 export const refreshTemisAccess = onCall(
   { ...ACCESS_RUNTIME, region: REGION, timeoutSeconds: 30, maxInstances: 10, secrets: ACCESS_SECRETS },
   async (request) => temisAccess.refreshAccess(requireAuthUid(request), { force: true }),
@@ -338,6 +344,11 @@ export const beginFreeProjectSelection = onCall(
     requireAuthUid(request),
     request.data?.keepProjectId,
   ),
+);
+
+export const leaveProject = onCall(
+  { ...ACCESS_RUNTIME, region: REGION, timeoutSeconds: 540, maxInstances: 3, secrets: ACCESS_SECRETS },
+  async (request) => projectAccess.leaveProject(requireAuthUid(request), request.data),
 );
 
 export const resolveProjectOverflow = onCall(

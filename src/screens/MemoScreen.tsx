@@ -1,3 +1,4 @@
+import WorkspaceScopeTrigger from '../components/app-shell/WorkspaceScopeTrigger';
 import MemoSearchField from "../components/memo/MemoSearchField";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -620,6 +621,7 @@ const MemoScreen = ({
           <Pressable style={styles.menuButton} onPress={onOpenMenu}>
             <Ionicons name="menu" size={20} color="#111827" />
           </Pressable>
+          <WorkspaceScopeTrigger />
         </View>
         <Text style={styles.headerTitle}>Memo</Text>
         <View style={styles.headerRight}>
@@ -853,6 +855,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   headerLeft: {
+    gap: 4,
     width: 120,
     flexDirection: "row",
     alignItems: "center",
@@ -888,8 +891,11 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
   menuButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 6,
+    width: 44,
+    minHeight: 44,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
   },
   backButton: {
     marginLeft: 6,

@@ -27,7 +27,7 @@ test('engagement controls remain visible while loading or failed, with safe retr
   const props = { busy: false, error: false, onRetry: () => retries++, onLike: () => likes++, onSave: () => saves++, onShowLikes: () => {} };
   for (const error of [false, true]) {
     const nodes = collect(Bar({ ...props, error }));
-    assert.deepEqual(nodes.filter(n => n.type === 'Icon').map(n => n.props.name), ['heart-outline', 'sticker-outline']);
+    assert.deepEqual(nodes.filter(n => n.type === 'Icon').map(n => n.props.name), ['heart-outline', 'bookmark-outline']);
     assert.ok(nodes.filter(n => n.type === 'Pressable').slice(0, 3).every(n => n.props.disabled));
     assert.equal(nodes.some(n => n.type === 'ActivityIndicator'), !error);
     if (error) nodes.find(n => n.props.accessibilityLabel === 'いいね・保存を再読み込み')!.props.onPress({ stopPropagation: () => stopped++ });
@@ -35,7 +35,7 @@ test('engagement controls remain visible while loading or failed, with safe retr
   const selected = collect(Bar({ ...props, state: { ...base, liked: true, saved: true } }));
   const icons = selected.filter(n => n.type === 'Icon');
   assert.equal(icons[0].props.name, 'heart'); assert.equal(icons[0].props.color, '#ef4444');
-  assert.equal(icons[1].props.name, 'sticker'); assert.equal(icons[1].props.color, '#111827');
+  assert.equal(icons[1].props.name, 'bookmark'); assert.equal(icons[1].props.color, '#111827');
   for (const label of ['いいねを解除', '保存を解除']) selected.find(n => n.props.accessibilityLabel === label)!.props.onPress({ stopPropagation: () => stopped++ });
   assert.equal(likes, 1); assert.equal(saves, 1); assert.equal(retries, 1); assert.equal(stopped, 3);
   const busy = collect(Bar({ ...props, busy: true, state: base }));
@@ -99,7 +99,7 @@ function screenFixture() {
 }
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); };
 
-test('saved shortcut clears text/tags and AI, ignores late AI/feed responses and pages saved posts', async () => {
+test('saved tab clears text/tags and AI, ignores late AI/feed responses and pages saved posts', async () => {
   const f = screenFixture(); let nodes = f.render();
   f.requests[0].task.resolve({ posts: [post('public')], cursor: null }); await flush(); nodes = f.render();
   nodes.find(n => n.type === 'TextInput')!.props.onChangeText('#old'); nodes = f.render();
@@ -107,12 +107,22 @@ test('saved shortcut clears text/tags and AI, ignores late AI/feed responses and
   nodes.find(n => n.type === 'TemisAIDock')!.props.onChangeQuery('old question'); nodes = f.render();
   const dock = nodes.find(n => n.type === 'TemisAIDock')!; dock.props.onToggle(); dock.props.onSearch(); nodes = f.render();
   const ai = f.requests.find(r => r.kind === 'ai')!;
-  nodes.find(n => n.props.accessibilityLabel === '保存したメモを開く')!.props.onPress(); nodes = f.render();
+  const savedTab = nodes.find(n => n.props.accessibilityRole === 'tab' && n.props.accessibilityLabel === '保存済み');
+  assert.ok(savedTab, 'saved feed is available as an accessible tab');
+  assert.equal(savedTab.props.accessibilityState.selected, false);
+  assert.equal(collect(savedTab).find(n => n.type === 'Icon')!.props.name, 'bookmark-outline');
+  savedTab.props.onPress(); nodes = f.render();
+  const selectedSavedTab = nodes.find(n => n.props.accessibilityRole === 'tab' && n.props.accessibilityLabel === '保存済み')!;
+  assert.equal(selectedSavedTab.props.accessibilityState.selected, true);
+  assert.equal(collect(selectedSavedTab).find(n => n.type === 'Icon')!.props.name, 'bookmark');
   assert.equal(nodes.find(n => n.type === 'TextInput')!.props.value, '');
   const closed = nodes.find(n => n.type === 'TemisAIDock')!;
   assert.equal(closed.props.query, ''); assert.equal(closed.props.expanded, false); assert.equal(closed.props.searchDisabled, false);
   const saved = f.requests.at(-1)!; assert.equal(saved.kind, 'saved');
   assert.equal(saved.input.uid, 'alice');
+  const requestCount = f.requests.length;
+  selectedSavedTab.props.onPress(); nodes = f.render();
+  assert.equal(f.requests.length, requestCount, 'reselecting the active tab keeps the pending request valid');
   saved.task.resolve({ posts: [post('saved')], cursor: { createdAt: 2, id: 'saved' } });
   oldFeed.task.resolve({ posts: [post('stale')], cursor: null });
   ai.task.resolve({ answer: 'old answer', evidencePosts: [], citations: [] }); await flush(); nodes = f.render();

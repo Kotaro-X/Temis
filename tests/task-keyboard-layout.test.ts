@@ -62,6 +62,8 @@ function renderScreen(platform: "ios" | "android", screen: "project" | "private"
     createElement: (type: any, props: any, ...children: any[]) => ({ type, props: { ...props, children } }),
     useState: (value: any) => [typeof value === "function" ? value() : value, () => {}],
     useRef: (value: any) => ({ current: value }),
+    createContext: (value: any) => ({ value }), useContext: (context: any) => context.value,
+    useId: () => "test-modal",
     useMemo: (action: any) => action(), useCallback: (action: any) => action(),
     useEffect: () => {}, useLayoutEffect: () => {},
   };

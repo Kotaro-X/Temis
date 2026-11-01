@@ -17,6 +17,7 @@ function render(cloud: any, settings: any = {}) {
       if (name.endsWith("appleSignIn")) return {};
       if (name.endsWith("SocialSignInButtons")) return { __esModule: true, default: "SocialSignInButtons" };
       if (name.endsWith("AppLanguageBridge")) return { __esModule: true, default: "LanguagePicker" };
+      if (name.endsWith("StartupSkeleton")) return { __esModule: true, default: "StartupSkeleton" };
       throw new Error(name);
     },
   });

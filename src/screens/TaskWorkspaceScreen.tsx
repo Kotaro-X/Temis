@@ -16,7 +16,7 @@ import styles from "../styles/workspaceSharedStyles";
 import type { SlotKey, Tag, TaskState, TaskStatus, TimeBoxSchedule } from "../types";
 import { SLOT_KEYS } from "../types";
 import { subscribeProjectTasks, deleteProjectTask, updateProjectTask, type MyProjectTask } from "../services/collaboration/collaborationService";
-import { projectTaskOwner } from "../services/collaboration/projectTaskCore";
+import { projectTaskAssignees } from "../services/collaboration/projectTaskCore";
 import { useCollaboration } from "../context/CollaborationContext";
 import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot, toLocalDateString } from "../utils/projectTaskPlacement";
 
@@ -168,7 +168,7 @@ const TaskWorkspaceScreen = ({
     const grouped = new Map<string, MyProjectTask[]>();
     const unsubscribers = projects.map(project => subscribeProjectTasks(project.id, tasks => {
       if (session !== projectSession.current) return;
-      grouped.set(project.id, tasks.filter(task => (task.kind ?? "task") === "task" && projectTaskOwner(task) === profile.userId).map(task => ({ project, task })));
+      grouped.set(project.id, tasks.filter(task => (task.kind ?? "task") === "task" && projectTaskAssignees(task).includes(profile.userId)).map(task => ({ project, task })));
       setProjectArchiveItems([...grouped.values()].flat().filter(item => item.task.isArchived));
       const nextBySlot = emptyProjectTasksBySlot();
       for (const item of [...grouped.values()].flat()) {

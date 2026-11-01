@@ -45,7 +45,7 @@ export default function GuildEngagementBar({ state, busy, error, onRetry, onLike
         style={styles.button}
         onPress={event => { event.stopPropagation(); onSave(); }}
       >
-        <MaterialCommunityIcons name={saved ? 'sticker' : 'sticker-outline'} size={24} color="#111827" />
+        <MaterialCommunityIcons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color="#111827" />
       </Pressable>
       {!state && !error ? <ActivityIndicator size="small" style={styles.indicator} /> : null}
       {error ? <Pressable

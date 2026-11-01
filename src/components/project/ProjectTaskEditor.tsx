@@ -3,6 +3,7 @@ import { saveRecoveryDraft, loadRecoveryDraft, clearRecoveryDraft } from "../../
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Keyboard, Pressable, ScrollView, Text, TextInput, View, StyleSheet, Platform } from "react-native";
+import { taskSaveErrorMessage } from '../../utils/taskSaveError';
 import Modal from "../common/KeyboardAwareModal";
 import TaskDetailView from "../tasks/TaskDetailView";
 import TaskTagPickerModal from "../tasks/TaskTagPickerModal";
@@ -12,7 +13,7 @@ import { useAppUI } from "../../context/AppUIContext";
 import { useCollaboration } from "../../context/CollaborationContext";
 import styles from "../../styles/workspaceSharedStyles";
 import { createProjectTask, listProjectMembers, listProjectCreatorProfiles, updateProjectTask, subscribeProjectTasks } from "../../services/collaboration/collaborationService";
-import { changedProjectTaskFields, projectTaskOwner, projectTaskState } from "../../services/collaboration/projectTaskCore";
+import { changedProjectTaskFields, projectTaskAssignees, projectTaskState } from "../../services/collaboration/projectTaskCore";
 import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot, toLocalDateString } from "../../utils/projectTaskPlacement";
 import type { Project, ProjectTask, ProjectTaskStatus } from "../../types/collaboration";
 import { SLOT_KEYS, SLOT_LABELS } from "../../types";
@@ -34,10 +35,11 @@ function ProjectTaskEditorSession({ project, task, onClose, onChanged, initialDa
   const { profile } = useCollaboration();
   const { tr, statusLabel, untitledLabel, tagOptions, timeBoxSchedule, appLanguage } = useAppSettings();
   const initial = useRef({ title: task?.title ?? "", description: task?.description ?? "", tags: task?.tags ?? [],
-    estimateMinutes: task?.estimateMinutes ?? 25, assigneeUserId: task ? projectTaskOwner(task) : profile?.userId ?? null,
+    estimateMinutes: task?.estimateMinutes ?? 25, assigneeUserIds: task ? projectTaskAssignees(task) : profile?.userId ? [profile.userId] : [],
     privateDate: task ? getProjectTaskPrivateDate(task) : initialDate ?? toLocalDateString(Date.now()),
     privateSlotKey: task ? getProjectTaskPrivateSlot(task, timeBoxSchedule) : initialSlot ?? SLOT_KEYS[0] });
   const [draft, setDraft] = useState(initial.current);
+  const assigneeBaseline = useRef(initial.current.assigneeUserIds);
   // Input handlers update this synchronously, so a save press reads the latest text
   // even when React has not yet committed the corresponding render.
   const draftRef = useRef(initial.current);
@@ -53,6 +55,8 @@ function ProjectTaskEditorSession({ project, task, onClose, onChanged, initialDa
       if (!active || !saved || draftRef.current !== initial.current) return;
       const restored = JSON.parse(saved.body) as typeof draft;
       if (typeof restored.title !== 'string' || typeof restored.description !== 'string' || !Array.isArray(restored.tags)) return;
+      const legacy = restored as typeof draft & { assigneeUserId?: string | null };
+      restored.assigneeUserIds = Array.isArray(restored.assigneeUserIds) ? restored.assigneeUserIds : legacy.assigneeUserId ? [legacy.assigneeUserId] : [];
       draftRef.current = restored; setDraft(restored);
     }).catch(() => Alert.alert('下書きを読み込めませんでした'));
     return () => { active = false; };
@@ -82,9 +86,10 @@ function ProjectTaskEditorSession({ project, task, onClose, onChanged, initialDa
       if (!current) { onClose(); return; }
       setLatest(current);
       const incoming = { title: current.title, description: current.description ?? "", tags: current.tags ?? [],
-        estimateMinutes: current.estimateMinutes ?? 25, assigneeUserId: projectTaskOwner(current),
+        estimateMinutes: current.estimateMinutes ?? 25, assigneeUserIds: projectTaskAssignees(current),
         privateDate: getProjectTaskPrivateDate(current), privateSlotKey: getProjectTaskPrivateSlot(current, timeBoxSchedule) };
       const baseline = initial.current;
+      if (JSON.stringify(draftRef.current.assigneeUserIds) === JSON.stringify(baseline.assigneeUserIds)) assigneeBaseline.current = incoming.assigneeUserIds;
       initial.current = incoming;
       const merged = { ...draftRef.current };
       for (const key of Object.keys(incoming) as (keyof typeof incoming)[]) {
@@ -113,7 +118,7 @@ function ProjectTaskEditorSession({ project, task, onClose, onChanged, initialDa
       }
     } catch (error) {
       if (alive.current) {
-        const message = error instanceof Error ? error.message : "再試行してください。";
+        const message = taskSaveErrorMessage(error);
         setSaveError(message);
         Alert.alert("保存できません", message);
       }
@@ -132,7 +137,7 @@ function ProjectTaskEditorSession({ project, task, onClose, onChanged, initialDa
       setSaveError("日付は YYYY-MM-DD形式で実在する日付を入力してください。"); return;
     }
     const next = { ...currentDraft, title: currentDraft.title.trim(), estimateMinutes: Math.max(0, currentDraft.estimateMinutes) };
-    void run(() => task ? updateProjectTask(task.id, changedProjectTaskFields(initial.current, next)) :
+    void run(() => task ? updateProjectTask(task.id, { ...changedProjectTaskFields(initial.current, next), ...(JSON.stringify(next.assigneeUserIds) !== JSON.stringify(assigneeBaseline.current) ? { assigneeUserIds: next.assigneeUserIds } : {}) }, assigneeBaseline.current) :
       createProjectTask({ projectId: project.id, kind: "task", status: newStatusRef.current, ...next }), true);
   };
   const status = (next: ProjectTaskStatus) => { if (task) void run(() => updateProjectTask(task.id, { status: next })); else { newStatusRef.current = next; setNewStatus(next); } };
@@ -180,7 +185,7 @@ function ProjectTaskEditorSession({ project, task, onClose, onChanged, initialDa
               style={[styles.inputInline, editorStyles.assigneeButton, ownerOpen && editorStyles.assigneeButtonExpanded]}
               onPress={() => { Keyboard.dismiss(); setOwnerOpen(previous => !previous); }}
             >
-              <Text numberOfLines={1} style={editorStyles.assigneeText}>{members.find(m => m.id === draft.assigneeUserId)?.name ?? (draft.assigneeUserId ? "メンバー" : "未割り当て")}</Text>
+              <Text numberOfLines={1} style={editorStyles.assigneeText}>{draft.assigneeUserIds.length ? draft.assigneeUserIds.map(id => members.find(m => m.id === id)?.name ?? "メンバー").join("、") : "未割り当て"}</Text>
               <Text accessible={false} style={editorStyles.assigneeChevron}>{ownerOpen ? "▴" : "▾"}</Text>
             </Pressable>
           </View>
@@ -194,7 +199,8 @@ function ProjectTaskEditorSession({ project, task, onClose, onChanged, initialDa
       <Modal transparent visible={ownerOpen} onRequestClose={() => setOwnerOpen(false)}>
         <View style={styles.dateOverlay}><Pressable style={styles.dateBackdrop} onPress={() => setOwnerOpen(false)} /><View style={styles.datePanel}>
           <Text style={styles.dateTitle}>担当者</Text>{memberError ? <Text>メンバーを読み込めません。画面を開き直してください。</Text> : null}
-          <ScrollView>{[{ id: null, name: "未割り当て" }, ...members].map(member => <Pressable key={member.id ?? "none"} style={styles.dateActionButton} onPress={() => { changeDraft({ assigneeUserId: member.id }); setOwnerOpen(false); }}><Text>{member.name}{draft.assigneeUserId === member.id ? " ✓" : ""}</Text></Pressable>)}</ScrollView>
+          <ScrollView>{[{ id: null, name: "未割り当て" }, ...members].map(member => { const selected = member.id === null ? draft.assigneeUserIds.length === 0 : draft.assigneeUserIds.includes(member.id); return <Pressable key={member.id ?? "none"} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} style={styles.dateActionButton} onPress={() => { const id = member.id; const ids = draftRef.current.assigneeUserIds; if (id && !ids.includes(id) && ids.length >= 500) { Alert.alert("担当者は500人まで選択できます"); return; } changeDraft({ assigneeUserIds: id === null ? [] : ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id] }); }}><Text>{member.name}{selected ? " ✓" : ""}</Text></Pressable>; })}</ScrollView>
+          <Pressable accessibilityRole="button" style={styles.dateActionButton} onPress={() => setOwnerOpen(false)}><Text>完了</Text></Pressable>
         </View></View>
       </Modal>
     </View>

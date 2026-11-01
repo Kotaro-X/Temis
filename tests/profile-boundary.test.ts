@@ -15,6 +15,7 @@ const render = (collaboration: any, cloud: any) => {
     if (name.endsWith('CollaborationContext')) return { useCollaboration: () => collaboration };
     if (name.endsWith('CloudSyncContext')) return { useCloudSyncContext: () => cloud };
     if (name.endsWith('ProfilePhotoEditor')) return {};
+    if (name.endsWith("StartupSkeleton")) return { __esModule: true, default: "StartupSkeleton" };
     throw new Error(name);
   } });
   return exports.default({ children: 'normal-app' });
@@ -27,7 +28,12 @@ test('auth restoration, signed-in pending profile and account switching never re
     [{ profileSetupStatus: 'checking', profile, accountUserId: 'bob' }, { authStatus: 'signedIn' }],
     [{ profileSetupStatus: 'required', profile: { ...profile, usernameChangedAt: null }, accountUserId: 'alice' }, { authStatus: 'signedIn' }],
   ];
-  for (const [collaboration, cloud] of states) assert.equal(render(collaboration, cloud).type, 'KeyboardAvoidingView');
+  for (const [collaboration, cloud] of states) {
+    const tree = render(collaboration, cloud);
+    const loading = cloud.authStatus === 'restoring' || collaboration.profileSetupStatus === 'checking';
+    assert.equal(tree.type, loading ? 'StartupSkeleton' : 'KeyboardAvoidingView');
+    assert.doesNotMatch(JSON.stringify(tree), /normal-app/);
+  }
 });
 test('signed-out use and completed profiles pass through; foreground loading retains complete app', () => {
   assert.equal(render({ profileSetupStatus: 'signed_out', profile: null, accountUserId: null }, { authStatus: 'signedOut', user: null }).type, 'Fragment');

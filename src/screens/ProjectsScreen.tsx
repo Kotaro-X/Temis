@@ -1,5 +1,6 @@
+import WorkspaceScopeTrigger from '../components/app-shell/WorkspaceScopeTrigger';
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -63,6 +64,7 @@ const ProjectsScreen = ({
     projectAccess,
     overflowProjects,
     resolveOverflow,
+    leaveProject,
   } = useCollaboration();
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<Project | null>(null);
@@ -79,6 +81,63 @@ const ProjectsScreen = ({
   const [keepProjectId, setKeepProjectId] = useState<string | null>(null);
   const [ownerResolution, setOwnerResolution] = useState<Record<string, string>>( {} );
   const [resolvingOverflow, setResolvingOverflow] = useState(false);
+  const [transferToUserId, setTransferToUserId] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const leaveLock = useRef(false);
+  const leaveSession = useRef("");
+  leaveSession.current = `${profile?.userId}:${selected?.id}`;
+  const selectedAccess = overflowProjects.find(item => item.project.id === selected?.id);
+  const selectedRole = selectedAccess?.role ?? myRole;
+  const transferCandidates = selectedAccess?.transferCandidates ?? [];
+
+  useEffect(() => {
+    setTransferToUserId(null);
+  }, [selected?.id, profile?.userId, selectedRole]);
+
+  useEffect(() => {
+    if (selectedAccess) setMyRole(selectedAccess.role);
+  }, [selectedAccess]);
+
+  useEffect(() => {
+    if (status !== "ready" || !selected || projects.some(project => project.id === selected.id)) return;
+    setSelected(null);
+    if (activeProjectId === selected.id) onSelectProject(null);
+  }, [status, selected, projects, activeProjectId, onSelectProject]);
+
+  const handleLeaveProject = () => {
+    if (!selected || !selectedRole || status !== "ready" || leaveLock.current) return;
+    const projectId = selected.id;
+    const session = leaveSession.current;
+    const owner = selectedRole === "owner";
+    const target = owner ? transferCandidates.find(candidate => candidate.userId === transferToUserId) : undefined;
+    if (owner && !target) return;
+    Alert.alert(
+      owner ? "所有権を移譲して退出しますか？" : "プロジェクトから退出しますか？",
+      `「${selected.name}」から退出します。${target ? `所有権は${target.label}へ移譲します。` : ""}自分が作成した共有メモ・共有タスクは「匿名ユーザー」として残り、自分の担当は解除されます。本文・タイトル内に書いた氏名などは消えません。元の編集権限は失われ、この操作は取り消せません。`,
+      [
+        { text: "キャンセル", style: "cancel" },
+        { text: owner ? "移譲して退出" : "退出する", style: "destructive", onPress: () => {
+          if (leaveLock.current || leaveSession.current !== session) return;
+          leaveLock.current = true;
+          setLeaving(true);
+          void leaveProject(projectId, target?.userId)
+            .then(() => {
+              if (leaveSession.current !== session) return;
+              setSelected(null);
+              onSelectProject(null);
+              setMembers([]); setNotes([]); setTasks([]); setMyRole(null);
+              Alert.alert("プロジェクトから退出しました");
+            })
+            .catch(cause => {
+              if (leaveSession.current !== session) return;
+              Alert.alert("退出を完了できません", `${cause instanceof Error ? cause.message : "通信状態を確認してください。"} 所属状態を確認し、所有権が移譲済みの場合はもう一度退出してください。`);
+            })
+            .finally(() => { leaveLock.current = false; setLeaving(false); });
+        } },
+      ],
+    );
+  };
+
 
   useEffect(() => {
     if (projectAccess?.status !== "selection_required") {
@@ -353,6 +412,34 @@ const ProjectsScreen = ({
             </>
           ) : null}
 
+          {status === "error" ? <View style={styles.exitSurface}>
+            <Text style={styles.error}>{error}</Text>
+            <Pressable accessibilityRole="button" onPress={() => void refresh()}><Text style={styles.textActionLabel}>所属状態を再読み込み</Text></Pressable>
+          </View> : null}
+          {selectedRole ? (
+            <View style={styles.exitSurface}>
+              <Text style={styles.rowTitle}>プロジェクトから退出</Text>
+              <Text style={styles.caption}>自分の共有メモ・共有タスクは匿名化して残り、担当は解除されます。</Text>
+              {selectedRole === "owner" ? <>
+                <Text style={styles.caption}>{transferCandidates.length ? "所有権の移譲先を選択してください。" : "他のメンバーがいないため、所有権を移譲して退出できません。"}</Text>
+                {transferCandidates.map(candidate => (
+                  <Pressable key={candidate.userId} accessibilityRole="radio"
+                    accessibilityState={{ checked: transferToUserId === candidate.userId, disabled: leaving || status !== "ready" }}
+                    disabled={leaving || status !== "ready"} style={styles.transferChoice} onPress={() => setTransferToUserId(candidate.userId)}>
+                    <Ionicons name={transferToUserId === candidate.userId ? "radio-button-on" : "radio-button-off"} size={20} color="#4b5563" />
+                    <Text style={styles.choiceText}>{candidate.label}</Text>
+                  </Pressable>
+                ))}
+              </> : null}
+              <Pressable accessibilityRole="button" disabled={leaving || status !== "ready" || (selectedRole === "owner" && !transferCandidates.some(candidate => candidate.userId === transferToUserId))}
+                accessibilityState={{ disabled: leaving || status !== "ready" || (selectedRole === "owner" && !transferToUserId), busy: leaving }}
+                style={[styles.exitButton, (leaving || status !== "ready" || (selectedRole === "owner" && !transferToUserId)) && styles.exitDisabled]}
+                onPress={handleLeaveProject}>
+                {leaving ? <ActivityIndicator color="#b91c1c" /> : <Text style={styles.exitButtonText}>{selectedRole === "owner" ? "所有権を移譲して退出" : "プロジェクトから退出"}</Text>}
+              </Pressable>
+            </View>
+          ) : null}
+
           <Text style={styles.sectionTitle}>メモ</Text>
           {notes.length === 0 ? (
             <View style={styles.emptySurface}>
@@ -423,8 +510,9 @@ const ProjectsScreen = ({
           >
             <Ionicons name="menu" size={20} color="#111827" />
           </Pressable>
+          <WorkspaceScopeTrigger />
         </View>
-        <Text style={styles.headerTitle}>プロジェクト</Text>
+        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.headerTitle}>プロジェクト</Text>
         <View style={styles.headerSideRight}>
           <Pressable
             style={styles.addButton}
@@ -581,6 +669,11 @@ const ProjectsScreen = ({
 };
 
 const styles = StyleSheet.create({
+  exitSurface: { gap: 10, padding: 14, borderRadius: 14, backgroundColor: "#fff", borderWidth: 1, borderColor: "#fee2e2" },
+  transferChoice: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  exitButton: { padding: 12, alignItems: "center", borderRadius: 10, backgroundColor: "#fef2f2" },
+  exitButtonText: { color: "#b91c1c", fontWeight: "600" },
+  exitDisabled: { opacity: 0.45 },
   container: { flex: 1, backgroundColor: "#ffffff" },
   header: {
     flexDirection: "row",
@@ -589,7 +682,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingHorizontal: 16,
   },
-  headerSide: { width: 120, flexDirection: "row", alignItems: "center" },
+  headerSide: { width: 120, gap: 4, flexDirection: "row", alignItems: "center" },
   headerSideRight: {
     width: 120,
     flexDirection: "row",
@@ -603,7 +696,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
   },
-  menuButton: { paddingHorizontal: 6, paddingVertical: 6 },
+  menuButton: { width: 44, minHeight: 44, flexShrink: 0, alignItems: "center", justifyContent: "center" },
   addButton: {
     minHeight: 32,
     flexDirection: "row",

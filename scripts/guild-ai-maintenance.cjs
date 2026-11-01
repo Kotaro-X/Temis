@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Administrative migration only. Uses the existing Firebase CLI account and
 // never writes credentials, API keys, or post bodies to stdout or disk.
+const { Buffer } = require("node:buffer");
 const { requireAuth } = require("firebase-tools/lib/requireAuth");
 const cliAuth = require("firebase-tools/lib/auth");
 const { Client, getAccessToken } = require("firebase-tools/lib/apiv2");

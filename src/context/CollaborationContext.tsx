@@ -14,6 +14,7 @@ import {
 } from "../services/collaboration/collaborationService";
 import {
   refreshProjectAccess,
+  leaveProject as leaveProjectRequest,
   resolveProjectOverflow,
   type ProjectAccessState,
   type ProjectOverflowItem,
@@ -47,6 +48,7 @@ type CollaborationContextValue = {
   saveUsername: (username: string) => Promise<void>;
   saveDisplayName: (displayName: string) => Promise<void>;
   addProject: (input: Pick<Project, "name" | "description" | "icon" | "tags">) => Promise<Project>;
+  leaveProject: (projectId: string, transferToUserId?: string) => Promise<void>;
   resolveOverflow: (keepProjectId: string, resolutions: ProjectOverflowResolution[]) => Promise<void>;
 };
 
@@ -250,10 +252,38 @@ export const CollaborationProvider = ({ children }: { children: React.ReactNode 
     await refresh();
   }, [projectStatus, refresh]);
 
+  const leaveProject = useCallback(async (projectId: string, transferToUserId?: string) => {
+    const uid = account.current;
+    if (!uid || getFirebaseAuth().currentUser?.uid !== uid) throw new Error("ログイン状態を確認してください。");
+    const generation = accountGeneration.current;
+    const request = ++projectRequest.current;
+    const current = () => generation === accountGeneration.current && account.current === uid
+      && getFirebaseAuth().currentUser?.uid === uid;
+    try {
+      const result = await leaveProjectRequest(projectId, transferToUserId);
+      if (!current()) throw new Error("アカウントが変更されました。");
+      if (request !== projectRequest.current) {
+        await refreshProjects();
+        return;
+      }
+      setTemisAccess(result.access);
+      setProjectAccess(result.state);
+      setOverflowProjects(result.projects);
+      setProjects(result.projects.map(({ project }) => project));
+      setInviteableProjects(result.projects.filter(({ project, role }) => canInviteToProject(project, role)).map(({ project }) => project));
+      setProjectError(null);
+      setProjectStatus("ready");
+    } catch (cause) {
+      // Transfer may have succeeded before leaving failed; expose its current role.
+      if (current()) await refreshProjects();
+      throw cause;
+    }
+  }, [refreshProjects]);
+
   const value = useMemo<CollaborationContextValue>(() => ({
     profile, accountUserId, profileSetupStatus, completeProfile, editPhoto, projects, inviteableProjects, temisAccess, projectAccess, overflowProjects,
-    status, error, projectStatus, projectError, refreshProfile, refreshProjects, refresh, saveUsername, saveDisplayName, addProject, resolveOverflow,
-  }), [accountUserId, profileSetupStatus, completeProfile, editPhoto, addProject, error, projectStatus, projectError, refreshProfile, refreshProjects, inviteableProjects, overflowProjects, profile, projectAccess, projects, refresh, resolveOverflow, saveDisplayName, saveUsername, status, temisAccess]);
+    status, error, projectStatus, projectError, refreshProfile, refreshProjects, refresh, saveUsername, saveDisplayName, addProject, resolveOverflow, leaveProject,
+  }), [accountUserId, profileSetupStatus, completeProfile, editPhoto, addProject, error, projectStatus, projectError, refreshProfile, refreshProjects, inviteableProjects, overflowProjects, profile, projectAccess, projects, refresh, resolveOverflow, leaveProject, saveDisplayName, saveUsername, status, temisAccess]);
 
   return <CollaborationContext.Provider value={value}>{children}</CollaborationContext.Provider>;
 };

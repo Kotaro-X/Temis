@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PanResponder, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import Modal from '../common/KeyboardAwareModal';
+import Svg, { Path } from 'react-native-svg';
 import { edgePaging, emptyEdgeHold } from '../../features/taskPlanning/edgePaging';
 import { SLOT_KEYS, SLOT_LABELS, type TimeBoxSchedule } from '../../types/timer';
 import { addDays, initialDuration, layoutIntervals, localDate, snapMinutes, timeMinutes, type PlanningOccurrence } from '../../features/taskPlanning/planningCore';
+import { createFrameQueue, timelineZoomTarget, type TimelineZoomTarget } from '../../features/taskPlanning/timelineZoom';
 
 type DragMode = 'move' | 'start' | 'end';
 type Props = { headerControls?: React.ReactNode; onPage: (direction: number) => void; selectedKeys?: string[]; onDraggingChange?: (dragging: boolean) => void; dates: string[]; items: PlanningOccurrence[]; undated: PlanningOccurrence[]; schedule: TimeBoxSchedule;
@@ -36,6 +39,27 @@ export default function TaskTimeline(props: Props) {
   const active = useRef<{ item: PlanningOccurrence; mode: DragMode; initialX: number; initialY: number; start: number; end: number; initialScroll: number; touchOffset: number } | null>(null);
   const timeAxis = useRef<ScrollView>(null); const viewport = useRef<View>(null); const vertical = useRef<ScrollView>(null); const horizontal = useRef<ScrollView>(null); const headerScroll = useRef<ScrollView>(null);
   const offsets = useRef({ x: 0, y: 0 }); const bounds = useRef({ x: 0, y: 0, height: 400 }); const pointer = useRef({ x: 0, y: 0 });
+  const pendingZoomScroll = useRef<TimelineZoomTarget | null>(null);
+  const zoomOffsetGuard = useRef<number | null>(null);
+  const contentHeights = useRef({ timeline: 0, axis: 0 });
+  const applyZoomScroll = useCallback(() => {
+    const target = pendingZoomScroll.current;
+    if (!target || Math.abs(contentHeights.current.timeline - 1440 * target.scale) > 1 || Math.abs(contentHeights.current.axis - 1440 * target.scale) > 1) return;
+    // Wait for both native content sizes. Scrolling against the old height clamps
+    // the anchor and sends stale offsets back through onScroll during a pinch.
+    offsets.current.y = target.offset;
+    zoomOffsetGuard.current = target.offset;
+    vertical.current?.scrollTo({ y: target.offset, animated: false });
+    timeAxis.current?.scrollTo({ y: target.offset, animated: false });
+    pendingZoomScroll.current = null;
+  }, []);
+  const zoomFrame = useMemo(() => createFrameQueue<TimelineZoomTarget>(target => {
+    pendingZoomScroll.current = target;
+    scaleRef.current = target.scale;
+    setScale(target.scale);
+    applyZoomScroll();
+  }, requestAnimationFrame, cancelAnimationFrame), [applyZoomScroll]);
+  useEffect(() => () => zoomFrame.cancel(), [zoomFrame]);
   const [dragging, setDragging] = useState(false); const previewRef = useRef(preview); previewRef.current = preview;
   const measure = () => viewport.current?.measureInWindow((x, y, _w, height) => { bounds.current = { x, y, height }; const available = Math.max(160, windowHeight - y - 90); setViewportHeight(previous => Math.abs(previous - available) > 1 ? available : previous); });
   const edge = useRef(emptyEdgeHold()); const paging = useRef(false); const acquired = useRef(false);
@@ -84,7 +108,8 @@ export default function TaskTimeline(props: Props) {
     } else { active.current = null; setDragging(false); setPreview(null); previewRef.current = null; }
   }, [dates.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
   const begin = (item: PlanningOccurrence, mode: DragMode, x: number, y: number) => {
-    if (pinch.current) return;
+    if (pinch.current || pendingZoomScroll.current) return;
+    zoomOffsetGuard.current = null;
     const start = item.plannedStartAt ?? new Date(`${dates[0]}T09:00:00`).getTime();
     active.current = { item, mode, initialX: x, initialY: y, start, end: item.plannedEndAt ?? start + initialDuration(item.estimateMinutes) * 60000, initialScroll: offsets.current.y, touchOffset: 0 };
     edge.current = emptyEdgeHold(); acquired.current = false; pointer.current = { x, y }; setDragging(true);
@@ -105,20 +130,14 @@ export default function TaskTimeline(props: Props) {
     const center = Math.max(0, Math.min(bounds.current.height, (first.pageY + second.pageY) / 2 - bounds.current.y));
     if (!pinch.current) {
       end(true);
+      vertical.current?.scrollTo({ y: offsets.current.y, animated: false });
       pinch.current = { distance: Math.max(1, distance), scale: scaleRef.current, minute: (offsets.current.y + center) / scaleRef.current };
       setPinching(true);
     }
-    const next = Math.max(0.5, Math.min(3, pinch.current.scale * distance / pinch.current.distance));
-    scaleRef.current = next;
-    setScale(next);
-    offsets.current.y = Math.max(0, Math.min(Math.max(0, 1440 * next - bounds.current.height), pinch.current.minute * next - center));
+    zoomFrame.push(timelineZoomTarget(pinch.current, distance, center, bounds.current.height));
   };
-  useEffect(() => {
-    vertical.current?.scrollTo({ y: offsets.current.y, animated: false });
-    timeAxis.current?.scrollTo({ y: offsets.current.y, animated: false });
-  }, [scale]);
   const finishGesture = (cancel = false) => {
-    if (pinch.current) { pinch.current = null; setPinching(false); }
+    if (pinch.current) { zoomFrame.flush(); pinch.current = null; setPinching(false); }
     else end(cancel);
   };
   const handlers = useRef({ move, finishGesture, zoom }); handlers.current = { move, finishGesture, zoom };
@@ -134,7 +153,17 @@ export default function TaskTimeline(props: Props) {
     onPanResponderTerminate: () => handlers.current.finishGesture(true),
     onPanResponderTerminationRequest: () => false,
   }), []);
-  const displayed = preview ? [...items.filter(item => item.key !== preview.item.key), { ...preview.item, plannedStartAt: preview.start, plannedEndAt: preview.end, date: localDate(preview.start) }] : items;
+  const displayed = useMemo(() => preview ? [...items.filter(item => item.key !== preview.item.key), { ...preview.item, plannedStartAt: preview.start, plannedEndAt: preview.end, date: localDate(preview.start) }] : items, [items, preview]);
+  // Overlap sorting depends on dates and tasks, never on the zoom scale.
+  const columns = useMemo(() => dates.map(date => {
+    const midnight = new Date(`${date}T00:00:00`).getTime(); const next = new Date(`${addDays(date,1)}T00:00:00`).getTime();
+    const intervals = layoutIntervals(displayed.filter(item => item.plannedStartAt != null && item.plannedEndAt != null && item.plannedStartAt < next && item.plannedEndAt > midnight).map(item => ({ ...item, start: Math.max(0, (item.plannedStartAt! - midnight) / 60000), end: Math.min(1440, (item.plannedEndAt! - midnight) / 60000) })));
+    return { date, intervals };
+  }), [dates, displayed]);
+  const gridPaths = useMemo(() => {
+    const lines = Array.from({ length: 48 }, (_, half) => `M0 ${half * 30 * scale}H${columnWidth}`);
+    return { hours: lines.filter((_, half) => half % 2 === 0).join(' '), halves: lines.filter((_, half) => half % 2 !== 0).join(' ') };
+  }, [scale, columnWidth]);
   const drawerItems = drawer === 'undated' ? undated : items.filter(item => item.date === drawerDate && item.slot === drawer && item.plannedStartAt == null);
   return <View style={{ flex: 1 }} onLayout={event => { setWidth(event.nativeEvent.layout.width); measure(); }}>
     <View style={s.buttons}>{props.headerControls}</View>
@@ -149,16 +178,25 @@ export default function TaskTimeline(props: Props) {
     {preview ? <Text accessibilityLiveRegion="polite" style={s.preview}>{localDate(preview.start)} {new Date(preview.start).toTimeString().slice(0,5)} – {localDate(preview.end)} {new Date(preview.end).toTimeString().slice(0,5)}</Text> : null}
     <ScrollView ref={headerScroll} horizontal scrollEnabled={false} showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }}><View style={{ flexDirection: 'row', paddingLeft: axisWidth }}>{dates.map(date => <Text key={date} style={[s.day, { width: columnWidth }]}>{date.slice(5)} {['日','月','火','水','木','金','土'][new Date(`${date}T12:00:00`).getDay()]}</Text>)}</View></ScrollView>
     <View {...responder.panHandlers} ref={viewport} style={{ height: viewportHeight }} onLayout={measure}>
-      <ScrollView ref={vertical} nestedScrollEnabled scrollEnabled={!dragging && !pinching} onScroll={event => { offsets.current.y = event.nativeEvent.contentOffset.y; timeAxis.current?.scrollTo({ y: offsets.current.y, animated: false }); }} scrollEventThrottle={16}>
+      <ScrollView ref={vertical} nestedScrollEnabled scrollEnabled={!dragging && !pinching} onContentSizeChange={(_width, height) => { contentHeights.current.timeline = height; applyZoomScroll(); }} onScrollBeginDrag={() => { zoomOffsetGuard.current = null; }} onScroll={event => {
+        if (pinch.current || pendingZoomScroll.current) return;
+        const y = event.nativeEvent.contentOffset.y;
+        if (zoomOffsetGuard.current !== null && Math.abs(y - zoomOffsetGuard.current) > 1) return;
+        zoomOffsetGuard.current = null;
+        offsets.current.y = y; timeAxis.current?.scrollTo({ y, animated: false });
+      }} scrollEventThrottle={16}>
         <ScrollView ref={horizontal} horizontal nestedScrollEnabled scrollEnabled={!dragging && !pinching} onScroll={event => { offsets.current.x = event.nativeEvent.contentOffset.x; headerScroll.current?.scrollTo({ x: offsets.current.x, animated: false }); }} scrollEventThrottle={16}>
           <View style={{ width: axisWidth + columnWidth * dates.length, height: 1440 * scale, flexDirection: 'row' }}>
-            <View style={{ width: axisWidth }}>{Array.from({ length: 24 }, (_, h) => <Text key={h} style={[s.hour, { top: h * 60 * scale }]}>{String(h).padStart(2,'0')}:00</Text>)}</View>
-            {dates.map(date => {
-              const midnight = new Date(`${date}T00:00:00`).getTime(); const next = new Date(`${addDays(date,1)}T00:00:00`).getTime();
-              const intervals = layoutIntervals(displayed.filter(item => item.plannedStartAt != null && item.plannedEndAt != null && item.plannedStartAt < next && item.plannedEndAt > midnight).map(item => ({ ...item, start: Math.max(0, (item.plannedStartAt! - midnight) / 60000), end: Math.min(1440, (item.plannedEndAt! - midnight) / 60000) })));
+            <View style={{ width: axisWidth }} />
+            {columns.map(({ date, intervals }) => {
               return <View key={date} style={{ width: columnWidth, height: 1440 * scale, borderLeftWidth: 1, borderColor: '#d1d5db' }}>
                 {SLOT_KEYS.map((slot, index) => <Pressable key={slot} onPress={() => { setDrawerDate(date); setDrawer(drawer === slot && drawerDate === date ? null : slot); }} style={{ position: 'absolute', left: 0, right: 0, top: timeMinutes(schedule[slot].start) * scale, height: Math.max(0, timeMinutes(schedule[slot].end) - timeMinutes(schedule[slot].start)) * scale, backgroundColor: ['#fef9ed','#eff6ff','#f0fdf4','#faf5ff'][index] }}><Text style={s.boxLabel}>{SLOT_LABELS[slot]}</Text></Pressable>)}
-                {Array.from({ length: 48 }, (_, half) => <Pressable key={half} disabled={!canCreate || dragging || pinching} onPress={event => onCreate(date, Math.max(0, Math.min(1435, snapMinutes(half * 30 + event.nativeEvent.locationY / scale))))} style={{ position: 'absolute', top: half * 30 * scale, height: 30 * scale, left: 0, right: 0, borderTopWidth: half % 2 === 0 ? 1 : 0.5, borderColor: '#e5e7eb' }} />)}
+                <Pressable accessibilityLabel={`${date} 予定を作成`} disabled={!canCreate || dragging || pinching} onPress={event => onCreate(date, Math.max(0, Math.min(1435, snapMinutes(event.nativeEvent.locationY / scale))))} style={StyleSheet.absoluteFill}>
+                  <Svg pointerEvents="none" width={columnWidth} height={1440 * scale}>
+                    <Path d={gridPaths.hours} stroke="#e5e7eb" strokeWidth={1} />
+                    <Path d={gridPaths.halves} stroke="#e5e7eb" strokeWidth={0.5} />
+                  </Svg>
+                </Pressable>
                 {SLOT_KEYS.map(slot => <Pressable key={`label-${slot}`} accessibilityRole="button" style={{ position: 'absolute', top: timeMinutes(schedule[slot].start) * scale, right: 0, maxWidth: '100%', zIndex: 2, minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, backgroundColor: '#ffffffdd', borderRadius: 6 }} onPress={() => { setDrawerDate(date); setDrawer(drawer === slot && drawerDate === date ? null : slot); }}><Text style={[s.boxLabel, { textAlign: 'right' }]}>【{SLOT_LABELS[slot]}】時間未設定のタスク</Text></Pressable>)}
                 {intervals.map(item => <View key={item.key} style={[s.event, { top: item.start * scale, height: Math.max(20, (item.end - item.start) * scale), left: item.column * columnWidth / item.columns + 2, width: columnWidth / item.columns - 4, opacity: item.completed ? 0.55 : 1, borderWidth: preview?.item.key === item.key || props.selectedKeys?.includes(item.key) ? 2 : 0 }]}>
                   {item.editable !== false ? tile(item, <View style={s.handle} />, 'start') : null}
@@ -170,7 +208,7 @@ export default function TaskTimeline(props: Props) {
           </View>
         </ScrollView>
       </ScrollView>
-      <ScrollView ref={timeAxis} pointerEvents="none" scrollEnabled={false} showsVerticalScrollIndicator={false} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: axisWidth, backgroundColor: '#fff' }}><View style={{ height: 1440 * scale }}>{Array.from({ length: 24 }, (_, h) => <Text key={h} style={[s.hour, { top: h * 60 * scale }]}>{String(h).padStart(2, '0')}:00</Text>)}</View></ScrollView>
+      <ScrollView ref={timeAxis} pointerEvents="none" scrollEnabled={false} onContentSizeChange={(_width, height) => { contentHeights.current.axis = height; applyZoomScroll(); }} showsVerticalScrollIndicator={false} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: axisWidth, backgroundColor: '#fff' }}><View style={{ height: 1440 * scale }}>{Array.from({ length: 24 }, (_, h) => <Text key={h} style={[s.hour, { top: h * 60 * scale }]}>{String(h).padStart(2, '0')}:00</Text>)}</View></ScrollView>
       <Pressable accessibilityRole="button" accessibilityLabel={`日付未定 ${undated.length}件`} style={[s.button, s.undated]} onPress={() => setDrawer('undated')}><Text>日付未定 {undated.length}</Text></Pressable>
     </View>
   </View>;

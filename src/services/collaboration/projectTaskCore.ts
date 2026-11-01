@@ -2,10 +2,14 @@ import { normalizePlanning } from '../../features/taskPlanning/planningCore.ts';
 import type { ProjectTask, ProjectTaskStatus } from "../../types/collaboration.ts";
 import type { TaskState } from "../../types/task.ts";
 
-export const projectTaskOwner = (task: ProjectTask, memberIds?: readonly string[]): string | null => {
-  const owner = task.assigneeUserId !== undefined ? task.assigneeUserId : task.creatorUserId ?? task.ownerUserId;
-  return owner && (!memberIds || memberIds.includes(owner)) ? owner : null;
+export const projectTaskAssignees = (task: ProjectTask, memberIds?: readonly string[]): string[] => {
+  const legacy = task.assigneeUserId !== undefined ? task.assigneeUserId : task.creatorUserId ?? task.ownerUserId;
+  const ids = Array.isArray(task.assigneeUserIds) ? task.assigneeUserIds : legacy ? [legacy] : [];
+  return [...new Set(ids)].filter(id => !memberIds || memberIds.includes(id));
 };
+
+export const projectTaskOwner = (task: ProjectTask, memberIds?: readonly string[]): string | null =>
+  projectTaskAssignees(task, memberIds)[0] ?? null;
 
 export const projectTaskElapsed = (task: Pick<ProjectTask, "status" | "elapsedMinutes" | "startAt">, timestamp: number): number =>
   Math.max(0, task.elapsedMinutes ?? 0) +

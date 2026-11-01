@@ -1,4 +1,5 @@
 import { occurrenceMemoTaskId, taskMemoBody } from '../../features/taskPlanning/memoCore';
+import { taskSaveErrorMessage } from '../../utils/taskSaveError';
 import { subscribeMemoChanges } from '../../features/taskPlanning/memoEvents';
 import { useAppRefresh } from '../../context/AppRefreshContext';
 import { registerEnvironmentSaveHandler } from '../../services/environment/switchLifecycle';
@@ -10,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Modal from '../common/KeyboardAwareModal';
 import TaskScheduleFields, { clockText, parseSchedule, scheduleDraft } from './TaskScheduleFields';
 import TaskDetailView from './TaskDetailView';
+import { taskChipHitSlop, taskChipStyles } from './taskChipStyles';
 import TaskMemoFields from './TaskMemoFields';
 import TaskTagPickerModal from './TaskTagPickerModal';
 import { useAppSettings } from '../../context/AppSettingsContext';
@@ -19,7 +21,7 @@ import { useCollaboration } from '../../context/CollaborationContext';
 import { useTaskPlanning } from '../../features/taskPlanning/TaskPlanningProvider';
 import { getWorkspaceEpoch } from '../../services/account/workspaceEpoch';
 import { updateProjectTask, createProjectTask, listProjectMembers, listProjectCreatorProfiles } from '../../services/collaboration/collaborationService';
-import { changedProjectTaskFields, projectTaskOwner, projectTaskState } from '../../services/collaboration/projectTaskCore';
+import { changedProjectTaskFields, projectTaskAssignees, projectTaskState } from '../../services/collaboration/projectTaskCore';
 import { loadMemoByTaskId, updateMemo } from '../../repositories/memoRepository';
 import { createEmptyTask } from '../../../storage';
 import { writePlannedTask, mutatePlannedTask } from '../../repositories/taskRepository';
@@ -45,7 +47,7 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
   const privateRecord = store.privateRecords.find(record => record.task.id === item?.id);
   const sharedRecord = store.projects.find(record => `project:${record.task.id}` === item?.id);
   const sharedBaseline = useRef<ProjectTask | undefined>(sharedRecord ? { ...sharedRecord.task, description: sharedRecord.task.description ?? '', tags: sharedRecord.task.tags ?? [], estimateMinutes: sharedRecord.task.estimateMinutes ?? 25,
-    assigneeUserId: projectTaskOwner(sharedRecord.task), privateDate: getProjectTaskPrivateDate(sharedRecord.task) === UNDATED_TASKS ? null : getProjectTaskPrivateDate(sharedRecord.task), privateSlotKey: getProjectTaskPrivateSlot(sharedRecord.task, timeBoxSchedule), plannedStartAt: sharedRecord.task.plannedStartAt ?? null, plannedEndAt: sharedRecord.task.plannedEndAt ?? null, repeat: sharedRecord.task.repeat ?? 'none', repeatAnchorDate: sharedRecord.task.repeatAnchorDate ?? null } : undefined);
+    assigneeUserIds: projectTaskAssignees(sharedRecord.task), privateDate: getProjectTaskPrivateDate(sharedRecord.task) === UNDATED_TASKS ? null : getProjectTaskPrivateDate(sharedRecord.task), privateSlotKey: getProjectTaskPrivateSlot(sharedRecord.task, timeBoxSchedule), plannedStartAt: sharedRecord.task.plannedStartAt ?? null, plannedEndAt: sharedRecord.task.plannedEndAt ?? null, repeat: sharedRecord.task.repeat ?? 'none', repeatAnchorDate: sharedRecord.task.repeatAnchorDate ?? null } : undefined);
   const source = useMemo(() => sharedRecord ? projectTaskState(sharedRecord.task) : privateRecord?.task, [sharedRecord, privateRecord]);
   const privateBaseline = useRef(source);
   const [task, setTask] = useState<TaskState>(() => ({ ...(source ?? createEmptyTask()), ...(!item && initialMinute != null ? { estimateMinutes: 30 } : {}), ...(item ? { taskName: item.title, tags: item.occurrenceOverrides?.[item.occurrenceDate]?.tags ?? source?.tags ?? [], estimateMinutes: item.estimateMinutes, elapsedMinutes: item.elapsedMinutes ?? source?.elapsedMinutes ?? 0, startAt: item.startAt ?? null, status: item.completed ? 'DONE' : item.executionStatus ?? source?.status ?? 'TODO' } : {}) }));
@@ -60,7 +62,8 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
   const bodyEdited = useRef(false);
   const [body, setBody] = useState(item?.occurrenceOverrides?.[item.occurrenceDate]?.memo ?? sharedRecord?.task.description ?? '');
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
-  const [assignee, setAssignee] = useState<string | null>(sharedRecord ? projectTaskOwner(sharedRecord.task) : profile?.userId ?? null);
+  const [assignee, setAssignee] = useState<string[]>(sharedRecord ? projectTaskAssignees(sharedRecord.task) : profile?.userId ? [profile.userId] : []);
+  const assigneeBaseline = useRef(sharedRecord ? projectTaskAssignees(sharedRecord.task) : []);
   const [tagOpen, setTagOpen] = useState(false); const [scope, setScope] = useState<'this' | 'all'>('this');
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const createdProjectId = useRef<string | null>(null);
@@ -75,7 +78,7 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
       if (!active || !saved || bodyEdited.current) return;
       const recovered = JSON.parse(saved.body) as typeof draftRef.current;
       if (!recovered.task || typeof recovered.task.taskName !== 'string' || !recovered.schedule) return;
-      bodyEdited.current = true; setTask(recovered.task); setSchedule(recovered.schedule); setBody(recovered.body); setAssignee(recovered.assignee); setScope(recovered.scope);
+      bodyEdited.current = true; setTask(recovered.task); setSchedule(recovered.schedule); setBody(recovered.body); setAssignee(Array.isArray(recovered.assignee) ? recovered.assignee : recovered.assignee ? [recovered.assignee] : []); setScope(recovered.scope);
     }).catch(() => setError('下書きを読み込めませんでした。'));
     return () => { active = false; };
   }, [recoveryId]);
@@ -109,7 +112,13 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
     if (lock.current || epoch.current !== getWorkspaceEpoch()) return;
     lock.current = true; setBusy(true); setError(null);
     try { await action(); if (alive.current && epoch.current === getWorkspaceEpoch()) { if (close) { await clearRecoveryDraft(recoveryId); onClose(); } } }
-    catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : '保存できませんでした。'); }
+    catch (cause) {
+      if (alive.current && epoch.current === getWorkspaceEpoch()) {
+        const message = taskSaveErrorMessage(cause);
+        setError(message);
+        Alert.alert('タスクを保存できません', message);
+      }
+    }
     finally { lock.current = false; if (alive.current) setBusy(false); }
   };
   const save = () => { void run(async () => {
@@ -123,7 +132,7 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
       let id = sharedRecord?.task.id ?? createdProjectId.current;
       if (!readOnly) {
         const patch = { title: task.taskName.trim(), description: bodyEdited.current || !sharedRecord ? body : sharedRecord.task.description ?? '', tags: task.tags, estimateMinutes: parsed.estimateMinutes ?? task.estimateMinutes,
-          assigneeUserId: assignee, privateDate: parsed.date === UNDATED_TASKS ? null : parsed.date, privateSlotKey: parsed.slot,
+          assigneeUserIds: assignee, privateDate: parsed.date === UNDATED_TASKS ? null : parsed.date, privateSlotKey: parsed.slot,
           plannedStartAt: parsed.planning.plannedStartAt ?? null, plannedEndAt: parsed.planning.plannedEndAt ?? null,
           repeat: parsed.planning.repeat, repeatAnchorDate: recurring && scope === 'all' && schedule.date === item?.date ? sharedRecord?.task.repeatAnchorDate ?? sharedRecord?.task.privateDate ?? schedule.date : parsed.planning.repeatAnchorDate };
         if (recurring && scope === 'all' && schedule.date === item?.date && sharedRecord) {
@@ -131,15 +140,17 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
           if (patch.plannedStartAt != null && patch.plannedEndAt != null) { const duration = patch.plannedEndAt - patch.plannedStartAt; patch.plannedStartAt = new Date(`${patch.repeatAnchorDate}T${new Date(patch.plannedStartAt).toTimeString().slice(0,8)}`).getTime(); patch.plannedEndAt = patch.plannedStartAt + duration; }
         }
         if (id && recurring && scope === 'this') {
-          const updated = await updateProjectTask(id, occurrencePatch({}, item.occurrenceDate, { date: parsed.date, slot: parsed.slot, plannedStartAt: patch.plannedStartAt ?? null, plannedEndAt: patch.plannedEndAt ?? null, estimateMinutes: patch.estimateMinutes, completed: task.status === 'DONE', title: patch.title, ...(bodyEdited.current ? { memo: body } : {}), tags: task.tags }));
+          const updated = await updateProjectTask(id, { ...occurrencePatch({}, item.occurrenceDate, { date: parsed.date, slot: parsed.slot, plannedStartAt: patch.plannedStartAt ?? null, plannedEndAt: patch.plannedEndAt ?? null, estimateMinutes: patch.estimateMinutes, completed: task.status === 'DONE', title: patch.title, ...(bodyEdited.current ? { memo: body } : {}), tags: task.tags }), ...(JSON.stringify(assignee) !== JSON.stringify(assigneeBaseline.current) ? { assigneeUserIds: assignee } : {}) }, assigneeBaseline.current);
+          assigneeBaseline.current = projectTaskAssignees(updated);
           if (epoch.current === getWorkspaceEpoch()) store.acceptProjectTask(updated);
         } else if (id) {
           const changes = sharedBaseline.current ? changedProjectTaskFields(sharedBaseline.current, { ...sharedBaseline.current, ...patch }) : patch;
           if (!bodyEdited.current && sharedRecord) delete changes.description;
-          const updated = await updateProjectTask(id, changes);
+          const updated = await updateProjectTask(id, changes, assigneeBaseline.current);
+          assigneeBaseline.current = projectTaskAssignees(updated);
           if (epoch.current === getWorkspaceEpoch()) store.acceptProjectTask(updated);
         }
-        else { const created = await createProjectTask({ ...patch, projectId, kind: 'task', status: 'todo' }); id = created.id; createdProjectId.current = id; sharedBaseline.current = created; if (epoch.current === getWorkspaceEpoch()) store.acceptProjectTask(created); }
+        else { const created = await createProjectTask({ ...patch, projectId, kind: 'task', status: 'todo' }); id = created.id; createdProjectId.current = id; sharedBaseline.current = created; assigneeBaseline.current = projectTaskAssignees(created); if (epoch.current === getWorkspaceEpoch()) store.acceptProjectTask(created); }
       }
       if (epoch.current !== getWorkspaceEpoch()) throw new Error('アカウントが切り替わりました。');
       // Task content has already committed. Only write personal notification
@@ -193,7 +204,7 @@ export default function TaskPlanningEditor({ item, projectId, initialDate, initi
           }}
           onStart={() => transition('IN_PROGRESS')} onPause={() => transition('PAUSED')} onDone={() => transition('DONE')}>
           {projectId ? <View style={sharedStyles.row}><Text style={sharedStyles.label}>担当者</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ gap: 8 }}>
-            {[{ id: null, name: '未割り当て' }, ...members].map(member => <Pressable key={member.id ?? 'none'} accessibilityRole="button" accessibilityState={{ selected: member.id === assignee }} onPress={() => setAssignee(member.id)} style={{ minHeight: 44, justifyContent: 'center', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 18, backgroundColor: member.id === assignee ? '#dbeafe' : '#f0f0ee' }}><Text style={{ fontSize: 12, color: member.id === assignee ? '#1e40af' : '#4b5563' }}>{member.name}</Text></Pressable>)}
+            {[{ id: null, name: '未割り当て' }, ...members].map(member => { const selected = member.id === null ? assignee.length === 0 : assignee.includes(member.id); return <Pressable key={member.id ?? 'none'} hitSlop={taskChipHitSlop} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => { const id = member.id; if (id && !assignee.includes(id) && assignee.length >= 500) { Alert.alert('担当者は500人まで選択できます'); return; } setAssignee(id === null ? [] : assignee.includes(id) ? assignee.filter(value => value !== id) : [...assignee, id]); }} style={[taskChipStyles.chip, { backgroundColor: selected ? '#dbeafe' : '#f0f0ee' }]}><Text style={{ fontSize: 12, color: selected ? '#1e40af' : '#4b5563' }}>{member.name}</Text></Pressable>; })}
           </ScrollView></View> : null}
           <TaskMemoFields body={body} setBody={value => { bodyEdited.current = true; setBody(value); }} language={appLanguage} onSearchToken={openMemoSearch} />
         </TaskDetailView>

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
-import { changedProjectTaskFields, projectTaskOwner, projectTaskState } from "../src/services/collaboration/projectTaskCore.ts";
+import { changedProjectTaskFields, projectTaskOwner, projectTaskAssignees, projectTaskState } from "../src/services/collaboration/projectTaskCore.ts";
 import type { ProjectTask } from "../src/types/collaboration.ts";
 
 type Element = { type: any; props: any };
@@ -30,7 +30,7 @@ function fixture({ task = null, create = async () => ({}), update = async () => 
   const native = { Platform: { OS: "ios" }, Alert: { alert: (...values: any[]) => alerts.push(values) }, Keyboard: { dismiss: () => {} },
     StyleSheet: { create: (styles: any) => styles, hairlineWidth: 0.5 },
     Pressable: "Pressable", Text: "Text", View: "View", TextInput: "TextInput", ScrollView: "ScrollView" };
-  const core = { changedProjectTaskFields, projectTaskOwner, projectTaskState };
+  const core = { changedProjectTaskFields, projectTaskOwner, projectTaskAssignees, projectTaskState };
   const exports: any = {};
   vm.runInNewContext(ts.transpileModule(readFileSync("src/components/project/ProjectTaskEditor.tsx", "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },
@@ -49,6 +49,7 @@ function fixture({ task = null, create = async () => ({}), update = async () => 
       listProjectMembers: async () => [], listProjectCreatorProfiles: async () => [], subscribeProjectTasks: () => () => {},
     };
     if (name.endsWith("projectTaskCore")) return core;
+    if (name.endsWith("taskSaveError")) return { taskSaveErrorMessage: (error: Error) => error.message };
     if (name.endsWith("projectTaskPlacement")) return { toLocalDateString: (timestamp: number) => {
       const d = new Date(timestamp); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     }, getProjectTaskPrivateDate: () => "2026-10-07", getProjectTaskPrivateSlot: () => "morning" };

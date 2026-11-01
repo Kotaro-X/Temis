@@ -563,8 +563,13 @@ service cloud.firestore {
       return /databases/$(database)/documents/projects/$(projectId)/members/$(userId);
     }
 
+    function isActiveProjectMember(projectId, userId) {
+      return exists(projectMemberPath(projectId, userId))
+        && get(projectMemberPath(projectId, userId)).data.get("leavingAt", null) == null;
+    }
+
     function isProjectMember(projectId) {
-      return signedIn() && exists(projectMemberPath(projectId, request.auth.uid));
+      return signedIn() && isActiveProjectMember(projectId, request.auth.uid);
     }
 
     function projectRole(projectId) {
@@ -842,7 +847,7 @@ service cloud.firestore {
         && data.get("elapsedMinutes", 0) is number && data.get("elapsedMinutes", 0) >= 0
         && (data.get("startAt", null) == null || (data.startAt is number && data.startAt >= 0))
         && (data.status == "in_progress" || data.get("startAt", null) == null)
-        && (data.get("assigneeUserId", null) == null || (data.assigneeUserId is string && exists(projectMemberPath(data.projectId, data.assigneeUserId))));
+        && (data.get("assigneeUserId", null) == null || (data.assigneeUserId is string && isActiveProjectMember(data.projectId, data.assigneeUserId)));
     }
 
     match /projectNotes/{noteId} {
@@ -883,7 +888,7 @@ service cloud.firestore {
             && request.resource.data.get("creatorAnonymizedAt", null) == resource.data.get("creatorAnonymizedAt", null)
             && request.resource.data.get("anonymizedReason", null) == resource.data.get("anonymizedReason", null))
         );
-      allow delete: if signedIn() && hasProjectDataAccess(resource.data.projectId)
+      allow delete: if signedIn() && resource.data.get("sourceTaskId", null) == null && hasProjectDataAccess(resource.data.projectId)
         && ((resource.data.ownerUserId == null && resource.data.get("anonymizedReason", null) == "project_exit"
           && isProjectOwner(resource.data.projectId))
           || resource.data.ownerUserId == request.auth.uid);
@@ -892,6 +897,7 @@ service cloud.firestore {
     match /projectTasks/{taskId} {
       allow read: if isProjectMember(resource.data.projectId) && hasProjectDataAccess(resource.data.projectId);
       allow create: if projectRole(request.resource.data.projectId) in ["owner", "member"] && signedIn() && request.resource.data.id == taskId
+        && !request.resource.data.keys().hasAny(["assigneeUserIds"])
         && request.resource.data.ownerUserId == request.auth.uid
         && request.resource.data.creatorUserId == request.auth.uid
         && (isProjectEditor(request.resource.data.projectId) || (request.resource.data.get("kind", "task") == "task" && isProjectMember(request.resource.data.projectId)))
@@ -900,8 +906,13 @@ service cloud.firestore {
         && (!request.resource.data.keys().hasAny(["anonymizedReason"]) || request.resource.data.anonymizedReason == null)
         && get(projectPath(request.resource.data.projectId)).data.taskEnabled == true
         && validSharedTask(request.resource.data)
-        && (request.resource.data.get("assigneeUserId", null) == null || exists(projectMemberPath(request.resource.data.projectId, request.resource.data.assigneeUserId)));
+        && (request.resource.data.get("assigneeUserId", null) == null || isActiveProjectMember(request.resource.data.projectId, request.resource.data.assigneeUserId));
       allow update: if projectRole(resource.data.projectId) in ["owner", "member"] && signedIn() && isProjectMember(resource.data.projectId)
+        && (resource.data.get("assigneeUserIds", null) == null
+          ? !request.resource.data.keys().hasAny(["assigneeUserIds"])
+          : (resource.data.assigneeUserIds is list && resource.data.assigneeUserIds.size() <= 1
+            && request.resource.data.get("assigneeUserIds", null) == resource.data.assigneeUserIds
+            && request.resource.data.get("assigneeUserId", null) == resource.data.get("assigneeUserId", null)))
         && hasProjectDataAccess(resource.data.projectId)
         && request.resource.data.projectId == resource.data.projectId
         && request.resource.data.id == resource.data.id
@@ -926,8 +937,9 @@ service cloud.firestore {
               || request.resource.data.get("deletedAt", null) == resource.data.get("deletedAt", null)))
           || (resource.data.get("anonymizedReason", null) != "project_exit"
             && (projectRole(resource.data.projectId) in ["owner", "member"] || resource.data.ownerUserId == request.auth.uid || resource.data.creatorUserId == request.auth.uid || resource.data.assigneeUserId == request.auth.uid)))
-        && (request.resource.data.get("assigneeUserId", null) == null || exists(projectMemberPath(resource.data.projectId, request.resource.data.assigneeUserId)));
+        && (request.resource.data.get("assigneeUserId", null) == null || isActiveProjectMember(resource.data.projectId, request.resource.data.assigneeUserId));
       allow delete: if projectRole(resource.data.projectId) in ["owner", "member"] && signedIn() && hasProjectDataAccess(resource.data.projectId)
+        && (resource.data.get("assigneeUserIds", null) == null || (resource.data.assigneeUserIds is list && resource.data.assigneeUserIds.size() <= 1))
         && ((resource.data.get("anonymizedReason", null) == "project_exit" && isProjectOwner(resource.data.projectId))
           || (resource.data.get("anonymizedReason", null) != "project_exit" && (isProjectOwner(resource.data.projectId) || resource.data.ownerUserId == request.auth.uid)));
     }

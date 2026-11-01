@@ -1,7 +1,7 @@
 import { useAppUI } from '../../context/AppUIContext';
 import TaskItem from './TaskItem';
 import sharedStyles from '../../styles/workspaceSharedStyles';
-import { projectTaskOwner, projectTaskState } from '../../services/collaboration/projectTaskCore';
+import { projectTaskAssignees, projectTaskState } from '../../services/collaboration/projectTaskCore';
 import { movePlanningOccurrence, performPlanningAction, type PlanningAction } from '../../features/taskPlanning/taskOperations';
 import type { TaskState } from '../../types/task';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -12,7 +12,7 @@ import { useCollaboration } from '../../context/CollaborationContext';
 import storage from '../../services/account/accountWorkspace';
 import { getWorkspaceEpoch } from '../../services/account/workspaceEpoch';
 import { mutatePlannedTask } from '../../repositories/taskRepository';
-import { updateProjectTask } from '../../services/collaboration/collaborationService';
+import { listProjectCreatorProfiles, updateProjectTask } from '../../services/collaboration/collaborationService';
 import { addDays, localDate, occurrencePatch, occurrencesForDates, scheduledPatch, slotAt, UNDATED_TASKS, weekDates, type PlanningOccurrence } from '../../features/taskPlanning/planningCore';
 import { SLOT_KEYS, SLOT_LABELS, type SlotKey } from '../../types/timer';
 import TaskTimeline from './TaskTimeline';
@@ -22,6 +22,9 @@ import TaskPlanningEditor from './TaskPlanningEditor';
 type Editor = { item: PlanningOccurrence | null; date: string; minute?: number; slot?: SlotKey; projectId?: string };
 export default function TaskPlanner({ projectId, selectedDate, selectionMode = false, onDraggingChange }: { onDraggingChange?: (dragging: boolean) => void; projectId?: string; selectedDate: string; selectionMode?: boolean }) {
   const store = useTaskPlanning(); const { timeBoxSchedule, tr, statusLabel, noTagLabel, untitledLabel } = useAppSettings(); const { profile, overflowProjects } = useCollaboration();
+  const [assigneeNames, setAssigneeNames] = useState<Record<string, string>>({});
+  const assigneeKey = [...new Set(store.projects.flatMap(record => projectTaskAssignees(record.task)))].sort().join(',');
+  useEffect(() => { let active = true; setAssigneeNames({}); if (assigneeKey) void listProjectCreatorProfiles(assigneeKey.split(',')).then(profiles => { if (active) setAssigneeNames(Object.fromEntries(profiles.map(person => [person.userId, person.displayName || `@${person.username}`]))); }).catch(() => {}); return () => { active = false; }; }, [assigneeKey, profile?.userId]);
   const [view, setView] = useState<'box' | 'timeline'>('box'); const [range, setRange] = useState<'day' | 'week'>('day');
   const { selectDateFromCalendar: setDate } = useAppUI(); const date = selectedDate; const [editor, setEditor] = useState<Editor | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ morning: true, forenoon: true, afternoon: true, night: true, undated: false });
@@ -39,7 +42,7 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
     if (projectId) return item.projectId === projectId;
     if (!item.projectId) return true;
     const record = store.projects.find(record => `project:${record.task.id}` === item.id);
-    return record && projectTaskOwner(record.task) === profile?.userId;
+    return record && projectTaskAssignees(record.task).includes(profile?.userId ?? '');
   }), [store.items, store.projects, profile?.userId, projectId]);
   const dates = range === 'week' && view === 'timeline' ? weekDates(date) : [date];
   const occurrences = occurrencesForDates(items, dates);
@@ -80,8 +83,11 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
     const task: TaskState = { ...source, taskName: item.title, estimateMinutes: item.estimateMinutes, tags: item.occurrenceOverrides?.[item.occurrenceDate]?.tags ?? source.tags, elapsedMinutes: item.elapsedMinutes ?? source.elapsedMinutes, startAt: item.startAt ?? null, status: item.completed ? 'DONE' : item.executionStatus === 'DONE' ? 'TODO' : item.executionStatus ?? (source.status === 'DONE' ? 'TODO' : source.status) };
     const palette = { TODO: { bar: '#9ca3af', badgeBg: '#f3f4f6', badgeText: '#374151' }, IN_PROGRESS: { bar: '#2563eb', badgeBg: '#dbeafe', badgeText: '#1e40af' }, PAUSED: { bar: '#f59e0b', badgeBg: '#fef3c7', badgeText: '#92400e' }, DONE: { bar: '#16a34a', badgeBg: '#dcfce7', badgeText: '#166534' } }[task.status];
     const invoke = (operation: PlanningAction) => { void action(item, operation); };
-    return <View key={item.key} style={{ marginVertical: 5 }}>
+    const owners = shared ? projectTaskAssignees(shared.task) : [];
+    const timeLabel = `${item.plannedStartAt != null ? `${new Date(item.plannedStartAt).toTimeString().slice(0,5)}–${new Date(item.plannedEndAt!).toTimeString().slice(0,5)}` : '時間未設定'}${item.repeat && item.repeat !== 'none' ? ' · 繰り返し' : ''}`;
+    return <View key={item.key} style={{ marginVertical: 3 }}>
       <TaskItem styles={sharedStyles} tr={tr} task={task} noTagLabel={noTagLabel} untitledLabel={untitledLabel} statusLabel={statusLabel[task.status]} palette={palette}
+        boxDetails={{ projectName: shared?.project.name, assigneeLabel: shared ? (owners.length ? owners.map(owner => owner === profile?.userId ? 'あなた' : assigneeNames[owner] || `メンバー ${owner.slice(0, 8)}`).join('、') : '未割り当て') : undefined, timeLabel }}
         draggable={false} isOpen={swipeKey === item.key} onOpen={() => setSwipeKey(item.key)} onClose={() => setSwipeKey(null)} onPress={() => { setSwipeKey(null); edit(item); }}
         selectionMode={selectionMode} selected={selectedKeys.includes(item.key)} onToggleSelection={() => toggleSelection(item)} completed={item.completed}
         onStart={() => invoke('start')} onPause={() => invoke('pause')} onDone={() => invoke('done')}
@@ -91,7 +97,6 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
           { label: 'アーカイブ', onPress: () => invoke('archive'), style: sharedStyles.swipeArchiveButton },
           { label: '削除', onPress: () => Alert.alert('タスクを削除', item.repeat && item.repeat !== 'none' ? 'この回を削除しますか？' : 'このタスクを削除しますか？', [{ text: 'キャンセル', style: 'cancel' }, { text: '削除', style: 'destructive', onPress: () => invoke('delete') }]), style: sharedStyles.swipeDeleteButton },
         ]} />
-      <Text style={s.meta}>{item.plannedStartAt != null ? `${new Date(item.plannedStartAt).toTimeString().slice(0,5)}–${new Date(item.plannedEndAt!).toTimeString().slice(0,5)}` : '時間未設定'}{item.repeat && item.repeat !== 'none' ? ' · 繰り返し' : ''}{shared ? ` · ${shared.project.name} · 担当者: ${projectTaskOwner(shared.task) === profile?.userId ? 'あなた' : projectTaskOwner(shared.task) ?? '未割り当て'}` : ''}</Text>
     </View>;
   };
   const selectedItems = [...occurrences, ...undated].filter(item => selectedKeys.includes(item.key));

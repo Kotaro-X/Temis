@@ -130,3 +130,12 @@ export const completeTemisAIUsage = async (requestId: string): Promise<TemisAIUs
 
 export const createAIRequestId = (surface: "memo" | "commons"): string =>
   `${surface}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+
+export const leaveProject = async (
+  projectId: string,
+  transferToUserId?: string,
+): Promise<ProjectAccessResponse> => (
+  await callable<{ projectId: string; transferToUserId?: string }, ProjectAccessResponse>(
+    "leaveProject", 540_000,
+  )({ projectId, ...(transferToUserId ? { transferToUserId } : {}) })
+).data;

@@ -70,8 +70,11 @@ const styles = StyleSheet.create<any>({
     fontWeight: "600",
   },
   menuButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 6,
+    width: 44,
+    minHeight: 44,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
   },
   backButton: {
     marginLeft: 6,

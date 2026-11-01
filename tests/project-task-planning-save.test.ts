@@ -6,10 +6,11 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { scheduleDraft, parseSchedule } from '../src/features/taskPlanning/scheduleDraft.ts';
 import { DEFAULT_TIMEBOX_SCHEDULE } from '../src/types/timer.ts';
-import { projectTaskOwner, projectTaskState, changedProjectTaskFields } from '../src/services/collaboration/projectTaskCore.ts';
+import { projectTaskOwner, projectTaskAssignees, projectTaskState, changedProjectTaskFields } from '../src/services/collaboration/projectTaskCore.ts';
 import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot } from '../src/utils/projectTaskPlacement.ts';
 import * as planningCore from '../src/features/taskPlanning/planningCore.ts';
 import { projectReminderChanged } from '../src/features/taskPlanning/projectReminderChanges.ts';
+import { taskSaveErrorMessage } from '../src/utils/taskSaveError.ts';
 import type { ProjectTask } from '../src/types/collaboration.ts';
 
 type Element = { type: any; props: any };
@@ -30,6 +31,7 @@ function fixture({ failRefresh = false, date = '2026-10-25' } = {}) {
     updateProjectTask: async (id: string, patch: any) => { const task = { ...records.find(task => task.id === id)!, ...patch }; records = records.map(record => record.id === id ? task : record); return task; },
   };
   const mocks: Record<string, any> = {
+    '../../utils/taskSaveError': { taskSaveErrorMessage },
     '../../services/environment/recoveryDrafts': { clearRecoveryDraft: async () => {} },
     react, 'react-native': { View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', Platform: { OS: 'ios' }, Alert: { alert() {} } },
     'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) },
@@ -40,7 +42,7 @@ function fixture({ failRefresh = false, date = '2026-10-25' } = {}) {
     '../../features/taskPlanning/TaskPlanningProvider': { useTaskPlanning: () => store },
     '../../services/account/workspaceEpoch': { getWorkspaceEpoch: () => epoch },
     '../../services/collaboration/collaborationService': services,
-    '../../services/collaboration/projectTaskCore': { projectTaskOwner, projectTaskState, changedProjectTaskFields },
+    '../../services/collaboration/projectTaskCore': { projectTaskOwner, projectTaskAssignees, projectTaskState, changedProjectTaskFields },
     '../../utils/projectTaskPlacement': { getProjectTaskPrivateDate, getProjectTaskPrivateSlot },
     '../../features/taskPlanning/planningCore': planningCore,
     '../../features/taskPlanning/projectReminderChanges': { projectReminderChanged },
@@ -48,6 +50,7 @@ function fixture({ failRefresh = false, date = '2026-10-25' } = {}) {
     '../../../storage': { createEmptyTask: () => ({ id: 'draft', taskName: '', estimateMinutes: 25, tags: [], status: 'TODO' }) },
     './TaskScheduleFields': { __esModule: true, default: 'Schedule', scheduleDraft, parseSchedule },
     './TaskDetailView': { __esModule: true, default: 'Detail' },
+    './taskChipStyles': { taskChipStyles: { chip: {} }, taskChipHitSlop: {} },
   };
   const source = ts.transpileModule(readFileSync(new URL('../src/components/tasks/TaskPlanningEditor.tsx', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true } }).outputText;
   const module = { exports: {} as any };
@@ -64,7 +67,7 @@ test('real editor saves another assignee and feeds the same record to Project an
   const f = fixture(); f.title('ミーティング'); f.assign('member'); await f.save();
   assert.equal(f.closed(), 1); assert.equal(f.creates(), 1);
   const task = f.accepted()[0]; assert.equal(task.projectId, 'project'); assert.equal(task.title, 'ミーティング');
-  assert.equal(projectTaskOwner(task), 'member'); assert.notEqual(projectTaskOwner(task), task.creatorUserId);
+  assert.deepEqual(Array.from(projectTaskAssignees(task)), ['creator', 'member']);
   assert.equal(getProjectTaskPrivateDate(task), '2026-10-25'); assert.equal(getProjectTaskPrivateSlot(task, DEFAULT_TIMEBOX_SCHEDULE), 'morning');
   assert.equal(planningCore.occurrencesForDates([{ ...projectTaskState(task), title: task.title, date: getProjectTaskPrivateDate(task), slot: 'morning', completed: false }], ['2026-10-25']).length, 1);
   assert.deepEqual(f.records(), f.accepted());
@@ -88,8 +91,9 @@ test('reassignment updates the same task and removes the former assignee', async
   assert.equal(projectTaskOwner(f.accepted()[0]), 'creator');
   f.assign('member'); await f.save();
   assert.equal(f.creates(), 1); assert.equal(f.accepted().length, 1);
-  assert.equal(projectTaskOwner(f.accepted()[0]), 'member');
-  assert.equal(f.accepted().filter(task => projectTaskOwner(task) === 'creator').length, 0);
+  assert.deepEqual(Array.from(projectTaskAssignees(f.accepted()[0])), ['creator', 'member']);
+  f.assign(null); f.assign('member'); await f.save();
+  assert.deepEqual(Array.from(projectTaskAssignees(f.accepted()[0])), ['member']);
 });
 test('an account switch during save cannot feed or close the new account editor', async () => {
   const f = fixture(); f.title('Old account'); const saving = f.save(); f.switchAccount(); await saving;

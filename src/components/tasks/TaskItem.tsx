@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 import {
   PanResponder,
   Pressable,
+  StyleSheet,
   Text,
   View,
   type GestureResponderEvent,
@@ -59,6 +60,7 @@ type Props = {
   completed?: boolean;
   swipeEnabled?: boolean;
   draggable?: boolean;
+  boxDetails?: { projectName?: string; assigneeLabel?: string; timeLabel: string };
 };
 
 const TaskItem = ({
@@ -91,6 +93,7 @@ const TaskItem = ({
   completed = false,
   swipeEnabled = true,
   draggable = true,
+  boxDetails,
 }: Props) => {
   const rowRef = useRef<View>(null);
   const isDraggingRef = useRef(false);
@@ -186,7 +189,7 @@ const TaskItem = ({
         {...(draggable ? dragPanResponder.panHandlers : {})}
         style={isDragging ? styles.taskDragSource : undefined}
       >
-        {completed ? (
+        {completed && !boxDetails ? (
           <View style={styles.completedTaskRow}>
             <View style={[styles.statusBar, { backgroundColor: palette.bar }]} />
             <Pressable
@@ -209,10 +212,10 @@ const TaskItem = ({
             </Pressable>
           </View>
         ) : (
-          <View style={styles.taskBox}>
+          <View style={[styles.taskBox, boxDetails && compactStyles.box]}>
             <View style={styles.taskHeaderRow}>
               <View style={[styles.statusBar, { backgroundColor: palette.bar }]} />
-              <View style={styles.taskHeaderBody}>
+              <View style={[styles.taskHeaderBody, boxDetails && compactStyles.body]}>
                 {selectionMode ? (
                   <Pressable style={styles.checkbox} onPress={onToggleSelection}>
                     <Text style={styles.checkboxText}>{selected ? "[x]" : "[ ]"}</Text>
@@ -221,6 +224,7 @@ const TaskItem = ({
                 <Pressable
                   style={[
                     styles.taskHeaderPressable,
+                    boxDetails && compactStyles.pressable,
                     isActive && !selectionMode && styles.taskHeaderActive,
                   ]}
                   onPress={handlePress}
@@ -228,13 +232,23 @@ const TaskItem = ({
                   onPressOut={draggable ? (event) => handlePressOut(event.nativeEvent.pageY) : undefined}
                   delayLongPress={400}
                 >
-                  <View style={styles.taskHeaderContent}>
-                    <Text style={styles.taskHeaderTitle}>
+                  <View style={[styles.taskHeaderContent, boxDetails && compactStyles.content]}>
+                    {boxDetails?.projectName ? (
+                      <Text style={compactStyles.meta} numberOfLines={1}>
+                        {boxDetails.projectName}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.taskHeaderTitle, boxDetails && completed && styles.taskHeaderTitleDone]} numberOfLines={boxDetails ? 2 : undefined}>
                       {task.taskName || untitledLabel}
+                      {boxDetails?.assigneeLabel ? `（${boxDetails.assigneeLabel}）` : ''}
                     </Text>
-                    <Text style={styles.taskHeaderMeta}>
-                      {task.tags.length > 0 ? task.tags.join(", ") : noTagLabel}
-                    </Text>
+                    {boxDetails ? (
+                      <Text style={compactStyles.meta}>{boxDetails.timeLabel}</Text>
+                    ) : (
+                      <Text style={styles.taskHeaderMeta}>
+                        {task.tags.length > 0 ? task.tags.join(", ") : noTagLabel}
+                      </Text>
+                    )}
                   </View>
                 </Pressable>
                 <View
@@ -278,3 +292,11 @@ const TaskItem = ({
 };
 
 export default TaskItem;
+
+const compactStyles = StyleSheet.create({
+  box: { paddingVertical: 4, paddingHorizontal: 8, marginBottom: 0 },
+  body: { paddingVertical: 0, minWidth: 0 },
+  pressable: { paddingVertical: 0, paddingHorizontal: 0, minWidth: 0, minHeight: 44 },
+  content: { gap: 2 },
+  meta: { fontSize: 11, color: '#6b7280' },
+});

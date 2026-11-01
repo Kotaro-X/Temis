@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
-import { changedProjectTaskFields, projectTaskElapsed, projectTaskOwner, transitionProjectTask } from "../src/services/collaboration/projectTaskCore.ts";
+import { changedProjectTaskFields, projectTaskElapsed, projectTaskOwner, projectTaskAssignees, transitionProjectTask } from "../src/services/collaboration/projectTaskCore.ts";
 import type { ProjectTask } from "../src/types/collaboration.ts";
 
 const task: ProjectTask = { id: "task", projectId: "project", kind: "task", ownerUserId: "alice", creatorUserId: "alice", title: "Title", status: "todo", createdAt: 1, updatedAt: 1, completedAt: null, deletedAt: null };
@@ -57,7 +57,7 @@ function fixture(role: string | null = "member", initial: ProjectTask = task) {
   };
   const exports: any = {};
   vm.runInNewContext(ts.transpileModule(readFileSync("src/services/collaboration/collaborationService.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
-    exports, require: (name: string) => name === "firebase/firestore" ? firestore : name.endsWith("projectTaskCore") ? { projectTaskOwner, transitionProjectTask } : name.endsWith("firebaseApp") ? {
+    exports, require: (name: string) => name === "firebase/firestore" ? firestore : name.endsWith("projectTaskCore") ? { projectTaskOwner, projectTaskAssignees, transitionProjectTask } : name.endsWith("firebaseApp") ? {
       getFirebaseFirestore: () => ({}), getFirebaseAuth: () => ({ currentUser: { uid: "alice" } }),
     } : name.startsWith("nanoid") ? { nanoid: () => "created" } : {},
   });
@@ -162,4 +162,11 @@ test("legacy Project ToDo is converted in place, preserving its ID and linked me
   const saved = await f.api.updateProjectTask('task', { kind: 'task', privateDate: null, privateSlotKey: 'morning' });
   assert.equal(saved.id, 'task'); assert.equal(saved.kind, 'task'); assert.equal(saved.privateDate, null);
   assert.equal(f.records.get(`projectNotes/${saved.relatedMemoId}`).body, 'Legacy body');
+});
+
+
+test("multiple assignees retain legacy compatibility and filter departed members", () => {
+  assert.deepEqual(projectTaskAssignees({ ...task, assigneeUserIds: ["alice", "bob"], assigneeUserId: "alice" }), ["alice", "bob"]);
+  assert.deepEqual(projectTaskAssignees({ ...task, assigneeUserIds: ["alice", "bob"] }, ["bob"]), ["bob"]);
+  assert.deepEqual(projectTaskAssignees({ ...task, assigneeUserIds: [], assigneeUserId: "alice" }), []);
 });

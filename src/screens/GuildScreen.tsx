@@ -3,6 +3,7 @@ import GuildLikesModal from "../components/guild/GuildLikesModal";
 import useGuildEngagement from "../components/guild/useGuildEngagement";
 import { listSavedGuildPosts, type EngagementCursor } from "../services/guild/guildEngagementService";
 import { getFirebaseAuth } from "../services/sync/firebaseApp";
+import WorkspaceScopeTrigger from '../components/app-shell/WorkspaceScopeTrigger';
 import { useDirectMessages } from '../context/DirectMessagesContext';
 import { subscribeAIInvalidation } from '../services/ai/aiConsent';
 import ReportReasonModal from '../components/common/ReportReasonModal';
@@ -25,7 +26,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from "react-native";
 
 import CommonsRequestsButton from "../components/guild/CommonsRequestsButton";
@@ -77,7 +77,6 @@ const FEEDS: { key: GuildView; label: string }[] = [
 const formatDate = (value: number | null) => value ? new Date(value).toLocaleDateString("ja-JP", { month: "short", day: "numeric" }) : "";
 
 const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) => {
-  const compactHeader = useWindowDimensions().width < 440;
   const { profile, inviteableProjects, status, error, refreshProfile: refresh, projectStatus, projectError, refreshProjects } = useCollaboration();
   const { openMemoDetail } = useAppUI();
   const aiUsage = useTemisAIUsage();
@@ -89,7 +88,6 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
   const detailGeneration = useRef(0);
   const feedMoreBusy = useRef(false);
   const [feed, setFeed] = useState<GuildView>("recommended");
-  const feedTabsRef = useRef<ScrollView>(null);
   const [search, setSearch] = useState("");
   const [aiQuery, setAIQuery] = useState("");
   const [aiOpen, setAIOpen] = useState(false);
@@ -151,6 +149,21 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const isCurrentUser = useCallback(() => mounted.current && screenVisible.current && !!profile && getFirebaseAuth().currentUser?.uid === profile.userId, [profile]);
+  const selectFeed = (next: GuildView) => {
+    if (next === feed) return;
+    feedGeneration.current++;
+    if (next === "saved") {
+      setSearch("");
+      aiRequestRef.current++;
+      setAIQuery("");
+      setAIOpen(false);
+      setAIResult(null);
+      setAIError(null);
+      setAISearching(false);
+      setShowAllAIEvidence(false);
+    }
+    setFeed(next);
+  };
   const detailTokens = useMemo(
     () => extractTokens(selectedPost?.body ?? ""),
     [selectedPost?.body],
@@ -414,7 +427,7 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
 
   return (
     <View style={[styles.screen, { paddingTop: contentPaddingTop }]}> 
-      <View style={[styles.header, compactHeader && styles.headerCompact]} onLayout={(event) => {
+      <View style={styles.header} onLayout={(event) => {
         const layout = event.nativeEvent.layout;
         setHeaderBottomY(layout.y + layout.height);
       }}>
@@ -427,30 +440,10 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
           >
             <Ionicons name="menu" size={20} color="#111827" />
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="保存したメモを開く"
-            accessibilityState={{ selected: feed === 'saved' }}
-            style={[styles.savedButton, feed === 'saved' && styles.savedButtonActive]}
-            onPress={() => {
-              setSearch('');
-              aiRequestRef.current++;
-              setAIQuery('');
-              setAIResult(null);
-              setAIError(null);
-              setAISearching(false);
-              setShowAllAIEvidence(false);
-              setAIOpen(false);
-              if (feed === 'saved' && !search) void loadFirst(true);
-              else setFeed('saved');
-              feedTabsRef.current?.scrollToEnd({ animated: true });
-            }}
-          >
-            <MaterialCommunityIcons name={feed === 'saved' ? 'sticker' : 'sticker-outline'} size={23} color="#111827" />
-          </Pressable>
+          <WorkspaceScopeTrigger />
         </View>
-        <Text pointerEvents="none" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={[styles.headerTitle, compactHeader && styles.headerTitleCompact]}>Commons</Text>
-        <View style={[styles.headerSideRight, compactHeader && styles.headerSideRightCompact]}>
+        <Text pointerEvents="none" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.headerTitle}>Commons</Text>
+        <View style={styles.headerSideRight}>
           <CommonsRequestsButton key={profile.userId} />
           <Pressable
             accessibilityRole="button"
@@ -463,7 +456,23 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
           </Pressable>
         </View>
       </View>
-      <ScrollView ref={feedTabsRef} keyboardShouldPersistTaps="always" horizontal style={styles.feedTabsViewport} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedTabs}>{FEEDS.map((item) => <Pressable key={item.key} style={[styles.feedTab, feed === item.key && styles.feedTabActive]} onPress={() => setFeed(item.key)}><Text style={[styles.feedTabText, feed === item.key && styles.feedTabTextActive]}>{item.label}</Text></Pressable>)}</ScrollView>
+      <ScrollView keyboardShouldPersistTaps="always" horizontal style={styles.feedTabsViewport} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedTabs}>
+        {FEEDS.map((item) => <Pressable
+          key={item.key}
+          accessibilityRole="tab"
+          accessibilityLabel={item.label}
+          accessibilityState={{ selected: feed === item.key }}
+          hitSlop={item.key === "saved" ? { top: 5, bottom: 5 } : undefined}
+          style={[styles.feedTab, item.key === "saved" && styles.savedFeedTab, feed === item.key && styles.feedTabActive]}
+          onPress={() => selectFeed(item.key)}
+        >
+          {item.key === "saved" ? <MaterialCommunityIcons
+            name={feed === "saved" ? "bookmark" : "bookmark-outline"}
+            size={20}
+            color={feed === "saved" ? "#1d4ed8" : "#4b5563"}
+          /> : <Text style={[styles.feedTabText, feed === item.key && styles.feedTabTextActive]}>{item.label}</Text>}
+        </Pressable>)}
+      </ScrollView>
       <TextInput value={search} onChangeText={setSearch} style={styles.search} placeholder="投稿・#タグ・((Wikiリンク)) を検索" />
       {loading ? <View style={styles.center}><ActivityIndicator color="#2563eb" /></View> : loadError && !posts.length ? <View style={styles.center}><Text style={styles.error}>{loadError}</Text><Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>再試行</Text></Pressable></View> : <FlatList keyboardShouldPersistTaps="always" style={styles.feedList} data={visiblePosts} keyExtractor={(item) => item.id} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadFirst(true)} />} onEndReached={() => void loadMore()} onEndReachedThreshold={0.6} contentContainerStyle={visiblePosts.length ? styles.list : styles.emptyList} renderItem={({ item }) => <Pressable style={styles.card} onPress={() => void openDetail(item)}><View style={styles.cardMeta}><UserAvatar photoUrl={item.authorPhotoUrl} size={30} /><Text style={styles.author}>{item.authorDisplayName}</Text><Text style={styles.date}>{formatDate(item.publishedAt ?? item.updatedAt)}</Text></View>{feed === "mine" ? <Text style={[styles.statusBadge, item.status === "published" ? styles.statusPublished : styles.statusUnpublished]}>{item.status === "published" ? "公開中" : "非公開"}</Text> : null}<Text style={styles.cardTitle} numberOfLines={2}>{item.title?.trim() || item.body.split("\n").find(Boolean) || "無題"}</Text><Text style={styles.body} numberOfLines={5}>{item.body}</Text><View style={styles.tagRow}>{item.tags.map((tag) => <Text key={tag} style={styles.tag}>#{tag}</Text>)}</View>{item.projectId ? <Text style={styles.projectLabel}>関連プロジェクト</Text> : null}{renderEngagement(item)}</Pressable>} ListEmptyComponent={<View style={styles.center}><Text style={styles.empty}>{feed === "saved" ? "保存した投稿はまだありません" : feed === "mine" ? "自分の投稿はまだありません" : tags.length ? "タグに合う投稿がまだありません" : "公開投稿はまだありません"}</Text>{feed !== "saved" ? <Pressable onPress={() => setComposerOpen(true)}><Text style={styles.retry}>最初の投稿を作成</Text></Pressable> : null}</View>} ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} color="#2563eb" /> : loadError && posts.length ? <Pressable style={styles.footer} onPress={() => void loadMore()}><Text style={styles.retry}>追加読み込みを再試行</Text></Pressable> : cursor ? <Pressable style={styles.footer} onPress={() => void loadMore()}><Text style={styles.retry}>さらに表示</Text></Pressable> : null} />}
       <TemisAIDock
@@ -565,20 +574,16 @@ const GuildScreenContent = ({ visible, contentPaddingTop, onOpenMenu }: Props) =
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#f8fafc" },
-  header: { position: "relative", flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingHorizontal: 16 },
-  headerSide: { width: 164, gap: 4, flexDirection: "row", alignItems: "center" },
-  headerSideRightCompact: { width: 112 },
-  headerSideRight: { width: 164, flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
-  headerCompact: { paddingTop: 26 },
-  headerTitleCompact: { position: "absolute", top: 0, left: 16, right: 16 },
-  headerTitle: { flex: 1, color: "#111827", fontSize: 18, fontWeight: "600", textAlign: "center" },
+  header: { flexShrink: 0, flexDirection: "row", alignItems: "center", marginBottom: 12, paddingHorizontal: 8 },
+  headerSide: { flex: 1, minWidth: 0, gap: 4, flexDirection: "row", alignItems: "center" },
+  headerSideRight: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
+  headerTitle: { width: 80, color: "#111827", fontSize: 18, fontWeight: "600", textAlign: "center" },
   menuButton: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
-  savedButton: { width: 44, flexShrink: 0, minHeight: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-  savedButtonActive: { backgroundColor: "#dbeafe" },
   newButton: { minHeight: 32, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: "#fff" },
   newButtonText: { marginLeft: 4, color: "#111827", fontSize: 12, fontWeight: "600" },
   title: { flex: 1, textAlign: "center", color: "#111827", fontSize: 18, fontWeight: "600" }, detailHeaderAction: { width: 64, alignItems: "flex-end" }, headerActionText: { color: "#2563eb", fontWeight: "800", padding: 8 },
   feedTabsViewport: { flexGrow: 0, flexShrink: 0, marginBottom: 9 },
+  savedFeedTab: { minWidth: 44, alignItems: "center" },
   plusBadge: { color: "#1d4ed8", backgroundColor: "#dbeafe", borderRadius: 999, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 3, fontSize: 10, fontWeight: "800" },
   aiError: { color: "#b91c1c", fontSize: 12, lineHeight: 17 },
   aiHelperText: { color: "#6b7280", fontSize: 12 },

@@ -13,6 +13,7 @@ function render(user: any, accountUserId: string | null, authStatus: string, vis
     if (name.endsWith('CloudSyncContext')) return { useCloudSyncContext: () => ({ user, authStatus }) };
     if (name.endsWith('CollaborationContext')) return { useCollaboration: () => ({ accountUserId }) };
     if (name.endsWith('AppUIContext')) return { useAppUI: () => ({ openSettingsAccount() {}, openMenu() {} }) };
+    if (name.endsWith('WorkspaceScopeTrigger')) return { __esModule: true, default: 'WorkspaceScopeTrigger' };
     throw new Error(name);
   } });
   return exports.default({ visible, title: 'Commons', contentPaddingTop: 0, children: 'community-content' });

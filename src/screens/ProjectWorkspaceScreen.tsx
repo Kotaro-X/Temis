@@ -1,3 +1,4 @@
+import WorkspaceScopeTrigger from '../components/app-shell/WorkspaceScopeTrigger';
 import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
 import MemoSearchField from "../components/memo/MemoSearchField";
 import Modal from "../components/common/KeyboardAwareModal";
@@ -194,10 +195,12 @@ const ProjectWorkspaceScreen = ({
   active,
   tab,
   contentPaddingTop,
+  refreshToken = 0,
 }: {
   active: boolean;
   tab: ProjectWorkspaceTab;
   contentPaddingTop: number;
+  refreshToken?: number;
 }) => {
   const { profile, projects, overflowProjects } = useCollaboration();
   const { addTag, tagOptions, timeBoxSchedule, appLanguage } = useAppSettings();
@@ -368,7 +371,7 @@ const ProjectWorkspaceScreen = ({
 
   useEffect(() => {
     if (active && tab !== "tasks") void refresh();
-  }, [active, refresh, tab]);
+  }, [active, refresh, tab, refreshToken]);
 
   useEffect(() => {
     setNotes([]); setTasks([]); setCreatorNames({});
@@ -645,8 +648,8 @@ const ProjectWorkspaceScreen = ({
   return (
     <View style={[styles.container, { paddingTop: contentPaddingTop }]}>
       <View style={styles.header} onLayout={tab === "memos" ? handleMemoHeaderLayout : undefined}>
-        <View style={styles.headerSide}><Pressable accessibilityRole="button" accessibilityLabel="メニューを開く" style={styles.menuButton} onPress={openMenu}><Ionicons name="menu" size={20} color="#111827" /></Pressable></View>
-        <Text numberOfLines={1} style={styles.headerTitle}>{config.title}</Text>
+        <View style={styles.headerSide}><Pressable accessibilityRole="button" accessibilityLabel="メニューを開く" style={styles.menuButton} onPress={openMenu}><Ionicons name="menu" size={20} color="#111827" /></Pressable><WorkspaceScopeTrigger /></View>
+        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.headerTitle}>{config.title}</Text>
         <View style={styles.headerSideRight}>
           {tab !== "memos" && selectionMode ? <Pressable style={styles.headerTextAction} onPress={() => { setSelectionMode(false); setSelectedTaskIds([]); }}><Text style={styles.headerTextActionLabel}>選択終了</Text></Pressable> : null}
           {tab !== "tasks" ? <Pressable accessibilityRole="button" accessibilityLabel={`${config.title}を追加`} style={[styles.addButton, (!project || (tab === "memos" && !canCreateMemo)) && styles.addButtonDisabled]} disabled={!project || (tab === "memos" && !canCreateMemo)} onPress={() => openComposer(tab)}><Ionicons name="add" size={18} color="#111827" /><Text style={styles.addButtonText}>追加</Text></Pressable> : null}
@@ -821,7 +824,7 @@ const ProjectWorkspaceScreen = ({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#ffffff" }, composerModalRoot: { flex: 1, backgroundColor: "#ffffff" }, composer: { flex: 1, backgroundColor: "#ffffff" },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingHorizontal: 16 }, headerSide: { width: 120, flexDirection: "row", alignItems: "center" }, headerSideRight: { width: 120, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 }, headerTitle: { flex: 1, color: "#111827", fontSize: 18, fontWeight: "600", textAlign: "center" }, menuButton: { paddingHorizontal: 6, paddingVertical: 6 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingHorizontal: 16 }, headerSide: { width: 120, gap: 4, flexDirection: "row", alignItems: "center" }, headerSideRight: { width: 120, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8 }, headerTitle: { flex: 1, color: "#111827", fontSize: 18, fontWeight: "600", textAlign: "center" }, menuButton: { width: 44, minHeight: 44, flexShrink: 0, alignItems: "center", justifyContent: "center" },
   addButton: { minHeight: 32, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }, addButtonDisabled: { opacity: 0.45 }, addButtonText: { marginLeft: 4, color: "#111827", fontSize: 12, fontWeight: "600" }, headerTextAction: { paddingHorizontal: 4, paddingVertical: 6 }, headerTextActionLabel: { color: "#2563eb", fontSize: 12, fontWeight: "600" },
   content: { paddingHorizontal: 16, paddingBottom: 32 }, memoContent: { paddingBottom: 220 }, memoSearchRow: { paddingHorizontal: 16, marginBottom: 8 }, memoSearchInput: { borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 8, padding: 10, color: "#111827" }, projectBar: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 12, marginBottom: 20 }, projectIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 9, backgroundColor: "#f3f4f6" }, projectIconText: { color: "#374151", fontSize: 14 }, projectInfo: { flex: 1, marginLeft: 12 }, projectName: { color: "#111827", fontSize: 15, fontWeight: "700" },
   aiUsageBadge: { color: "#6b7280", fontSize: 11, fontWeight: "600" }, aiScopeRow: { flexDirection: "row", borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 9, padding: 3, backgroundColor: "#f9fafb" }, aiScopeButton: { flex: 1, alignItems: "center", borderRadius: 7, paddingVertical: 6 }, aiScopeButtonActive: { backgroundColor: "#111827" }, aiScopeText: { color: "#6b7280", fontSize: 11, fontWeight: "700" }, aiScopeTextActive: { color: "#ffffff" }, aiHelper: { color: "#6b7280", fontSize: 12 }, aiResults: { flex: 1, minHeight: 0 }, aiResultsContent: { flexGrow: 1 }, aiEvidenceCard: { borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 10, padding: 10, backgroundColor: "#f9fafb", marginBottom: 8 }, aiEvidenceCardCited: { borderColor: "#93c5fd", backgroundColor: "#eff6ff" }, aiEvidenceId: { fontSize: 11, fontWeight: "700", color: "#1d4ed8", marginBottom: 3 }, aiEvidenceSnippet: { fontSize: 13, color: "#111827", marginBottom: 4 }, aiEvidenceMeta: { fontSize: 11, color: "#6b7280" }, aiEvidenceTokens: { marginTop: 4, fontSize: 11, color: "#2563eb" },

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 
 import type { SlotKey, TaskState, TaskStatus } from "../../types";
+import { taskChipHitSlop, taskChipStyles } from './taskChipStyles';
 
 type Props = {
   styles: Record<string, any>;
@@ -105,7 +106,7 @@ const TaskDetailView = ({
       <View style={styles.row}>
         <Text style={styles.label}>{tr("task.tags")}</Text>
         <View style={styles.tagDropdown}>
-          <Pressable style={[styles.tagDropdownButton, { alignSelf: 'flex-start', borderRadius: 999, borderWidth: 0, backgroundColor: '#f0f0ee', minHeight: 44, justifyContent: 'center', paddingHorizontal: 18 }]} onPress={onOpenTagPicker}>
+          <Pressable hitSlop={taskChipHitSlop} style={[styles.tagDropdownButton, taskChipStyles.chip, { backgroundColor: '#f0f0ee' }]} onPress={onOpenTagPicker}>
             <Text style={styles.tagDropdownText}>
               {task.tags.length > 0 ? task.tags.join(", ") : tr("task.selectTags")}
             </Text>

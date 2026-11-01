@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Modal from '../common/KeyboardAwareModal';
 import { addDays, localDate, validDate } from '../../features/taskPlanning/planningCore';
 
 const ROW = 44;

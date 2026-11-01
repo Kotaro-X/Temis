@@ -12,7 +12,7 @@ import { useAppSettings } from "../../context/AppSettingsContext";
 import { useAppUI } from "../../context/AppUIContext";
 import { useCollaboration } from "../../context/CollaborationContext";
 import { deleteProjectTask, listProjectCreatorProfiles, subscribeProjectTasks, updateProjectTask, type MyProjectTask } from "../../services/collaboration/collaborationService";
-import { projectTaskOwner } from "../../services/collaboration/projectTaskCore";
+import { projectTaskAssignees } from "../../services/collaboration/projectTaskCore";
 import { getProjectTaskPrivateDate, getProjectTaskPrivateSlot, toLocalDateString } from "../../utils/projectTaskPlacement";
 import { buildTodaySections } from "../../hooks/tasks/taskSelectors";
 import { getSlotLabel } from "../../i18n";
@@ -49,7 +49,7 @@ export default function ProjectTasksWorkspace({ project, active }: { project: Pr
     const unsubscribe = subscribeProjectTasks(project.id, next => {
       if (!alive) return;
       setTasks(next.filter(task => (task.kind ?? "task") === "task")); setLoading(false); setError(null);
-      void listProjectCreatorProfiles(next.map(task => projectTaskOwner(task))).then(profiles => {
+      void listProjectCreatorProfiles(next.flatMap(task => projectTaskAssignees(task))).then(profiles => {
         if (alive) setNames(Object.fromEntries(profiles.map(p => [p.userId, p.displayName || `@${p.username}`])));
       }).catch(() => { /* Names are optional; keep the confirmed task list. */ });
     }, cause => { if (alive) { setError(cause.message); setLoading(false); setAddSlot(null); setArchiveOpen(false); } });
@@ -58,8 +58,8 @@ export default function ProjectTasksWorkspace({ project, active }: { project: Pr
   useEffect(() => { setSelected([]); setSelectionMode(false); setMoveIds([]); }, [selectedDate]);
   useEffect(() => { setSelected(previous => previous.filter(id => tasks.some(task => `project:${task.id}` === id && !task.isArchived))); }, [tasks]);
   const ownerLabel = (task: ProjectTask) => {
-    const owner = projectTaskOwner(task);
-    return !owner ? "未割り当て" : owner === profile?.userId ? "あなた" : names[owner] || `メンバー ${owner.slice(0, 8)}`;
+    const owners = projectTaskAssignees(task);
+    return owners.length ? owners.map(owner => owner === profile?.userId ? "あなた" : names[owner] || `メンバー ${owner.slice(0, 8)}`).join("、") : "未割り当て";
   };
   const grouped = Object.fromEntries(SLOT_KEYS.map(slot => [slot, tasks.filter(task => !task.isArchived && getProjectTaskPrivateDate(task) === selectedDate && getProjectTaskPrivateSlot(task, timeBoxSchedule) === slot)
     .map(task => ({ task, project, ownerLabel: ownerLabel(task) }))])) as Record<SlotKey, MyProjectTask[]>;

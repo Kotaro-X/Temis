@@ -1,0 +1,10 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "Temis": { "shouldTranslate": false },
+    "Write a memo": { "localizations": { "ja": { "stringUnit": { "state": "translated", "value": "メモを書く" } } } },
+    "New memo": { "localizations": { "ja": { "stringUnit": { "state": "translated", "value": "新規メモ" } } } },
+    "Open Temis and write a memo.": { "localizations": { "ja": { "stringUnit": { "state": "translated", "value": "Temisを開いて、すぐにメモを書けます。" } } } }
+  },
+  "version": "1.0"
+}

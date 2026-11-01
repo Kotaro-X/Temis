@@ -17,12 +17,9 @@ const appChromeStyles = StyleSheet.create({
     backgroundColor: "#fff",
     zIndex: 40,
   },
-  scopeTrigger: {
-    position: "absolute",
-    left: 48,
-    zIndex: 45,
-  },
   scopeTriggerButton: {
+    flexShrink: 1,
+    minWidth: 0,
     minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
@@ -32,6 +29,7 @@ const appChromeStyles = StyleSheet.create({
     backgroundColor: "#f3f4f6",
   },
   scopeTriggerText: {
+    flexShrink: 1,
     color: "#374151",
     fontSize: 12,
     fontWeight: "600",

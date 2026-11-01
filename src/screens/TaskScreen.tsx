@@ -1,3 +1,4 @@
+import WorkspaceScopeTrigger from '../components/app-shell/WorkspaceScopeTrigger';
 import TaskPlanner from '../components/tasks/TaskPlanner';
 import React, { useState } from "react";
 import {
@@ -81,9 +82,9 @@ const TaskScreen = ({
     <View style={styles.taskScreenRoot}>
       <View style={[styles.todayStickyHeader, { top: insetsTop }]}>
         <View style={[styles.header, styles.todayStickyHeaderRow]}>
-          <View style={styles.headerLeft}>{headerLeft ?? null}</View>
-          <Text style={styles.headerTitle}>{title}</Text>
-          <View style={styles.headerRight}>{headerRight ?? null}</View>
+          <View style={[styles.headerLeft, { width: undefined, flex: 1, minWidth: 0, gap: 4 }]}>{headerLeft ?? null}<WorkspaceScopeTrigger /></View>
+          <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={[styles.headerTitle, { flex: 0, flexShrink: 0, width: 100, marginHorizontal: 4 }]}>{title}</Text>
+          <View style={[styles.headerRight, { width: undefined, flex: 1, minWidth: 0 }]}>{headerRight ?? null}</View>
         </View>
       </View>
       <View style={styles.taskScrollViewport}>

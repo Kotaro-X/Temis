@@ -17,6 +17,7 @@ import AppNoticeBridge from "../app-bridges/AppNoticeBridge";
 import AppPickerBridge from "../app-bridges/AppPickerBridge";
 import ProjectCreateModal from "../project/ProjectCreateModal";
 import TabIcon, { type TabIconName } from "./TabIcon";
+import { WorkspaceScopeContext } from './WorkspaceScopeTrigger';
 
 export type AppChromeTab = "tasks" | "todo" | "memos" | "projects" | "guild";
 
@@ -175,10 +176,8 @@ const AppChromeShell = ({
   const [scopePickerOpen, setScopePickerOpen] = useState(false);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const { unread: dmUnread } = useDirectMessages();
-  const isWorkspaceScreen = rootScreen !== "settings" && rootScreen !== "dm";
-  // The Logs screen has its own full header. A workspace switcher here overlaps
-  // that header, so keep the switcher on the other workspace screens only.
-  const showScopeTrigger = isWorkspaceScreen && taskScreen !== "logs";
+  const showScopeTrigger = ["tasks", "todo", "memos", "projects", "guild"].includes(rootScreen)
+    && !(rootScreen === "tasks" && taskScreen === "logs");
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const scopeLabel = workspaceScope === "private"
     ? "Private"
@@ -196,21 +195,10 @@ const AppChromeShell = ({
 
   return (
     <SafeAreaView style={appChromeStyles.container} edges={["left", "right"]}>
-      <View style={[appChromeStyles.statusBarFill, { height: insetsTop }]} />
-      <View style={appChromeStyles.body}>{children}</View>
-      {showScopeTrigger ? (
-        <View style={[appChromeStyles.scopeTrigger, { top: insetsTop + 2 }]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="ワークスペースを切り替える"
-            style={appChromeStyles.scopeTriggerButton}
-            onPress={() => setScopePickerOpen(true)}
-          >
-            <Text style={appChromeStyles.scopeTriggerText}>{scopeLabel}</Text>
-            <Ionicons name="chevron-down" size={14} color="#4b5563" />
-          </Pressable>
-        </View>
-      ) : null}
+      <View style={[appChromeStyles.statusBarFill, { height: insetsTop, backgroundColor: rootScreen === "guild" && workspaceScope === "private" ? "#f8fafc" : "#fff" }]} />
+      <WorkspaceScopeContext.Provider value={showScopeTrigger ? { label: scopeLabel, onOpen: () => setScopePickerOpen(true) } : null}>
+        <View style={appChromeStyles.body}>{children}</View>
+      </WorkspaceScopeContext.Provider>
       <BottomTabBar
         activeTab={activeTab}
         onTabPress={onTabPress}

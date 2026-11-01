@@ -20,8 +20,12 @@ import GuildAdminScreen from "../screens/GuildAdminScreen";
 import { useAppUI } from "../context/AppUIContext";
 import { useSubscription } from "../context/SubscriptionContext";
 import { hasStaffFreeAccess } from "../services/subscription/staffAccess";
+import WidgetMemoEntry, { renderWidgetMemoOverlay } from "../components/memo/WidgetMemoComposer";
+import { useAppRefresh } from "../context/AppRefreshContext";
+import { ModalOverlayContext } from "../components/common/ModalOverlayContext";
 
 const AppContent = () => {
+  const { refreshVersions } = useAppRefresh();
   const insets = useSafeAreaInsets();
   const {
     rootScreen,
@@ -88,6 +92,7 @@ const AppContent = () => {
   };
 
   return (
+    <ModalOverlayContext.Provider value={renderWidgetMemoOverlay}>
     <MemoWorkspaceShell
       active={isPrivateWorkspace && rootScreen === "memos"}
     >
@@ -111,6 +116,7 @@ const AppContent = () => {
                   onOpenAccountSettings={openSettingsAccount}
                 >
                   <>
+                    <WidgetMemoEntry />
                     {taskWorkspace}
                     {memoWorkspace}
                     <SettingsShell
@@ -135,6 +141,7 @@ const AppContent = () => {
                         <ProjectWorkspaceScreen
                           active={workspaceScope === "projects" && rootScreen === "memos"}
                           tab="memos"
+                          refreshToken={refreshVersions.memos}
                           contentPaddingTop={workspaceContentPaddingTop}
                         />
                     </CommunityAccessBoundary>
@@ -159,6 +166,7 @@ const AppContent = () => {
             </TaskWorkspaceShell>
       )}
     </MemoWorkspaceShell>
+    </ModalOverlayContext.Provider>
   );
 };
 

@@ -359,7 +359,7 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
         transaction.get(refs.sourceMember),
         transaction.get(refs.targetMember),
       ]);
-      if (!project.exists || project.data()?.ownerUserId !== uid || source.data()?.role !== "owner" || !target.exists) {
+      if (targetUserId === uid || !project.exists || project.data()?.ownerUserId !== uid || source.data()?.role !== "owner" || !target.exists) {
         throw new HttpsError("failed-precondition", "所有権を移譲できません。");
       }
       const timestamp = Date.now();
@@ -372,11 +372,12 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
   };
 
   const anonymizeProjectContent = async (uid, projectId) => {
-    const [notes, ownerTasks, creatorTasks, assignedTasks] = await Promise.all([
+    const [notes, ownerTasks, creatorTasks, assignedTasks, assignedArrays] = await Promise.all([
       db.collection("projectNotes").where("projectId", "==", projectId).where("ownerUserId", "==", uid).get(),
       db.collection("projectTasks").where("projectId", "==", projectId).where("ownerUserId", "==", uid).get(),
       db.collection("projectTasks").where("projectId", "==", projectId).where("creatorUserId", "==", uid).get(),
       db.collection("projectTasks").where("projectId", "==", projectId).where("assigneeUserId", "==", uid).get(),
+      db.collection("projectTasks").where("projectId", "==", projectId).where("assigneeUserIds", "array-contains", uid).get(),
     ]);
     const timestamp = Date.now();
     const writer = db.bulkWriter();
@@ -391,7 +392,7 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
       });
     }
     const tasks = new Map();
-    for (const document of [...ownerTasks.docs, ...creatorTasks.docs, ...assignedTasks.docs]) {
+    for (const document of [...ownerTasks.docs, ...creatorTasks.docs, ...assignedTasks.docs, ...assignedArrays.docs]) {
       tasks.set(document.id, document);
     }
     for (const task of tasks.values()) {
@@ -401,12 +402,16 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
         const current = latest.data();
         if (current.projectId !== projectId) return;
         const createdByUser = current.ownerUserId === uid || current.creatorUserId === uid;
+        const oldIds = Array.isArray(current.assigneeUserIds) ? current.assigneeUserIds : current.assigneeUserId !== undefined ? (current.assigneeUserId ? [current.assigneeUserId] : []) : (current.creatorUserId ?? current.ownerUserId) ? [current.creatorUserId ?? current.ownerUserId] : [];
+        const nextIds = oldIds.filter(id => id !== uid);
+        const wasAssigned = oldIds.includes(uid);
         const update = {
           ...(current.ownerUserId === uid ? { ownerUserId: null } : {}),
           ...(current.creatorUserId === uid ? { creatorUserId: null } : {}),
-          ...((current.assigneeUserId === uid || (current.assigneeUserId === undefined && (current.creatorUserId ?? current.ownerUserId) === uid)) ? {
-            assigneeUserId: null,
-            ...((current.kind ?? "task") === "task" && current.status === "in_progress" ? {
+          ...(wasAssigned ? {
+            assigneeUserId: nextIds[0] ?? null,
+            ...(Array.isArray(current.assigneeUserIds) ? { assigneeUserIds: nextIds } : {}),
+            ...(nextIds.length === 0 && (current.kind ?? "task") === "task" && current.status === "in_progress" ? {
               status: "paused", startAt: null,
               elapsedMinutes: (current.elapsedMinutes ?? 0) + (current.startAt == null ? 0 : Math.max(0, timestamp - current.startAt) / 60000),
             } : {}),
@@ -423,13 +428,14 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
     }
     await writer.close();
 
-    const [remainingNotes, remainingOwner, remainingCreator, remainingAssignee] = await Promise.all([
+    const [remainingNotes, remainingOwner, remainingCreator, remainingAssignee, remainingArray] = await Promise.all([
       db.collection("projectNotes").where("projectId", "==", projectId).where("ownerUserId", "==", uid).limit(1).get(),
       db.collection("projectTasks").where("projectId", "==", projectId).where("ownerUserId", "==", uid).limit(1).get(),
       db.collection("projectTasks").where("projectId", "==", projectId).where("creatorUserId", "==", uid).limit(1).get(),
       db.collection("projectTasks").where("projectId", "==", projectId).where("assigneeUserId", "==", uid).limit(1).get(),
+      db.collection("projectTasks").where("projectId", "==", projectId).where("assigneeUserIds", "array-contains", uid).limit(1).get(),
     ]);
-    if ([remainingNotes, remainingOwner, remainingCreator, remainingAssignee].some((snapshot) => !snapshot.empty)) {
+    if ([remainingNotes, remainingOwner, remainingCreator, remainingAssignee, remainingArray].some((snapshot) => !snapshot.empty)) {
       throw new HttpsError("aborted", "共有データの匿名化を完了できませんでした。再試行してください。");
     }
   };
@@ -455,6 +461,13 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
   };
 
   const leaveAfterAnonymizing = async (uid, projectId) => {
+    await db.runTransaction(async transaction => {
+      const memberRef = db.doc(`projects/${projectId}/members/${uid}`);
+      const [member, project] = await Promise.all([transaction.get(memberRef), transaction.get(db.doc(`projects/${projectId}`))]);
+      if (!member.exists) return;
+      if (member.data()?.role === "owner" || project.data()?.ownerUserId === uid) throw new HttpsError("failed-precondition", "所有権を移譲してから退出してください。");
+      if (member.data()?.leavingAt == null) transaction.update(memberRef, { leavingAt: Date.now() });
+    });
     await anonymizeProjectContent(uid, projectId);
     await db.runTransaction(async (transaction) => {
       const memberRef = db.doc(`projects/${projectId}/members/${uid}`);
@@ -467,9 +480,53 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
       if (member.data()?.role === "owner" || project.data()?.ownerUserId === uid) {
         throw new HttpsError("failed-precondition", "所有権を移譲してから退出してください。");
       }
+      // Reading the remaining content in the removal transaction also catches
+      // writes racing with anonymization. Keep membership until a retry cleans them.
+      const remaining = await Promise.all([
+        transaction.get(db.collection("projectNotes").where("projectId", "==", projectId).where("ownerUserId", "==", uid).limit(1)),
+        ...["ownerUserId", "creatorUserId", "assigneeUserId"].map(field =>
+          transaction.get(db.collection("projectTasks").where("projectId", "==", projectId).where(field, "==", uid).limit(1))),
+        transaction.get(db.collection("projectTasks").where("projectId", "==", projectId).where("assigneeUserIds", "array-contains", uid).limit(1)),
+      ]);
+      if (remaining.some(snapshot => !snapshot.empty)) {
+        throw new HttpsError("aborted", "共有データが更新されました。もう一度退出してください。");
+      }
       transaction.delete(memberRef);
       transaction.delete(membershipRef);
     });
+  };
+
+  const leaveProject = async (uid, data) => {
+    const validId = value => typeof value === "string" && value.trim().length > 0
+      && value === value.trim() && value.length <= 128 && !value.includes("/")
+      && value !== "." && value !== "..";
+    if (!validId(data?.projectId) || (data?.transferToUserId !== undefined && !validId(data.transferToUserId))) {
+      throw new HttpsError("invalid-argument", "退出対象と移譲先を確認してください。");
+    }
+    const { projectId, transferToUserId } = data;
+    const [member, project, index] = await Promise.all([
+      db.doc(`projects/${projectId}/members/${uid}`).get(),
+      db.doc(`projects/${projectId}`).get(),
+      db.doc(`projectMemberships/${projectId}__${uid}`).get(),
+    ]);
+    if (!member.exists) {
+      // A completed request may be retried after its response was lost.
+      if (index.exists || project.data()?.ownerUserId === uid) {
+        throw new HttpsError("failed-precondition", "所属情報を確認できません。");
+      }
+      return refresh(uid);
+    }
+    if (!project.exists || !index.exists) {
+      throw new HttpsError("failed-precondition", "所属情報を確認できません。");
+    }
+    if (member.data()?.role === "owner" || project.data()?.ownerUserId === uid) {
+      if (!transferToUserId || transferToUserId === uid) {
+        throw new HttpsError("failed-precondition", "別のメンバーへ所有権を移譲してから退出してください。");
+      }
+      await transferOwnership(uid, projectId, transferToUserId);
+    }
+    await leaveAfterAnonymizing(uid, projectId);
+    return refresh(uid);
   };
 
   const resolveOverflow = async (uid, data) => {
@@ -512,6 +569,7 @@ const createProjectAccessService = ({ db, HttpsError, getAccess }) => {
     beginSelection,
     createJoinRequest,
     createProject,
+    leaveProject,
     refresh,
     resolveOverflow,
     respondToInvitation,

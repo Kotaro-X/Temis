@@ -1,4 +1,4 @@
-import { projectTaskOwner, transitionProjectTask } from "./projectTaskCore";
+import { projectTaskAssignees, projectTaskOwner, transitionProjectTask } from "./projectTaskCore";
 import { saveProfileSetupTransaction } from "./profileSetupTransaction";
 import { assertUsernameAvailable, assertUsernameChangeAllowed, validateDisplayName } from "./profilePolicy";
 import { nanoid } from "nanoid/non-secure";
@@ -110,6 +110,7 @@ type ProjectTaskUpdate = Pick<
   | "privateDate"
   | "privateSlotKey"
   | "assigneeUserId"
+  | "assigneeUserIds"
   | "relatedMemoId"
   | "kind" | "plannedStartAt" | "plannedEndAt" | "repeat" | "repeatAnchorDate" | "occurrenceOverrides"
 >;
@@ -483,7 +484,7 @@ export const setProjectGuildVisibility = async (projectId: string, isPublic: boo
   });
 };
 
-export const upsertProjectSharedNote = async (note: ProjectSharedNote, taskPatch?: Pick<Partial<ProjectTask>, "title" | "description">): Promise<void> => {
+export const upsertProjectSharedNote = async (note: ProjectSharedNote, taskPatch?: Pick<Partial<ProjectTask>, "title" | "description">, onCommitted?: () => void): Promise<void> => {
   const userId = requireCurrentUserId();
   await runTransaction(db(), async (transaction) => {
     const [member, existing] = await Promise.all([
@@ -505,7 +506,7 @@ export const upsertProjectSharedNote = async (note: ProjectSharedNote, taskPatch
       transaction.set(sharedNoteRef(note.id), { ...linkedNote, sourceTaskId: task.id, title, body: description, updatedAt: now() });
       return;
     }
-    if (!member.exists() || member.data()?.role === "viewer") throw new Error("このプロジェクトへメモを共有する権限がありません。");
+    if (!member.exists() || member.data()?.role === "viewer") throw Object.assign(new Error("このプロジェクトへメモを共有する権限がありません。"), { code: "permission-denied" });
     const previous = existing.exists() ? existing.data() as ProjectSharedNote : null;
     if (previous && (previous.anonymizedReason === "project_exit" || previous.ownerUserId == null)) {
       if (member.data()?.role !== "owner") throw new Error("匿名メモを編集できるのはプロジェクト所有者だけです。");
@@ -534,6 +535,7 @@ export const upsertProjectSharedNote = async (note: ProjectSharedNote, taskPatch
       anonymizedReason: null,
     });
   });
+  onCommitted?.();
   if (requireCurrentUserId() !== userId) throw new Error("アカウントが切り替わりました。");
   if (note.ownerUserId === userId && note.sourceNoteId && !note.anonymizedReason) {
     const { enqueuePublicationContent } = await import('../guild/guildPublicationQueue');
@@ -568,8 +570,21 @@ export const listProjectSharedNotes = async (projectId: string): Promise<Project
     .sort((left, right) => right.updatedAt - left.updatedAt);
 };
 
+const mutateSharedTask = async (data: object, userId: string): Promise<ProjectTask> => {
+  const { getFunctions, httpsCallable } = await import("firebase/functions");
+  const { getFirebaseApp } = await import("../sync/firebaseApp");
+  if (requireCurrentUserId() !== userId) throw new Error("アカウントが切り替わりました。");
+  const result = await httpsCallable<object, ProjectTask>(getFunctions(getFirebaseApp(), "asia-northeast1"), "mutateProjectTask")(data);
+  if (requireCurrentUserId() !== userId) throw new Error("アカウントが切り替わりました。");
+  return normalizeProjectTask(result.data);
+};
+
 export const createProjectTask = async (input: ProjectTaskInput): Promise<ProjectTask> => {
   const userId = requireCurrentUserId();
+  if ((input.kind ?? "task") === "task" && input.assigneeUserIds !== undefined) {
+    const { projectId, kind: _kind, relatedMemoId: _memo, assigneeUserId: _legacy, ...patch } = input;
+    return mutateSharedTask({ action: "create", taskId: nanoid(), projectId, patch }, userId);
+  }
   const id = nanoid();
   const timestamp = now();
   let creatorProfile: UserProfile | null = null;
@@ -610,8 +625,21 @@ export const createProjectTask = async (input: ProjectTaskInput): Promise<Projec
 export const updateProjectTask = async (
   taskId: string,
   updateOrFactory: Partial<ProjectTaskUpdate> | ((current: ProjectTask) => Partial<ProjectTaskUpdate>),
+  expectedAssigneeIds?: string[],
 ): Promise<ProjectTask> => {
   const userId = requireCurrentUserId();
+  const snapshot = await getDoc(projectTaskRef(taskId));
+  if (!snapshot.exists()) throw new Error("共有タスクが見つかりません。");
+  const current = normalizeProjectTask(snapshot.data() as ProjectTask);
+  const proposed = typeof updateOrFactory === "function" ? updateOrFactory(current) : updateOrFactory;
+  if ((current.kind ?? "task") === "task" && (proposed.assigneeUserIds !== undefined || (current.assigneeUserIds?.length ?? 0) > 1)) {
+    if (proposed.relatedMemoId !== undefined && proposed.relatedMemoId !== current.relatedMemoId) throw new Error("複数担当者のタスクでは関連メモを変更できません。");
+    if (proposed.assigneeUserId !== undefined && proposed.assigneeUserId !== current.assigneeUserId) throw new Error("担当者を編集画面から選び直してください。");
+    const { assigneeUserId: _legacy, relatedMemoId: _memo, kind: _kind, ...patch } = proposed;
+    return mutateSharedTask({ action: "update", taskId, patch,
+      ...(proposed.assigneeUserIds !== undefined ? { expectedAssigneeIds: expectedAssigneeIds ?? projectTaskAssignees(current) } : {}),
+      ...(typeof updateOrFactory === "function" ? { expectedUpdatedAt: current.updatedAt } : {}) }, userId);
+  }
   return runTransaction(db(), async (transaction) => {
     const taskSnapshot = await transaction.get(projectTaskRef(taskId));
     if (!taskSnapshot.exists()) throw new Error("共有タスクが見つかりません。");
@@ -668,6 +696,11 @@ export const updateProjectTask = async (
 /** Permanently hides a task after the same editor-permission check as an edit. */
 export const deleteProjectTask = async (taskId: string): Promise<void> => {
   const userId = requireCurrentUserId();
+  const snapshot = await getDoc(projectTaskRef(taskId));
+  if (snapshot.exists() && (snapshot.data() as ProjectTask).assigneeUserIds && ((snapshot.data() as ProjectTask).assigneeUserIds?.length ?? 0) > 1) {
+    await mutateSharedTask({ action: "delete", taskId }, userId);
+    return;
+  }
   await runTransaction(db(), async (transaction) => {
     const taskSnapshot = await transaction.get(projectTaskRef(taskId));
     if (!taskSnapshot.exists()) throw new Error("共有タスクが見つかりません。");
@@ -710,7 +743,7 @@ export const listProjectTasks = async (
   const memberIds = members.map(member => member.userId);
   return result.docs
     .map((item) => normalizeProjectTask(item.data() as ProjectTask))
-    .map(task => task.kind === "task" ? { ...task, assigneeUserId: projectTaskOwner(task, memberIds) } : task)
+    .map(task => task.kind === "task" ? { ...task, assigneeUserIds: projectTaskAssignees(task, memberIds), assigneeUserId: projectTaskOwner(task, memberIds) } : task)
     .filter((task) => !task.deletedAt)
     .filter((task) => !kind || (task.kind ?? "task") === kind)
     .sort((left, right) => right.updatedAt - left.updatedAt);
@@ -722,7 +755,7 @@ export const subscribeProjectTasks = (projectId: string, onTasks: (tasks: Projec
   let memberIds: string[] | null = null;
   let active = true;
   const emit = () => {
-    if (active && tasks && memberIds) onTasks(tasks.map(task => task.kind === "task" ? { ...task, assigneeUserId: projectTaskOwner(task, memberIds!) } : task));
+    if (active && tasks && memberIds) onTasks(tasks.map(task => task.kind === "task" ? { ...task, assigneeUserIds: projectTaskAssignees(task, memberIds!), assigneeUserId: projectTaskOwner(task, memberIds!) } : task));
   };
   const failed = (error: Error) => { if (active) { active = false; onError(error); } };
   const stopMembers = onSnapshot(collection(db(), "projects", projectId, "members"), snapshot => {
@@ -754,7 +787,7 @@ export const listMyProjectTasks = async (
     tasks: await listProjectTasks(project.id, kind),
   })));
   return grouped.flatMap(({ project, tasks }) => tasks
-    .filter((task) => kind === "task" ? projectTaskOwner(task) === userId : isProjectContentCreatedBy(task, userId))
+    .filter((task) => kind === "task" ? projectTaskAssignees(task).includes(userId) : isProjectContentCreatedBy(task, userId))
     .map((task) => ({ project, task })))
     .sort((left, right) => right.task.updatedAt - left.task.updatedAt);
 };

@@ -18,6 +18,7 @@ function fixture(cachedProfile: any = null, cacheReadTask?: ReturnType<typeof de
   const auth = { currentUser: { uid: "alice" } as { uid: string } | null };
   const setupTasks: ReturnType<typeof deferred>[] = [];
   const photoTasks: ReturnType<typeof deferred>[] = [];
+  const leaveTasks: ReturnType<typeof deferred>[] = [];
   const profiles: ReturnType<typeof deferred>[] = [];
   const projects: ReturnType<typeof deferred>[] = [];
   const effects: (() => void)[] = [];
@@ -65,6 +66,7 @@ function fixture(cachedProfile: any = null, cacheReadTask?: ReturnType<typeof de
     if (name.endsWith("profilePhotoService")) return { selectAndSaveProfilePhoto: () => { const task = deferred(); photoTasks.push(task); return task.promise; } };
     if (name.endsWith("temisFreemiumService")) return {
       refreshProjectAccess: () => { const task = deferred(); projects.push(task); return task.promise; },
+      leaveProject: () => { const task = deferred(); leaveTasks.push(task); return task.promise; },
     };
     if (name.endsWith("types/collaboration")) return { canInviteToProject: () => true };
     if (name.endsWith('profilePolicy')) return { isProfileComplete };
@@ -76,7 +78,7 @@ function fixture(cachedProfile: any = null, cacheReadTask?: ReturnType<typeof de
     throw new Error(name);
   } });
   const render = () => { cursor = 0; return exports.CollaborationProvider({ children: null }).value; };
-  return { auth, profiles, projects, setupTasks, photoTasks, cacheReads, cacheWrites, cacheClears, render,
+  return { auth, profiles, projects, setupTasks, photoTasks, leaveTasks, cacheReads, cacheWrites, cacheClears, render,
     mount: () => { render(); mounted = true; effects.forEach((action) => action()); },
     authChanged: (uid: string | null) => { auth.currentUser = uid ? { uid } : null; authListener(auth.currentUser); },
   };
@@ -263,4 +265,45 @@ test('a delayed cache read cannot restore a logged-out or switched account', asy
   f.profiles[0].resolve({ ...completedAlice, userId: 'bob' });
   f.projects[0].resolve({ access: {}, state: {}, projects: [] }); await settle();
   assert.equal(f.render().profile.userId, 'bob');
+});
+
+
+test("project exit updates memberships and a delayed response cannot replace another account", async () => {
+  const f = fixture();
+  const initial = f.render().refresh();
+  f.profiles[0].resolve({ userId: "alice", username: "alice" });
+  f.projects[0].resolve({ access: {}, state: { membershipCount: 1 }, projects: [{ project: { id: "p" }, role: "member" }] });
+  await initial;
+  const leave = f.render().leaveProject("p");
+  f.leaveTasks[0].resolve({ access: {}, state: { membershipCount: 0 }, projects: [] });
+  await leave;
+  assert.equal(f.render().projects.length, 0);
+  assert.equal(f.render().inviteableProjects.length, 0);
+  assert.equal(f.render().projectAccess.membershipCount, 0);
+
+  const delayed = f.render().leaveProject("p");
+  const rejected = assert.rejects(delayed, /アカウント/);
+  f.auth.currentUser = { uid: "bob" };
+  const next = f.render().refresh();
+  f.profiles[1].resolve({ userId: "bob" });
+  f.projects[1].resolve({ access: {}, state: { membershipCount: 1 }, projects: [{ project: { id: "bob-project" }, role: "owner" }] });
+  await next;
+  f.leaveTasks[1].resolve({ access: {}, state: { membershipCount: 0 }, projects: [] });
+  await rejected;
+  assert.equal(f.render().projects[0].id, "bob-project");
+});
+
+test("project exit failure refreshes a completed transfer before exposing retry", async () => {
+  const f = fixture();
+  const initial = f.render().refresh();
+  f.profiles[0].resolve({ userId: "alice" });
+  f.projects[0].resolve({ access: {}, state: {}, projects: [{ project: { id: "p" }, role: "owner" }] });
+  await initial;
+  const rejected = assert.rejects(f.render().leaveProject("p", "bob"), /temporary/);
+  f.leaveTasks[0].reject(new Error("temporary"));
+  await new Promise(resolve => setImmediate(resolve));
+  f.projects[1].resolve({ access: {}, state: {}, projects: [{ project: { id: "p" }, role: "member" }] });
+  await rejected;
+  assert.equal(f.render().overflowProjects[0].role, "member");
+  assert.equal(f.render().projectStatus, "ready");
 });
