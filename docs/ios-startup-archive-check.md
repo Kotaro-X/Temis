@@ -27,3 +27,14 @@ node scripts/check-ios-fabric-archive.mjs /absolute/path/to/Temis.xcarchive
 この検査は、現在の生成済みproviderにあるクラスがArchiveのdSYM内にすべて存在することと、
 dSYMと実行ファイルのUUID一致を検証する。Archiveと同じネイティブ生成状態で実行すること。
 実機の起動・ログイン・画面表示の確認は別途手動で行う。
+
+## Xcode 27.2の最低iOSバージョン検査
+
+一部のPod（Privacy用リソースbundleを含む）はiOS 9〜13を最低対応に設定しており、
+Xcode 27.2ではArchiveの準備時に対応範囲外としてエラーになる。
+`withIosPodsDeploymentTarget`は`react_native_post_install`後に、Podの設定を
+アプリの最低対応バージョン（`ios.deploymentTarget`、未指定なら15.1）まで引き上げる。
+それより新しいバージョンが必要なPodの設定は維持する。
+
+既存のネイティブプロジェクトにも修正済みPodfileを適用後、
+`cd ios && pod install --no-repo-update`でPodsプロジェクトを更新する。
