@@ -391,6 +391,16 @@
       "collectionGroup": "guildPostAIIndex",
       "fieldPath": "wikiTokens",
       "indexes": []
+    },
+    {
+      "collectionGroup": "calendarConnections",
+      "fieldPath": "enabled",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
     }
   ]
 }

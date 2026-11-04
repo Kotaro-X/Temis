@@ -28,6 +28,14 @@ for (const [project, entry] of [['temis-c05aa', 'index.js'], ['temis-test-c05aa'
       const entry = await import('./functions/${entry}');
       const shared = await import('./functions/commonHandlers.js');
       const expected = Object.entries(shared).filter(([,handler]) => typeof handler === 'function' && handler.__endpoint).map(([name]) => name).sort();
+      const calendarNames = ['getGoogleCalendarSettings', 'beginGoogleCalendarConnection', 'googleCalendarOAuthCallback', 'listGoogleCalendars', 'setGoogleCalendarSettings', 'syncGoogleCalendarNow', 'syncGoogleCalendars'];
+      if ('${project}' === 'temis-c05aa') {
+        for (const name of calendarNames) {
+          if (!entry[name]?.__endpoint) throw Error('Missing calendar handler: ' + name);
+          expected.push(name);
+        }
+        expected.sort();
+      } else if (calendarNames.some(name => name in entry)) throw Error('Calendar integration leaked into test');
       const actual = Object.keys(entry).sort();
       if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error('Entrypoint omits shared handlers: ' + expected.filter(name => !actual.includes(name)).join(', '));
       for (const name of ['sendDirectMessage','markDirectMessagesRead','setDirectMessageDevice','notifyDirectMessage','retryDirectMessageNotifications']) {

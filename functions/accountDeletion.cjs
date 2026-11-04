@@ -197,6 +197,13 @@ const deleteCoreAccountData = async (uid) => {
   return runAccountDeletionStages([
     // Fail the indexed query before deleting other data. Every step is retryable.
     ["invitations", () => deleteRedemptionRecords(uid)],
+    ["calendar_sync", async () => {
+      const ref = firestore.doc(`users/${uid}/calendarConnections/google`);
+      await firestore.runTransaction(async tx => {
+        const value = await tx.get(ref);
+        if (value.exists) tx.update(ref, { enabled: false, deleting: true, refreshToken: null, oauthState: null, lease: null, leaseUntil: 0 });
+      });
+    }],
     ["direct_messages", () => require("./directMessagesCore.cjs").createDMService(firestore).deleteAccountMessages(uid)],
     ["guild_author", async () => { await firestore.doc(`guildAuthors/${uid}`).set({ displayName: "匿名ユーザー", photoUrl: null, deleted: true }); await deleteDocuments((await queryByUser("guildPublicationStates", "userId", "==", uid)).docs); }],
     ["profile_photos", () => require("./profileIdentityCore.cjs").deleteAccountPhotos(getStorage().bucket(), uid)],

@@ -45,7 +45,7 @@ async function fixture(role: string, candidates: any[] = []) {
       Alert: { alert: (...args: any[]) => alerts.push(args) }, StyleSheet: { create: (value: any) => value } };
     if (name === '@expo/vector-icons') return { Ionicons: 'Icon' };
     if (name.endsWith('CollaborationContext')) return { useCollaboration: () => context };
-    if (name.endsWith('WorkspaceScopeTrigger') || name.endsWith('ProjectCreateModal')) return { __esModule: true, default: 'Stub' };
+    if (name.endsWith('WorkspaceScopeTrigger') || name.endsWith('ProjectCreateModal') || name.endsWith('GoogleCalendarSettings')) return { __esModule: true, default: 'Stub' };
     if (name.endsWith('guildService')) return { listProjectJoinRequests: async () => [] };
     if (name.endsWith('collaborationService')) return {
       listProjectMembers: async () => [], listProjectSharedNotes: async () => [], listProjectTasks: async () => [],

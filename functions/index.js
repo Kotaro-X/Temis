@@ -45,3 +45,14 @@ export {
   getEnvironmentSwitchCapability,
   issueTestSessionTicket
 } from "./commonHandlers.js";
+
+// Calendar integration is production-only; testEntry intentionally does not export it.
+export {
+  getGoogleCalendarSettings,
+  beginGoogleCalendarConnection,
+  googleCalendarOAuthCallback,
+  listGoogleCalendars,
+  setGoogleCalendarSettings,
+  syncGoogleCalendarNow,
+  syncGoogleCalendars,
+} from './googleCalendar.cjs';

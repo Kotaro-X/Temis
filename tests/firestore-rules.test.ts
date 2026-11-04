@@ -190,6 +190,66 @@ if (!FIRESTORE_EMULATOR_HOST) {
     });
   };
 
+  test("calendar credentials, OAuth state and mappings deny all direct client access", async () => {
+    await seedPlusAccess('calendar-owner');
+    const paths = ['users/calendar-owner/calendarConnections/google', 'users/calendar-owner/calendarBindings/b/links/l', 'googleCalendarOAuthStates/state', 'googleCalendarJobs/scheduler'];
+    await env.withSecurityRulesDisabled(async context => {
+      for (const path of paths) await context.firestore().doc(path).set({ refreshToken: 'fake', enabled: true });
+    });
+    for (const client of [env.authenticatedContext('calendar-owner', createGoogleToken()), env.authenticatedContext('outsider', createGoogleToken()), env.unauthenticatedContext()]) {
+      for (const path of paths) {
+        const ref = client.firestore().doc(path);
+        await assertFails(ref.get());
+        await assertFails(ref.set({ enabled: true }));
+        await assertFails(ref.delete());
+      }
+    }
+  });
+
+  test("calendar imports commit valid task envelopes and guarded Project updates atomically", async () => {
+    const { createRequire } = await import('node:module');
+    const require = createRequire(import.meta.url);
+    const { initializeApp, deleteApp } = require('firebase-admin/app');
+    const { getFirestore } = require('firebase-admin/firestore');
+    const { applyCalendarChange } = require('../functions/googleCalendarImport.cjs');
+    const { assertValidSyncEnvelopeForWrite } = await import('../src/services/sync/syncEnvelopeValidator.ts');
+    const app = initializeApp({ projectId: 'demo-wememo' }, 'calendar-import-test');
+    const db = getFirestore(app);
+    const uid = 'calendar-editor';
+    try {
+      await seedPlusAccess(uid);
+      const connection = db.doc(`users/${uid}/calendarConnections/google`);
+      await connection.set({ lease: 'worker', enabled: true });
+      const lease = { validate: async (tx: any) => {
+        const value = (await tx.get(connection)).data();
+        if (!value.enabled || value.lease !== 'worker') throw Object.assign(new Error('revoked'), { code: 'aborted' });
+      } };
+      const sourceRef = db.doc(`users/${uid}/tasks/calendar-task`);
+      await sourceRef.set(createTaskEnvelope('calendar-task'));
+      const value = { title: 'Calendar title', time: { date: '2026-11-05' }, recurrence: [], zone: null };
+      const result = await applyCalendarChange({ db, uid, kind: 'private', sourceRef, source: (await sourceRef.get()).data(), occurrenceKey: 'root', value, timeZone: 'Asia/Tokyo', lease });
+      assertValidSyncEnvelopeForWrite(result);
+      assert.equal(result.record.task.taskName, 'Calendar title');
+      const client = env.authenticatedContext(uid, createGoogleToken()).firestore();
+      await assertSucceeds(client.doc(sourceRef.path).get());
+      await assertSucceeds(client.doc(sourceRef.path).set({ ...result, updatedAt: result.updatedAt + 1 }));
+      await db.doc('projects/calendar-project').set({ taskEnabled: true });
+      await db.doc(`projects/calendar-project/members/${uid}`).set({ role: 'member' });
+      const projectRef = db.doc('projectTasks/calendar-project-task');
+      await projectRef.set({ id: projectRef.id, projectId: 'calendar-project', kind: 'task', creatorUserId: uid, ownerUserId: uid, title: 'Before', description: 'Preserve memo', tags: [], estimateMinutes: 25, elapsedMinutes: 0, isArchived: false, status: 'todo', assigneeUserIds: [uid], updatedAt: 1, deletedAt: null });
+      const receipt = { ref: db.doc(`users/${uid}/calendarBindings/b/incomingInstances/i`), data: { transferred: true } };
+      await applyCalendarChange({ db, uid, kind: 'project', projectId: 'calendar-project', sourceRef: projectRef, source: (await projectRef.get()).data(), occurrenceKey: 'root', value, timeZone: 'Asia/Tokyo', lease, receipt });
+      assert.equal((await projectRef.get()).data().title, 'Calendar title');
+      assert.equal((await receipt.ref.get()).data().transferred, true);
+      assert.equal((await db.doc('projectNotes/project-task-calendar-project-task').get()).data().body, 'Preserve memo');
+      await db.doc(`projects/calendar-project/members/${uid}`).update({ role: 'viewer' });
+      await assert.rejects(applyCalendarChange({ db, uid, kind: 'project', projectId: 'calendar-project', sourceRef: projectRef, source: (await projectRef.get()).data(), occurrenceKey: 'root', value: { deleted: true }, timeZone: 'Asia/Tokyo', lease }), (error: any) => error.code === 'permission-denied');
+      await connection.update({ enabled: false });
+      await assert.rejects(applyCalendarChange({ db, uid, kind: 'private', sourceRef, source: (await sourceRef.get()).data(), occurrenceKey: 'root', value: { deleted: true }, timeZone: 'Asia/Tokyo', lease }), (error: any) => error.code === 'aborted');
+      assert.equal((await sourceRef.get()).data().isDeleted, false);
+    } finally { await deleteApp(app); }
+  });
+
   const seedFreeProjectAccess = async (userId: string, projectId: string) => {
     await env.withSecurityRulesDisabled(async (context) => {
       await context.firestore().collection("projectAccessStates").doc(userId).set({

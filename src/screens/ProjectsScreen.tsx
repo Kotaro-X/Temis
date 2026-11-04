@@ -1,3 +1,4 @@
+import GoogleCalendarSettings from '../components/settings/GoogleCalendarSettings';
 import WorkspaceScopeTrigger from '../components/app-shell/WorkspaceScopeTrigger';
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -462,6 +463,7 @@ const ProjectsScreen = ({
             ))
           )}
 
+          <GoogleCalendarSettings key={selected.id} projectId={selected.id} />
           <View style={styles.taskSectionHeader}>
             <Text style={styles.sectionTitle}>共有タスク</Text>
             {myRole === "owner" ? (

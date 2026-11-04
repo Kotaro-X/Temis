@@ -48,10 +48,14 @@ const createProjectTaskMutation = (db, options = {}) => async (uid, data) => {
     const allowed = (plus.exists && plusData.userId === uid && plusData.tier === 'plus' && plusData.verifiedUntil > Date.now()) ||
       (free.exists && freeData.userId === uid && freeData.status === 'ready' && freeData.freeProjectId === projectId);
     if (!member.exists || member.data()?.leavingAt != null || (options.allowedRoles && !options.allowedRoles.includes(member.data()?.role)) || !project.exists || project.data().deletedAt || !allowed || (creating && project.data().taskEnabled !== true)) fail('permission-denied', 'このプロジェクトにアクセスできません。');
-    const now = Date.now();
+    const now = options.monotonicUpdatedAt ? Math.max(Date.now(), (old?.updatedAt ?? 0) + 1) : Date.now();
     if (data.action === 'delete' && old && (old.anonymizedReason === 'project_exit' || (old.ownerUserId == null && old.creatorUserId == null)) && member.data()?.role !== 'owner') fail('permission-denied', 'この共有タスクを消去する権限がありません。');
     if (data.expectedUpdatedAt !== undefined && old?.updatedAt !== data.expectedUpdatedAt) fail('aborted', 'タスクが変更されました。もう一度お試しください。');
     const priorIds = old ? assigneesOf(old) : [];
+    // Calendar imports use the same permission checks and memo maintenance as app edits.
+    if (options.requiredAssigneeUserId && !priorIds.includes(options.requiredAssigneeUserId)) fail('permission-denied', '担当解除されたタスクは同期できません。');
+    if (options.expectedProjectId && projectId !== options.expectedProjectId) fail('permission-denied', 'Projectが変更されました。');
+    if (options.validateCurrent) await options.validateCurrent(tx, old);
     if (patch.assigneeUserIds !== undefined && !creating && (!Array.isArray(data.expectedAssigneeIds) || !sameIds(priorIds, data.expectedAssigneeIds))) fail('aborted', '担当者が変更されました。画面を開き直して確認してください。');
     const ids = patch.assigneeUserIds !== undefined ? patch.assigneeUserIds : creating ? [uid] : priorIds;
     if (!Array.isArray(ids)) fail('invalid-argument', '担当者を確認してください。');
@@ -89,6 +93,7 @@ const createProjectTaskMutation = (db, options = {}) => async (uid, data) => {
       }
     }
     tx.set(taskRef, next);
+    if (options.afterWrite) options.afterWrite(tx, next);
     return next;
   });
 };

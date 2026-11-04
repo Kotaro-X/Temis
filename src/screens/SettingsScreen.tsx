@@ -1,3 +1,4 @@
+import GoogleCalendarSettings from '../components/settings/GoogleCalendarSettings';
 import { isTestEnvironment } from "../services/environment/runtimeEnvironment";
 import EnvironmentSettings from "../components/settings/EnvironmentSettings";
 import { AIConsentSettings } from '../context/AIConsentContext';
@@ -558,7 +559,7 @@ const SettingsScreen = ({
             <Text style={[styles.googleAuthButtonText, styles.googleAuthButtonTextSecondary]}>{language === "ja" ? "同期を再実行" : "Retry sync"}</Text>
           </Pressable>
         ) : null}
-        <AIConsentSettings /><BlockedUsersSettings /><View style={styles.accountLegalLinks}>
+        <GoogleCalendarSettings /><AIConsentSettings /><BlockedUsersSettings /><View style={styles.accountLegalLinks}>
           <Pressable onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
             <Text style={styles.subscriptionLegalLink}>
               {t(language, "settings.sync.privacyPolicy")}

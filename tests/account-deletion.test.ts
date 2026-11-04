@@ -51,7 +51,7 @@ test("client success requires deleted:true and never displays raw SDK data", () 
 });
 
 // The actual callable module runs against in-memory SDK stubs; no real account or network.
-function callableFixture(options: { testEnvironment?: boolean; failStage?: string; apple?: boolean; externalFailure?: boolean; userMissing?: boolean; redemptionCount?: number; sharedData?: boolean; database?: any } = {}) {
+function callableFixture(options: { testEnvironment?: boolean; calendarConnection?: boolean; failStage?: string; apple?: boolean; externalFailure?: boolean; userMissing?: boolean; redemptionCount?: number; sharedData?: boolean; database?: any } = {}) {
   const events: string[] = [];
   const logs: unknown[] = [];
   class HttpsError extends Error {
@@ -65,6 +65,10 @@ function callableFixture(options: { testEnvironment?: boolean; failStage?: strin
   };
   const bufferedDeletes: { resolve: () => void; reject: (error: unknown) => void }[] = [];
   const db = {
+    runTransaction: async (fn: any) => fn({ get: async () => ({ exists: options.calendarConnection === true }), update: async (_ref: any, data: any) => {
+      assert.equal(data.enabled, false); assert.equal(data.deleting, true); assert.equal(data.refreshToken, null); assert.equal(data.lease, null);
+      await step('calendar_sync');
+    } }),
     doc: (path: string) => ({ path, set: () => step("guild_author"), delete: () => path.startsWith("aiConsents/") ? step("ai_consent") : step(path.startsWith("profiles/") ? "profile" : "subscription_access") }),
     collection: () => ({ where: () => ({
       get: async () => ({ docs: [], size: 0, empty: true }),
@@ -353,4 +357,12 @@ test("test deletion never revokes Apple or deletes RevenueCat/Crashlytics custom
   assert.equal(result.deleted, true);
   assert.equal(result.appleAuthorizationRevoked, false);
   assert.equal(fixture.events.includes("external"), false);
+});
+
+ test("account deletion revokes the calendar worker lease before removing cloud data", async () => {
+  const fixture = callableFixture({ calendarConnection: true });
+  const result = await fixture.call(request);
+  assert.equal(result.deleted, true);
+  assert.ok(fixture.events.indexOf('calendar_sync') > fixture.events.indexOf('invitations'));
+  assert.ok(fixture.events.indexOf('calendar_sync') < fixture.events.indexOf('cloud_data'));
 });

@@ -1,4 +1,5 @@
 const STAGES: Record<string, string> = {
+  calendar_sync: "Googleカレンダー連携",
   guild_author: "Commonsの投稿者情報",
   profile_photos: "プロフィール写真",
   direct_messages: "DM履歴・通知情報",
