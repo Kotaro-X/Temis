@@ -4,8 +4,8 @@ module.exports = () => {
   const expoConfig = appJson.expo || {};
   const isDevBuild = process.env.NODE_ENV !== "production";
   const requestedIosNewArchitecture = process.env.IOS_NEW_ARCH_ENABLED;
-  // RN 0.81's New Architecture crashes release apps on iOS 26+ when a
-  // TurboModule throws during startup. Keep it for local development only.
+  // Keep the existing release architecture selection independent of UIScene
+  // adoption, which is required for both React Native architectures.
   const shouldUseIosNewArchitecture =
     requestedIosNewArchitecture === "true"
       ? true
@@ -72,6 +72,8 @@ module.exports = () => {
         : {}),
     },
     plugins: [
+      // Preserve Scene lifecycle adoption when regenerating the native project.
+      "./plugins/withIosSceneLifecycle",
       ...basePlugins,
       [
         "./plugins/withIosNewArchitecture",

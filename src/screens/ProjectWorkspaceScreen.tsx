@@ -673,7 +673,7 @@ const ProjectWorkspaceScreen = ({
               key={note.id}
               title={note.title?.trim() || "無題"}
               meta={[
-                `作成者: ${creatorLabelFor(note.ownerUserId, note.creatorDisplayName, note.anonymizedReason)}`,
+                `${project.name} · 作成者: ${creatorLabelFor(note.ownerUserId, note.creatorDisplayName, note.anonymizedReason)}`,
                 new Date(note.updatedAt).toLocaleDateString("ja-JP"),
               ]}
               onPress={() => openComposer("memos", note)}

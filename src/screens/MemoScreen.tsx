@@ -44,6 +44,7 @@ import TemisAIDock from "../components/ai/TemisAIDock";
 import MemoListCard from "../components/memo/MemoListCard";
 import { AppLanguage, t } from "../i18n";
 import { useAI } from "../hooks/useAI";
+import { useCollaboration } from "../context/CollaborationContext";
 import { formatTemisAIUsageLabel, useTemisAIUsage } from "../context/TemisAIUsageContext";
 import type { MemoWorkspaceTabKey } from "../types/appNavigation";
 import type { AIEvidence } from "../types";
@@ -306,6 +307,11 @@ const MemoScreen = ({
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const aiUsage = useTemisAIUsage();
+  const { projects, overflowProjects } = useCollaboration();
+  const projectNames = useMemo(() => new Map([
+    ...overflowProjects.map(({ project }) => [project.id, project.name] as const),
+    ...projects.map((project) => [project.id, project.name] as const),
+  ]), [projects, overflowProjects]);
   const listRef = useRef<SectionList<MemoItem>>(null);
   const qaAccessoryId = useMemo(
     () => `qa-toolbar-${Math.random().toString(36).slice(2, 10)}`,
@@ -709,13 +715,16 @@ const MemoScreen = ({
             )}
             renderItem={({ item }) => {
               const isDeleting = deletingMemoKeys.includes(item.key);
+              const scopeLabel = item.scope === "project"
+                ? projectNames.get(item.projectId ?? "") || (language === "en" ? "Project" : "プロジェクト")
+                : "Private";
               return (
                 <MemoListCard
                   title={normalizeUiText(item.memoTitle)}
                   meta={[
-                    `${normalizeUiText(sourceLabel(item.source))} · ${normalizeUiText(
-                      item.taskTitle || "メモ",
-                    )}${item.scope === "project" ? " · プロジェクト" : ""}`,
+                    item.source === "note"
+                      ? scopeLabel
+                      : `${scopeLabel} · ${normalizeUiText(sourceLabel(item.source))} · ${normalizeUiText(item.taskTitle)}`,
                     ...(item.source === "todo" && item.tags?.length ? [item.tags.join(" · ")] : []),
                   ]}
                   onPress={() => {

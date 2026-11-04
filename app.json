@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "usesAppleSignIn": true,
-      "buildNumber": "120",
+      "buildNumber": "124",
       "bundleIdentifier": "com.anonymous.WeMemo",
       "googleServicesFile": "./config/GoogleService-Info.plist",
       "icon": "./assets/icon.png",

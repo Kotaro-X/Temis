@@ -27,7 +27,7 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
   useEffect(() => { let active = true; setAssigneeNames({}); if (assigneeKey) void listProjectCreatorProfiles(assigneeKey.split(',')).then(profiles => { if (active) setAssigneeNames(Object.fromEntries(profiles.map(person => [person.userId, person.displayName || `@${person.username}`]))); }).catch(() => {}); return () => { active = false; }; }, [assigneeKey, profile?.userId]);
   const [view, setView] = useState<'box' | 'timeline'>('box'); const [range, setRange] = useState<'day' | 'week'>('day');
   const { selectDateFromCalendar: setDate } = useAppUI(); const date = selectedDate; const [editor, setEditor] = useState<Editor | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ morning: true, forenoon: true, afternoon: true, night: true, undated: false });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ morning: true, forenoon: true, afternoon: true, night: true, undated: false, unfinished: false });
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false); const [bulkDate, setBulkDate] = useState(selectedDate); const [bulkSlot, setBulkSlot] = useState<SlotKey>('morning'); const [bulkError, setBulkError] = useState<string | null>(null);
   useEffect(() => { setSelectedKeys([]); setBulkMoveOpen(false); }, [selectionMode, selectedDate]);
@@ -47,6 +47,7 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
   const dates = range === 'week' && view === 'timeline' ? weekDates(date) : [date];
   const occurrences = occurrencesForDates(items, dates);
   const undated: PlanningOccurrence[] = items.filter(item => item.date === UNDATED_TASKS && !item.archived).map(item => ({ ...item, key: `${item.id}@undated`, occurrenceDate: UNDATED_TASKS }));
+  const unfinished = occurrences.filter(item => item.date === date && !item.completed);
   const toggleSelection = (item: PlanningOccurrence) => { if (item.editable === false) return; setSelectedKeys(previous => previous.includes(item.key) ? previous.filter(key => key !== item.key) : [...previous,item.key]); };
   const edit = (item: PlanningOccurrence) => { if (selectionMode) { toggleSelection(item); return; } setEditor({ item, date: item.date, projectId: item.projectId }); };
   useEffect(() => {
@@ -76,7 +77,8 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
     catch (cause) { Alert.alert('更新できません', cause instanceof Error ? cause.message : '再試行してください。'); }
     finally { actionLock.current = false; }
   };
-  const row = (item: PlanningOccurrence) => {
+  const row = (item: PlanningOccurrence, group: string) => {
+    const rowKey = `${group}:${item.key}`;
     const shared = store.projects.find(record => `project:${record.task.id}` === item.id);
     const source = shared ? projectTaskState(shared.task) : store.privateRecords.find(record => record.task.id === item.id)?.task;
     if (!source) return null;
@@ -88,7 +90,7 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
     return <View key={item.key} style={{ marginVertical: 3 }}>
       <TaskItem styles={sharedStyles} tr={tr} task={task} noTagLabel={noTagLabel} untitledLabel={untitledLabel} statusLabel={statusLabel[task.status]} palette={palette}
         boxDetails={{ projectName: shared?.project.name, assigneeLabel: shared ? (owners.length ? owners.map(owner => owner === profile?.userId ? 'あなた' : assigneeNames[owner] || `メンバー ${owner.slice(0, 8)}`).join('、') : '未割り当て') : undefined, timeLabel }}
-        draggable={false} isOpen={swipeKey === item.key} onOpen={() => setSwipeKey(item.key)} onClose={() => setSwipeKey(null)} onPress={() => { setSwipeKey(null); edit(item); }}
+        draggable={false} isOpen={swipeKey === rowKey} onOpen={() => setSwipeKey(rowKey)} onClose={() => setSwipeKey(null)} onPress={() => { setSwipeKey(null); edit(item); }}
         selectionMode={selectionMode} selected={selectedKeys.includes(item.key)} onToggleSelection={() => toggleSelection(item)} completed={item.completed}
         onStart={() => invoke('start')} onPause={() => invoke('pause')} onDone={() => invoke('done')}
         executionActions={item.editable === false ? <Text>閲覧のみ</Text> : item.completed ? <Pressable style={s.button} onPress={() => invoke('reopen')}><Text>未完了に戻す</Text></Pressable> : undefined}
@@ -117,10 +119,10 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
     {view === 'box' ? dateControls : null}
     {store.error ? <View><Text accessibilityRole="alert" style={{ color: '#b91c1c' }}>{store.error}</Text><Pressable accessibilityRole="button" style={s.button} onPress={() => { void store.refresh().catch(() => {}); }}><Text>再試行</Text></Pressable></View> : null}
     {view === 'timeline' ? <TaskTimeline headerControls={dateControls} onPage={direction => setDate(addDays(date, direction * (range === 'week' ? 7 : 1)))} selectedKeys={selectedKeys} onDraggingChange={onDraggingChange} dates={dates} items={occurrences} undated={undated} schedule={timeBoxSchedule} onEdit={edit} onCreate={(date, minute) => setEditor({ item: null, date, minute, projectId })} onPlace={(...args) => { void place(...args); }} canCreate={canCreate} /> : <>
-      {[...SLOT_KEYS, 'undated' as const].map(slot => {
-        const entries = slot === 'undated' ? undated : occurrences.filter(item => item.date === date && item.slot === slot);
-        return <View key={slot} style={s.box}><View style={s.toolbar}><Pressable style={{ flex: 1, padding: 10 }} accessibilityRole="button" accessibilityState={{ expanded: expanded[slot] }} onPress={() => setExpanded(previous => ({ ...previous, [slot]: !previous[slot] }))}><Text style={s.heading}>{expanded[slot] ? '▾' : '▸'} {slot === 'undated' ? '日付未定' : `${SLOT_LABELS[slot]} ${timeBoxSchedule[slot].start}–${timeBoxSchedule[slot].end}`} ({entries.length})</Text></Pressable>{canCreate ? <Pressable style={s.button} onPress={() => setEditor({ item: null, date: slot === 'undated' ? UNDATED_TASKS : date, slot: slot === 'undated' ? 'morning' : slot, projectId })}><Text>＋</Text></Pressable> : null}</View>
-          {expanded[slot] ? <>{entries.map(row)}{!entries.length ? <Text style={s.meta}>タスクはありません</Text> : null}</> : null}</View>;
+      {[...SLOT_KEYS, 'undated' as const, 'unfinished' as const].map(slot => {
+        const entries = slot === 'unfinished' ? unfinished : slot === 'undated' ? undated : occurrences.filter(item => item.date === date && item.slot === slot);
+        return <View key={slot} style={s.box}><View style={s.toolbar}><Pressable style={{ flex: 1, padding: 10 }} accessibilityRole="button" accessibilityState={{ expanded: expanded[slot] }} onPress={() => setExpanded(previous => ({ ...previous, [slot]: !previous[slot] }))}><Text style={s.heading}>{expanded[slot] ? '▾' : '▸'} {slot === 'unfinished' ? '未完了' : slot === 'undated' ? '日付未定' : `${SLOT_LABELS[slot]} ${timeBoxSchedule[slot].start}–${timeBoxSchedule[slot].end}`} ({entries.length})</Text></Pressable>{canCreate && slot !== 'unfinished' ? <Pressable style={s.button} onPress={() => setEditor({ item: null, date: slot === 'undated' ? UNDATED_TASKS : date, slot: slot === 'undated' ? 'morning' : slot, projectId })}><Text>＋</Text></Pressable> : null}</View>
+          {expanded[slot] ? <>{entries.map(item => row(item, slot))}{!entries.length ? <Text style={s.meta}>タスクはありません</Text> : null}</> : null}</View>;
       })}
     </>}
     <TaskMoveModal styles={sharedStyles} visible={bulkMoveOpen} title="選択したタスクを移動（予定の時刻は維持）" cancelLabel="キャンセル" confirmLabel="保存" prevLabel="前日" nextLabel="翌日" dateDraft={bulkDate} onChangeDateDraft={setBulkDate} dateError={bulkError}
