@@ -28,7 +28,8 @@ for (const [project, entry] of [['temis-c05aa', 'index.js'], ['temis-test-c05aa'
       const entry = await import('./functions/${entry}');
       const shared = await import('./functions/commonHandlers.js');
       const expected = Object.entries(shared).filter(([,handler]) => typeof handler === 'function' && handler.__endpoint).map(([name]) => name).sort();
-      const calendarNames = ['getGoogleCalendarSettings', 'beginGoogleCalendarConnection', 'googleCalendarOAuthCallback', 'listGoogleCalendars', 'setGoogleCalendarSettings', 'syncGoogleCalendarNow', 'syncGoogleCalendars'];
+      const calendarNames = ['getGoogleCalendarSettings', 'beginGoogleCalendarConnection', 'googleCalendarOAuthCallback', 'listGoogleCalendars', 'setGoogleCalendarSettings', 'syncGoogleCalendarNow', 'processGoogleCalendarChange', 'onPrivateTaskCalendarChange', 'onProjectTaskCalendarChange', 'onProjectMemberCalendarChange', 'onProjectCalendarChange', 'onGoogleCalendarConfigurationChange', 'googleCalendarWebhook', 'maintainGoogleCalendarWatches'];
+      if ('syncGoogleCalendars' in entry) throw Error('Periodic calendar synchronization must not be exported');
       if ('${project}' === 'temis-c05aa') {
         for (const name of calendarNames) {
           if (!entry[name]?.__endpoint) throw Error('Missing calendar handler: ' + name);

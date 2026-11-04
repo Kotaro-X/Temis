@@ -121,7 +121,8 @@ const GoogleCalendarSettings = ({ projectId }: Props) => {
           {calendars.map(calendar => <Pressable key={calendar.id} accessibilityRole="radio" accessibilityState={{ selected: calendar.id === calendarId }} disabled={busy} onPress={() => setCalendarId(calendar.id)} style={[styles.calendar, calendar.id === calendarId && styles.selected]}><Text>{calendar.id === calendarId ? '✓ ' : ''}{calendar.name}</Text></Pressable>)}
           {!calendars.length && !busy && <Text style={styles.caption}>書き込み可能なカレンダーがありません。「設定を再読み込み」で再確認できます。</Text>}
           <View style={styles.row}><Text>{projectId ? 'このProjectを同期' : 'Privateを同期'}</Text><Switch value={syncEnabled} disabled={busy || (!syncEnabled && (!permitted || (!projectId && !cloudSyncEnabled)))} onValueChange={setSyncEnabled} /></View>
-          <Text style={styles.caption}>名前・予定日時・削除を約5分間隔で反映します。日付だけのタスクは終日予定、日付未定は対象外です。繰り返し・個別変更にも対応します。</Text>
+          <Text style={styles.caption}>変更を検知すると名前・予定日時・削除を同期します。日付だけのタスクは終日予定、日付未定は対象外です。繰り返し・個別変更にも対応します。</Text>
+          <Text style={styles.caption}>定期同期は行いません。変更が反映されない場合は、アカウント設定の「今すぐ同期」をお試しください。Privateの変更はクラウドへの保存後、Google側の変更は端末のクラウド同期後に反映されます。</Text>
           <Text style={styles.caption}>オフにした場合や同期先を変えた場合、以前に送った予定は残ります。</Text>
           {button('同期設定を保存', confirmSave, busy || (syncEnabled && (!permitted || !calendarId || (!projectId && !cloudSyncEnabled))))}
           {!settings.enabled && <Text style={styles.caption}>自動同期は全体で一時停止中です。アカウント設定から再開してください。</Text>}

@@ -4,6 +4,9 @@ const { getApps, initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, FieldPath } = require('firebase-admin/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onTaskDispatched } = require('firebase-functions/v2/tasks');
+const { getFunctions } = require('firebase-admin/functions');
 const { defineSecret } = require('firebase-functions/params');
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const core = require('./googleCalendarCore.cjs');
@@ -43,10 +46,11 @@ const requirePlus = async uid => {
   const access = await accessService.getAccess(uid);
   if (access?.userId !== uid || access.tier !== 'plus' || access.verifiedUntil <= Date.now()) throw new HttpsError('failed-precondition', '有効なTemis Plusのクラウド同期が必要です。');
 };
-const acquire = async uid => {
+const acquire = async (uid, existing = false) => {
   const lease = randomBytes(16).toString('hex');
   await db.runTransaction(async tx => {
-    const ref = connectionRef(uid), value = (await tx.get(ref)).data() || {};
+    const ref = connectionRef(uid), snapshot = await tx.get(ref), value = snapshot.data() || {};
+    if (existing && !snapshot.exists) throw new HttpsError('not-found', '同期設定がありません。');
     if (value.deleting) throw new HttpsError('failed-precondition', 'アカウント削除中です。');
     if (value.leaseUntil > Date.now()) throw new HttpsError('aborted', 'カレンダー同期中です。少し待って再度お試しください。');
     tx.set(ref, { lease, leaseUntil: Date.now() + 130000 }, { merge: true });
@@ -76,8 +80,8 @@ const acquire = async uid => {
     }),
   };
 };
-const withLease = async (uid, run) => {
-  const lease = await acquire(uid);
+const withLease = async (uid, run, existing = false) => {
+  const lease = await acquire(uid, existing);
   try { return await run(lease); } finally { await lease.release(); }
 };
 const apiFor = async (uid, value) => {
@@ -213,43 +217,97 @@ const runSync = async uid => {
       const { syncCalendar } = require('./googleCalendarSync.cjs');
       const targets = [ ...(value.calendarId ? [{ ...value, projectId: null }] : []), ...Object.entries(value.projects ?? {}).map(([projectId, target]) => ({ ...target, projectId })) ].filter(target => target.direction === 'linked');
       const deadline = Date.now() + 75000;
-      let skipped = 0, blocked = 0, pending = false;
+      let skipped = 0, blocked = 0, pending = false, continuation = false;
       const issues = {};
       const offset = (value.nextTarget ?? 0) % Math.max(1, targets.length);
       for (let n = 0; n < targets.length; n++) {
         const index = (offset + n) % targets.length;
-        if (Date.now() > deadline - 10000) { pending = true; await lease.update({ nextTarget: index }); break; }
+        if (Date.now() > deadline - 10000) { pending = true; continuation = true; await lease.update({ nextTarget: index }); break; }
         try {
           const result = await syncCalendar({ db, uid, settings: { ...targets[index], googleSub: value.googleSub }, api, lease, deadline });
           skipped += result.skipped; blocked += result.blocked; pending ||= result.pending;
+          continuation ||= result.continuation === true;
           for (const [reason, count] of Object.entries(result.issues)) issues[reason] = (issues[reason] ?? 0) + count;
         } finally { await lease.update({ nextTarget: (index + 1) % targets.length }); }
       }
       await lease.update({ skipped, blocked, pending, issues, error: null, lastSyncedAt: Date.now() });
+      return { ...publicSettings((await connectionRef(uid).get()).data()), continuation };
     } catch (error) {
       await lease.update({ error: safeCode(error) });
       throw error;
     }
-    return publicSettings((await connectionRef(uid).get()).data());
-  });
+  }, true);
 };
-exports.syncGoogleCalendarNow = callable(uid => runSync(uid));
-exports.syncGoogleCalendars = onSchedule({ ...options, timeoutSeconds: 540, schedule: 'every 5 minutes', maxInstances: 1 }, async () => {
-  const cursorRef = db.doc('googleCalendarJobs/scheduler'), cursor = (await cursorRef.get()).data()?.cursor;
-  let query = db.collectionGroup('calendarConnections').where('enabled', '==', true).orderBy(FieldPath.documentId()).limit(50);
-  if (cursor) query = query.startAfter(db.doc(cursor));
-  const snapshot = await query.get(), deadline = Date.now() + 420000;
-  let last = null;
-  for (const document of snapshot.docs) {
-    if (Date.now() > deadline) break;
-    const uid = document.ref.parent.parent.id;
-    try { await runSync(uid); } catch (error) {
-      // Store only a bounded error code; never tokens, calendar titles, or API bodies.
-      if (error.code !== 'aborted') await document.ref.update({ error: safeCode(error) }).catch(() => {});
-    }
-    last = document.ref.path;
+const { createCalendarEvents, taskChanged, configurationChanged } = require('./googleCalendarEvents.cjs');
+const { assigneesOf } = require('./projectTaskMutationCore.cjs');
+const enqueue = data => getFunctions().taskQueue('locations/asia-northeast1/functions/processGoogleCalendarChange').enqueue(data, { dispatchDeadlineSeconds: 540 });
+const events = createCalendarEvents({ db, enqueue, withLease: (uid, run) => withLease(uid, run, true), apiFor,
+  requirePlus: async uid => {
+    if ((await getAuth().getUser(uid)).disabled) throw new HttpsError('permission-denied', 'Account disabled.');
+    await requirePlus(uid);
+  }, runSync, safeCode });
+exports.syncGoogleCalendarNow = callable(async uid => {
+  await events.maintain(uid);
+  const result = await runSync(uid);
+  if (result.continuation) await enqueue({ uid, kind: 'sync' });
+  delete result.continuation;
+  return result;
+});
+exports.processGoogleCalendarChange = onTaskDispatched({ ...options, timeoutSeconds: 540,
+  retryConfig: { maxAttempts: 10, minBackoffSeconds: 15, maxBackoffSeconds: 300, maxDoublings: 5 },
+  rateLimits: { maxConcurrentDispatches: 5, maxDispatchesPerSecond: 2 },
+}, request => events.work(request.data));
+const changed = event => [event.data?.before.data(), event.data?.after.data()];
+const trigger = document => ({ ...options, document, retry: true });
+exports.onPrivateTaskCalendarChange = onDocumentWritten(trigger('users/{uid}/tasks/{taskId}'), async event => {
+  const [before, after] = changed(event);
+  if (taskChanged(before, after)) await events.request(event.params.uid);
+});
+exports.onProjectTaskCalendarChange = onDocumentWritten(trigger('projectTasks/{taskId}'), async event => {
+  const [before, after] = changed(event);
+  if (!taskChanged(before, after, true)) return;
+  for (const uid of new Set([...(before ? assigneesOf(before) : []), ...(after ? assigneesOf(after) : [])])) await events.request(uid);
+});
+exports.onProjectMemberCalendarChange = onDocumentWritten(trigger('projects/{projectId}/members/{uid}'), async event => {
+  // Membership/permission changes also remove stale exports after leave or role changes.
+  const [before, after] = changed(event);
+  if (Boolean(before) === Boolean(after) && before?.role === after?.role && before?.leavingAt === after?.leavingAt) return;
+  await events.request(event.params.uid);
+});
+exports.onProjectCalendarChange = onDocumentWritten(trigger('projects/{projectId}'), async event => {
+  const [before, after] = changed(event);
+  if (Boolean(before && !before.deletedAt) === Boolean(after && !after.deletedAt)) return;
+  const members = await db.collection(`projects/${event.params.projectId}/members`).get();
+  const tasks = await db.collection('projectTasks').where('projectId', '==', event.params.projectId).get();
+  const uids = new Set([...members.docs.map(doc => doc.id), ...tasks.docs.flatMap(doc => assigneesOf(doc.data()))]);
+  for (const uid of uids) await events.request(uid);
+});
+exports.onGoogleCalendarConfigurationChange = onDocumentWritten(trigger('users/{uid}/calendarConnections/google'), async event => {
+  const [before, after] = changed(event);
+  if (after && !after.deleting && configurationChanged(before, after)) await events.request(event.params.uid, 'configure');
+});
+exports.googleCalendarWebhook = onRequest({ region: options.region, serviceAccount: options.serviceAccount, invoker: 'public', timeoutSeconds: 30, maxInstances: 10 }, async (req, res) => {
+  if (req.method !== 'POST') { res.status(405).send(''); return; }
+  try { res.status(await events.notify(req.headers)).send(''); }
+  catch { res.status(503).send(''); }
+});
+// This schedule ONLY renews notification subscriptions and removes expired metadata.
+// It never fetches calendar events or starts a reconciliation pass.
+exports.maintainGoogleCalendarWatches = onSchedule({ ...options, timeoutSeconds: 540, schedule: 'every 1 hours', maxInstances: 1, retryCount: 3 }, async () => {
+  const cursorRef = db.doc('googleCalendarJobs/watchMaintenance');
+  let cursor = (await cursorRef.get()).data()?.cursor;
+  const deadline = Date.now() + 420000;
+  while (Date.now() < deadline) {
+    let query = db.collectionGroup('calendarConnections').where('enabled', '==', true).orderBy(FieldPath.documentId()).limit(100);
+    if (cursor) query = query.startAfter(db.doc(cursor));
+    const snapshot = await query.get();
+    for (const document of snapshot.docs) await events.request(document.ref.parent.parent.id, 'renew');
+    cursor = snapshot.size === 100 ? snapshot.docs.at(-1).ref.path : null;
+    await cursorRef.set({ cursor });
+    if (!cursor) break;
   }
-  await cursorRef.set({ cursor: last && (snapshot.size === 50 || last !== snapshot.docs.at(-1)?.ref.path) ? last : null });
   const expired = await db.collection('googleCalendarOAuthStates').where('expiresAt', '<', Date.now()).limit(100).get();
   const batch = db.batch(); expired.docs.forEach(document => batch.delete(document.ref)); await batch.commit();
+  const expiredChannels = await db.collection('googleCalendarChannels').where('expiration', '<', Date.now()).limit(100).get();
+  const channelBatch = db.batch(); expiredChannels.docs.forEach(document => channelBatch.delete(document.ref)); await channelBatch.commit();
 });

@@ -54,5 +54,12 @@ export {
   listGoogleCalendars,
   setGoogleCalendarSettings,
   syncGoogleCalendarNow,
-  syncGoogleCalendars,
+  processGoogleCalendarChange,
+  onPrivateTaskCalendarChange,
+  onProjectTaskCalendarChange,
+  onProjectMemberCalendarChange,
+  onProjectCalendarChange,
+  onGoogleCalendarConfigurationChange,
+  googleCalendarWebhook,
+  maintainGoogleCalendarWatches,
 } from './googleCalendar.cjs';

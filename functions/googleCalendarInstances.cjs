@@ -5,9 +5,10 @@ const { applyCalendarChange } = require('./googleCalendarImport.cjs');
 
 // singleEvents=false returns recurring exceptions without expanding infinite series.
 // Only exceptions of our persisted, acknowledged masters enter this private inbox.
-const syncInstances = async ({ db, uid, settings, api, lease, bindingRef, links, calendarPath, bindingId, deadline, recordIssue }) => {
+const syncInstances = async ({ db, uid, settings, api, lease, bindingRef, links, calendarPath, bindingId, deadline, recordIssue, requestContinuation = () => {} }) => {
   const parents = new Map([...links.entries()].filter(([, link]) => !link.removed && link.baseEvent?.recurrence?.length && !link.outgoing?.deleted).map(([key, link]) => [link.eventId, { key, link }]));
   if (!parents.size) return false;
+  if (Date.now() >= deadline - 25000) { requestContinuation(); return true; }
   const inbox = bindingRef.collection('incomingInstances');
   let state = (await bindingRef.get()).data() || {}, pending = false;
   for (let page = 0; page < 5 && Date.now() < deadline - 25000; page++) {
@@ -19,7 +20,7 @@ const syncInstances = async ({ db, uid, settings, api, lease, bindingRef, links,
     await lease.check();
     try { result = await api.request(`${calendarPath}?${query}`); }
     catch (error) {
-      if (error.status === 410) { await lease.write(bindingRef, { syncToken: null, pageToken: null }, { merge: true }); return true; }
+      if (error.status === 410) { await lease.write(bindingRef, { syncToken: null, pageToken: null }, { merge: true }); requestContinuation(); return true; }
       throw error;
     }
     for (const event of result.items ?? []) {
@@ -33,9 +34,10 @@ const syncInstances = async ({ db, uid, settings, api, lease, bindingRef, links,
     pending = true;
   }
   pending = Boolean(state.pageToken);
+  if (pending) requestContinuation();
   const snapshot = await inbox.get();
   for (const document of snapshot.docs) {
-    if (Date.now() > deadline - 22000) return true;
+    if (Date.now() > deadline - 22000) { requestContinuation(); return true; }
     const entry = document.data(), event = entry.event;
     if (entry.transferred || entry.handledEtag === event.etag) continue;
     const parent = parents.get(event.recurringEventId);
@@ -80,7 +82,7 @@ const syncInstances = async ({ db, uid, settings, api, lease, bindingRef, links,
       });
     } catch (error) {
       if (error.calendarReason || ['permission-denied', 'aborted', 'failed-precondition', 'invalid-argument', 'not-found'].includes(error.code) || [400, 403, 404, 412].includes(error.status)) {
-        recordIssue(error.calendarReason ?? (error.code === 'aborted' ? 'concurrent_edit' : 'permission_denied')); pending = true;
+        recordIssue(error.calendarReason ?? (error.code === 'aborted' || error.status === 412 ? 'concurrent_edit' : 'permission_denied')); pending = true;
       } else throw error;
     }
   }

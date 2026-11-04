@@ -16,7 +16,7 @@ The integration is exported only by the production Functions entrypoint (`temis-
 - A Google deletion of a linked Project event deletes the shared task itself, subject to current membership, assignment and edit/delete permissions. The UI explains this before enabling synchronization. Google changes by another person with access to a shared calendar are also observed.
 - Tasks without a date are excluded. A dated task without clock times becomes a one-day all-day event. Completed tasks remain; archived tasks are removed from Google. Unassignment/Project exit removes that user's exported events without deleting the shared task.
 - Turning synchronization off, disconnecting, or selecting another account/calendar leaves previously exported events in place. Reconnecting the same account/calendar uses retained mappings. Turning a target back on reconciles changes made during the pause.
-- Scheduled work runs every five minutes; large backlogs, quotas and retry delays may take longer. 「今すぐ同期」 runs the same worker. Private edits first need to reach Firestore through existing cloud sync; incoming changes reach the device during its next cloud sync.
+- Automatic synchronization is change-driven only: Firestore task/configuration/membership changes and verified Google Calendar webhooks enqueue the worker. There is no periodic synchronization or polling fallback. Change-triggered work retries up to ten times with backoff; unsupported items remain held. 「今すぐ同期」 explicitly runs the worker. A dropped Google notification is reconciled by the next change or manual sync, not by a timer. Private edits first need to reach Firestore through existing cloud sync; incoming changes reach the device during its next cloud sync.
 - Temis Plus is required, with entitlement renewal through the existing server access service. Enabling Private also requires local cloud sync to be on. The separate calendar pause/disable controls stop calendar synchronization.
 
 ## Reconciliation and storage
@@ -42,7 +42,7 @@ The following are held for the affected item with a reason in settings, without 
 
 ### Security and API boundaries
 
-OAuth uses a dedicated web client, random one-use state bound to the Temis UID, a ten-minute expiration, PKCE S256, account selection and offline consent. Refresh tokens use AES-256-GCM with the Temis UID as authenticated additional data. The access token is short-lived and only held in server memory. OAuth state records expire logically immediately; the scheduler purges expired records in bounded batches.
+OAuth uses a dedicated web client, random one-use state bound to the Temis UID, a ten-minute expiration, PKCE S256, account selection and offline consent. Refresh tokens use AES-256-GCM with the Temis UID as authenticated additional data. The access token is short-lived and only held in server memory. OAuth state records expire logically immediately; the watch-maintenance job purges expired records in bounded batches.
 
 All integration collections are denied by the existing default-deny Firestore Rules, even to the owning client. Only authenticated Callables expose settings. The production runtime service account performs server-side operations. No rule widening is needed.
 
@@ -56,9 +56,24 @@ Production endpoints:
 | `listGoogleCalendars` | List connected account's calendars |
 | `setGoogleCalendarSettings` | Save Private/Project target, disable, pause, resume, disconnect |
 | `syncGoogleCalendarNow` | Authenticated manual run |
-| `syncGoogleCalendars` | Five-minute scheduled worker and expired-state cleanup |
+| `processGoogleCalendarChange` | Authenticated Cloud Tasks worker with bounded retries |
+| `onPrivateTaskCalendarChange` | Private task Firestore change → enqueue |
+| `onProjectTaskCalendarChange` | Project task change → enqueue for previous/current assignees |
+| `onProjectMemberCalendarChange` | Membership/permission change → enqueue |
+| `onProjectCalendarChange` | Project creation/deletion state → enqueue for affected users |
+| `onGoogleCalendarConfigurationChange` | Target/account/pause changes → reconcile watches and initial sync |
+| `googleCalendarWebhook` | Public HTTPS notification receiver; validates channel ID, secret token, resource ID, expiry, current account and enabled target |
+| `maintainGoogleCalendarWatches` | Hourly subscription renewal and expired-metadata cleanup only; never reads events or runs synchronization |
 
-The existing `deleteAccount` Function also needs deployment for the lease/credential cleanup stage. Disconnect attempts Google token revocation after removing the local credential. Account deletion removes the local credential/mappings; users can also remove the grant in Google Account permissions. Event contents, authorization codes and tokens must not be logged. Store only bounded issue/error codes in status.
+The existing `deleteAccount` Function also needs deployment for the lease/credential/channel cleanup stage. Disconnect attempts Google token revocation after removing the local credential. Account deletion removes the local credential/mappings; users can also remove the grant in Google Account permissions. Event contents, authorization codes and tokens must not be logged. Store only bounded issue/error codes in status.
+
+### Change notifications and watch lifecycle
+
+`googleCalendarChannels/{randomUuid}` is server-only and contains the owning UID, Google subject, selected calendar, SHA-256 hash of a random 256-bit notification token, resource ID and expiration. Register it before `events.watch` to handle the initial `sync` message arriving before the response. Initial `sync` messages never trigger reconciliation. Only actual change messages with the matching resource ID enqueue work; queue failures return HTTP 503, never a success acknowledgement. Duplicate/out-of-order messages can safely enqueue redundant work; the existing user lease and idempotent reconciliation protect the data.
+
+Each enabled calendar gets one watch shared by that user's Private/Project targets. Hourly maintenance replaces watches expiring within a day, creating the replacement before stopping the old channel. It does not read event contents, synchronize tasks, reconcile gaps or enqueue synchronization on renewal. Pause/disconnect/switch invalidates old notifications immediately via current connection checks; configuration work removes local watch records and attempts Google channel stop. Account deletion revokes the lease and removes channel records before deleting user data.
+
+Firestore triggers watch only task/configuration fields relevant to synchronization. Worker status, leases, mappings and ordinary completion/timer/memo changes cannot create a self-sustaining sync loop. Assignment changes notify both previous and current assignees; Project exit, membership permissions and Project deletion also request cleanup. Work arriving while another run owns the lease retries independently, so it is not silently acknowledged and lost. Deadline/page/ETag conflicts retry within the task's ten-attempt budget; permanent holds do not schedule an endless continuation chain.
 
 ## Provisioning and deployment
 
@@ -80,20 +95,24 @@ All steps below target **production `temis-c05aa` explicitly**. They are instruc
 5. Confirm existing `REVENUECAT_PROJECT_ID`, `REVENUECAT_V2_SECRET_API_KEY`, and `REVENUECAT_CLOUD_SYNC_ENTITLEMENT_ID` values remain available. The new worker uses the existing Plus renewal logic so app inactivity does not stop synchronization after the access lease expires.
 6. Grant `temis-embeddings@temis-c05aa.iam.gserviceaccount.com` access to the six required secrets and retain its Firestore and Firebase Auth user-read permissions. Verify Cloud Scheduler and Functions/Cloud Run provisioning are enabled. Scope secret access to those secrets.
 7. Review the index delta and deploy the `calendarConnections.enabled` collection-group ascending index. The checked-in `firestore.indexes.json` contains the addition. Use the explicit production project when deploying indexes; do not accept deletion of unrelated indexes.
-8. Deploy only the new endpoints and account cleanup:
+8. Enable Cloud Tasks API. The runtime service account needs permission to enqueue on the `processGoogleCalendarChange` queue (`roles/cloudtasks.enqueuer`), permission to resolve the function (`cloudfunctions.functions.get`), and permission to act as the task's OIDC service account (`iam.serviceAccounts.actAs`). Grant the task service account `roles/run.invoker` on the task worker; keep that endpoint authenticated. The public notification receiver is separate and contains no OAuth secrets. Follow [Firebase task queue IAM configuration](https://firebase.google.com/docs/functions/task-functions#iam_configuration). Deploy only the calendar endpoints and account cleanup:
 
    ```sh
-   npx firebase deploy --project temis-c05aa --only functions:getGoogleCalendarSettings,functions:beginGoogleCalendarConnection,functions:googleCalendarOAuthCallback,functions:listGoogleCalendars,functions:setGoogleCalendarSettings,functions:syncGoogleCalendarNow,functions:syncGoogleCalendars,functions:deleteAccount
+   npx firebase deploy --project temis-c05aa --only functions:getGoogleCalendarSettings,functions:beginGoogleCalendarConnection,functions:googleCalendarOAuthCallback,functions:listGoogleCalendars,functions:setGoogleCalendarSettings,functions:syncGoogleCalendarNow,functions:processGoogleCalendarChange,functions:onPrivateTaskCalendarChange,functions:onProjectTaskCalendarChange,functions:onProjectMemberCalendarChange,functions:onProjectCalendarChange,functions:onGoogleCalendarConfigurationChange,functions:googleCalendarWebhook,functions:maintainGoogleCalendarWatches,functions:deleteAccount
    ```
 
-   Confirm the public callback URI is reachable, the scheduled job exists, all required functions are active, and the configured runtime account can read the secrets. Do not deploy these endpoints to `temis-test-c05aa`.
+   Confirm both public callback URIs are reachable, the authenticated task queue exists, the watch-maintenance job exists, all required functions are active, and the configured runtime account can read the secrets and enqueue/invoke tasks. The Google notification URL is `https://asia-northeast1-temis-c05aa.cloudfunctions.net/googleCalendarWebhook` (not an OAuth redirect URI).
+
+   If the legacy `syncGoogleCalendars` function/job is already deployed, pause its Scheduler job before rollout, then explicitly remove it with `npx firebase functions:delete syncGoogleCalendars --region asia-northeast1 --project temis-c05aa --force`. A selective deploy of new functions alone does **not** remove that old scheduled function. Verify its Scheduler job is also gone. Do not leave the five-minute worker running.
+
+   For already connected users, the hourly maintenance creates watches only; change target settings, pause then resume, or use 「今すぐ同期」 to register watches immediately and reconcile existing tasks. Do not deploy these endpoints to `temis-test-c05aa`.
 9. Install the updated app and complete the manual acceptance below with disposable tasks and a dedicated Google test calendar. Enable broader use only after successful OAuth and live synchronization checks.
 
 ### Monitoring and rollback
 
-Check `lastSyncedAt`, `pending`, `blocked`, bounded `issues`, and `error` through the settings endpoint/UI. Permission errors must stop mutation, invalid grants require reconnect, and a concurrent edit should retry with a fresh snapshot. An individual permanent failure must not starve other tasks; both per-target and per-item cursors rotate. Large accounts may require a future task-queue fan-out for latency; five minutes is the scheduling interval, not a hard delivery SLA.
+Check `lastSyncedAt`, `pending`, `blocked`, bounded `issues`, and `error` through the settings endpoint/UI. Permission errors must stop mutation, invalid grants require reconnect, and a concurrent edit should retry with a fresh snapshot. An individual permanent failure must not starve other tasks; both per-target and per-item cursors rotate. Large accounts may require a future task-queue fan-out for latency; notification delivery and change-triggered retries have no hard delivery SLA. There is no periodic reconciliation. Google may drop notifications; the next change or 「今すぐ同期」 is the recovery path.
 
-For rollback, pause the scheduler and disable manual-sync endpoint access or redeploy them to return a maintenance error before rolling back other Functions. Preserve mapping histories and the encryption key. Do not bulk-delete Google events or Temis data. Users can pause or disconnect their own integration; disconnect leaves exported events intact.
+For rollback, pause the task queue and watch-maintenance job, disable the change-trigger and webhook enqueue paths, and disable manual-sync endpoint access or return a maintenance error before rolling back other Functions. Do not restore the removed five-minute synchronization schedule. Preserve mapping histories and the encryption key. Do not bulk-delete Google events or Temis data. Users can pause or disconnect their own integration; disconnect leaves exported events intact.
 
 ## Automated and manual verification
 
@@ -121,4 +140,20 @@ Manual acceptance after provisioning/deployment:
 7. Pause, disconnect, reconnect, change calendar/account, and revoke Google permission. Existing exported events should remain on disconnect/switch; failures must not erase Temis tasks.
 8. Delete a disposable Temis account and confirm the worker cannot continue or recreate private mappings. Check app background/foreground refresh and status messages.
 
-References: [Google OAuth web-server flow](https://developers.google.com/identity/protocols/oauth2/web-server), [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [Recurring events](https://developers.google.com/workspace/calendar/api/guides/recurringevents), [Events list and sync tokens](https://developers.google.com/workspace/calendar/api/v3/reference/events/list), [Conditional updates](https://developers.google.com/workspace/calendar/api/guides/version-resources).
+References: [Google OAuth web-server flow](https://developers.google.com/identity/protocols/oauth2/web-server), [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [Recurring events](https://developers.google.com/workspace/calendar/api/guides/recurringevents), [Events list and sync tokens](https://developers.google.com/workspace/calendar/api/v3/reference/events/list), [Conditional updates](https://developers.google.com/workspace/calendar/api/guides/version-resources), [Push notifications and channel renewal](https://developers.google.com/workspace/calendar/api/guides/push).
+
+Change-driven validation (2026-11-05 JST):
+
+- `npm run typecheck`: passed.
+- Targeted ESLint on all changed JavaScript/TypeScript files: passed.
+- `npm run test:unit`: 564 passed, 1 skipped, 0 failed (565 total), including channel authentication, renewal without reconciliation, queue failures, lease contention, mid-run notifications and account-deletion races.
+- `npm run test:firestore-rules`: 42 passed. The new channel collection denies owner/outsider/anonymous client reads and writes; local Firestore/Storage emulators stopped cleanly.
+- `git diff --check`: clean. No live Google API, production deployment or iOS runtime acceptance was performed.
+
+Change-driven acceptance (2026-11-05 update):
+
+- Verify Private and Project create/rename/reschedule/delete in both directions without waiting for a five-minute boundary, including repeat exceptions and previous/current assignees.
+- Confirm idle accounts do not run synchronization and the legacy five-minute Scheduler job is absent. Hourly watch renewal must leave `lastSyncedAt` unchanged and must not request event lists.
+- Pause, resume, disconnect, change accounts/calendars and leave a Project; old notifications must not modify tasks, and resumed settings must register watches and run one initial reconciliation.
+- Inspect Cloud Tasks for bounded retries on transient Google/lease conflicts. Confirm duplicate webhooks do not create duplicates or deletion echoes. A dropped notification must stay pending until the next change or manual sync.
+- Exercise renewal with disposable channels nearing expiration, invalid notification tokens/resource IDs, and account deletion while a notification/worker is in flight. These live service checks remain manual and require deployment; no simulator/device was launched by Codex.

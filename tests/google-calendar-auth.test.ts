@@ -27,7 +27,7 @@ function fixture() {
   } };
   class HttpsError extends Error { code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
   let scopes = api.SCOPES.join(' '), identity = { sub: 'google-b', email: 'calendar-b@example.com', email_verified: true }, exchanges = 0;
-  const exported: Record<string, any> = {}, http: unknown[] = [];
+  const exported: Record<string, any> = {}, http: unknown[] = [], jobs: any[] = [];
   const stubs: Record<string, any> = {
     'node:crypto': require('node:crypto'),
     'node:buffer': require('node:buffer'),
@@ -35,11 +35,16 @@ function fixture() {
     'firebase-admin/auth': { getAuth: () => ({ getUser: async (uid: string) => { if (!users.has(uid)) throw { code: 'auth/user-not-found' }; return users.get(uid); } }) },
     'firebase-admin/firestore': { getFirestore: () => db, FieldPath: { documentId: () => '__name__' } },
     'firebase-functions/v2/scheduler': { onSchedule: (_options: any, handler: any) => handler },
+    'firebase-functions/v2/firestore': { onDocumentWritten: (_options: any, handler: any) => handler },
+    'firebase-functions/v2/tasks': { onTaskDispatched: (_options: any, handler: any) => handler },
+    'firebase-admin/functions': { getFunctions: () => ({ taskQueue: () => ({ enqueue: async (job: any) => { jobs.push(job); } }) }) },
     'firebase-functions/params': { defineSecret: (name: string) => ({ name, value: () => secrets[name] ?? 'not-used' }) },
     'firebase-functions/v2/https': { HttpsError, onCall: (_options: any, handler: any) => handler, onRequest: (_options: any, handler: any) => handler },
     './environmentRuntime.cjs': { runtimeServiceAccount: 'test-only' },
     './temisAccessCore.cjs': require('../functions/temisAccessCore.cjs'),
     './googleCalendarCore.cjs': core,
+    './googleCalendarEvents.cjs': require('../functions/googleCalendarEvents.cjs'),
+    './projectTaskMutationCore.cjs': require('../functions/projectTaskMutationCore.cjs'),
     './googleCalendarApi.cjs': { ...api, tokenRequest: async (_config: any, values: any) => { exchanges++; http.push(values); return { refresh_token: 'refresh-secret', access_token: 'access-secret', scope: scopes }; },
       jsonRequest: async () => identity, makeApi: () => ({}), listCalendars: async () => [{ id: 'cal', name: 'Calendar B', timeZone: 'Asia/Tokyo', accessRole: 'owner' }],
     },
@@ -56,9 +61,39 @@ function fixture() {
     await exported.googleCalendarOAuthCallback({ method: 'GET', query: { state, code } }, res); return result;
   };
   const begin = async (uid = 'alice') => new URL((await exported.beginGoogleCalendarConnection(request(uid))).url);
-  return { records, users, exported, request, callback, begin, secrets, http, exchanges: () => exchanges,
+  return { records, users, exported, request, callback, begin, secrets, http, jobs, exchanges: () => exchanges,
     omitScopes: () => { scopes = 'openid email'; }, identity: (value: typeof identity) => { identity = value; } };
 }
+
+test('Firestore changes enqueue previous and current assignees and ignore worker bookkeeping', async () => {
+  const f = fixture();
+  for (const uid of ['alice', 'bob']) f.records.set(`users/${uid}/calendarConnections/google`, { enabled: true, refreshToken: 'encrypted', calendarId: 'cal', direction: 'linked' });
+  const event = (before: any, after: any, params = {}) => ({ data: { before: { data: () => before }, after: { data: () => after } }, params });
+  const task = { title: 'Task', projectId: 'p', assigneeUserIds: ['alice', 'bob'] };
+  await f.exported.onProjectTaskCalendarChange(event(task, { ...task, assigneeUserIds: ['bob'] }));
+  assert.deepEqual(f.jobs.map(job => job.uid).sort(), ['alice', 'bob']); f.jobs.length = 0;
+  await f.exported.onProjectTaskCalendarChange(event(task, { ...task, updatedAt: 2, status: 'done' }));
+  assert.equal(f.jobs.length, 0);
+  const settings = f.records.get('users/alice/calendarConnections/google');
+  await f.exported.onGoogleCalendarConfigurationChange(event(settings, { ...settings, lastSyncedAt: 1, lease: 'active', error: null }, { uid: 'alice' }));
+  assert.equal(f.jobs.length, 0);
+  await f.exported.onGoogleCalendarConfigurationChange(event(settings, { ...settings, calendarId: 'other' }, { uid: 'alice' }));
+  assert.deepEqual(f.jobs, [{ uid: 'alice', kind: 'configure' }]); f.jobs.length = 0;
+  await f.exported.onPrivateTaskCalendarChange(event(null, { schemaVersion: 3, record: { kind: 'state', date: '2026-11-05', task: { taskName: 'New' } } }, { uid: 'alice' }));
+  await f.exported.onProjectMemberCalendarChange(event({ role: 'member' }, null, { uid: 'bob', projectId: 'p' }));
+  assert.deepEqual(f.jobs, [{ uid: 'alice', kind: 'sync' }, { uid: 'bob', kind: 'sync' }]);
+  f.jobs.length = 0;
+  await f.exported.onProjectMemberCalendarChange(event({ role: 'member', lastSeenAt: 1 }, { role: 'member', lastSeenAt: 2 }, { uid: 'bob', projectId: 'p' }));
+  assert.equal(f.jobs.length, 0);
+});
+
+test('a delayed worker/manual sync cannot recreate a removed calendar connection', async () => {
+  const f = fixture();
+  await assert.rejects(f.exported.syncGoogleCalendarNow(f.request()), (error: any) => error.code === 'not-found');
+  assert.equal(f.records.has('users/alice/calendarConnections/google'), false);
+  await f.exported.processGoogleCalendarChange({ data: { uid: 'alice', kind: 'configure' } });
+  assert.equal(f.records.has('users/alice/calendarConnections/google'), false);
+});
 
 test('OAuth uses PKCE, single-use state and a separate selectable Google account', async () => {
   const f = fixture(), url = await f.begin();

@@ -26,12 +26,12 @@ const syncCalendar = async ({ db, uid, settings, api, lease, deadline }) => {
     return project.exists && !project.data().deletedAt && member.exists && member.data().leavingAt == null;
   };
   const eligible = data => data && (projectId ? (data.kind ?? 'task') === 'task' && data.projectId === projectId && assigneesOf(data).includes(uid) : data.record?.kind === 'state');
-  let skipped = 0, blocked = 0, pending = false;
+  let skipped = 0, blocked = 0, pending = false, continuation = false;
   const issues = {};
-  const recordIssue = reason => { blocked++; issues[reason] = (issues[reason] ?? 0) + 1; };
+  const recordIssue = reason => { blocked++; issues[reason] = (issues[reason] ?? 0) + 1; if (reason === 'concurrent_edit') continuation = true; };
   const accessible = await projectAccessible();
   const links = new Map((await linksCollection.get()).docs.map(document => [document.id, document.data()]));
-  if (accessible) pending = await syncInstances({ db, uid, settings, api, lease, bindingRef, links, calendarPath, bindingId, deadline, recordIssue });
+  if (accessible) pending = await syncInstances({ db, uid, settings, api, lease, bindingRef, links, calendarPath, bindingId, deadline, recordIssue, requestContinuation: () => { continuation = true; } });
   const sources = accessible ? await (projectId ? db.collection('projectTasks').where('projectId', '==', projectId) : db.collection(`users/${uid}/tasks`)).get() : { docs: [] };
   const desired = new Map(), preserve = new Set();
   for (const document of sources.docs) {
@@ -47,7 +47,7 @@ const syncCalendar = async ({ db, uid, settings, api, lease, deadline }) => {
   const keys = [...new Set([...desired.keys(), ...links.keys()])].sort();
   const ordered = [...keys.filter(key => key > (binding.cursor ?? '')), ...keys.filter(key => key <= (binding.cursor ?? ''))];
   for (const key of ordered) {
-    if (Date.now() > deadline - 22000) { pending = true; break; }
+    if (Date.now() > deadline - 22000) { pending = true; continuation = true; break; }
     await lease.check();
     const ref = linksCollection.doc(key);
     let link = links.get(key);
@@ -127,7 +127,7 @@ const syncCalendar = async ({ db, uid, settings, api, lease, deadline }) => {
             if (actual.extendedProperties?.private?.temisSync !== marker) throw new mergeCore.CalendarHold('ownership_changed');
             // Existing event might have been edited after a lost response. Reconcile next run.
             await lease.write(ref, { ...link, baseTask: local, baseEvent: merged, outgoing: null });
-            pending = true; continue;
+            pending = true; continuation = true; continue;
           }
           remote = mergeCore.projection(actual);
         } else if (!core.same(remote, merged)) {
@@ -149,6 +149,6 @@ const syncCalendar = async ({ db, uid, settings, api, lease, deadline }) => {
       await lease.write(bindingRef, { cursor: key }, { merge: true });
     }
   }
-  return { skipped, blocked, pending, issues };
+  return { skipped, blocked, pending, issues, continuation };
 };
 module.exports = { syncCalendar };

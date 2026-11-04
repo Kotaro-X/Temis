@@ -203,6 +203,7 @@ const deleteCoreAccountData = async (uid) => {
         const value = await tx.get(ref);
         if (value.exists) tx.update(ref, { enabled: false, deleting: true, refreshToken: null, oauthState: null, lease: null, leaseUntil: 0 });
       });
+      await deleteDocuments((await firestore.collection('googleCalendarChannels').where('uid', '==', uid).get()).docs);
     }],
     ["direct_messages", () => require("./directMessagesCore.cjs").createDMService(firestore).deleteAccountMessages(uid)],
     ["guild_author", async () => { await firestore.doc(`guildAuthors/${uid}`).set({ displayName: "匿名ユーザー", photoUrl: null, deleted: true }); await deleteDocuments((await queryByUser("guildPublicationStates", "userId", "==", uid)).docs); }],

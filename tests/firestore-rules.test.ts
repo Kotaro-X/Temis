@@ -192,7 +192,7 @@ if (!FIRESTORE_EMULATOR_HOST) {
 
   test("calendar credentials, OAuth state and mappings deny all direct client access", async () => {
     await seedPlusAccess('calendar-owner');
-    const paths = ['users/calendar-owner/calendarConnections/google', 'users/calendar-owner/calendarBindings/b/links/l', 'googleCalendarOAuthStates/state', 'googleCalendarJobs/scheduler'];
+    const paths = ['users/calendar-owner/calendarConnections/google', 'users/calendar-owner/calendarBindings/b/links/l', 'googleCalendarOAuthStates/state', 'googleCalendarJobs/watchMaintenance', 'googleCalendarChannels/channel'];
     await env.withSecurityRulesDisabled(async context => {
       for (const path of paths) await context.firestore().doc(path).set({ refreshToken: 'fake', enabled: true });
     });
