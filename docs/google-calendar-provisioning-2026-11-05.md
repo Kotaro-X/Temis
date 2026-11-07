@@ -2,6 +2,8 @@
 
 Target: `temis-c05aa` only. Source: `b028882` (change-driven integration).
 
+Continuation: [2026-11-07 deployment and verification](google-calendar-deployment-2026-11-07.md). The pending list below records the state at the end of the original preparation, not the latest deployment status.
+
 Completed and checked:
 
 - Calendar API, Cloud Functions, Cloud Run, Cloud Scheduler, Eventarc and Secret Manager APIs were already enabled. Enabled Cloud Tasks API and verified `ENABLED`.

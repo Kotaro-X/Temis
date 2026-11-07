@@ -2,7 +2,7 @@
 
 ## Implementation status (2026-11-05 JST)
 
-The app UI and server implementation are included in this change. **Google OAuth provisioning, production deployment, live Google API verification, and simulator/device acceptance are not performed by this change.** Do not describe calendar synchronization as enabled for customers until those steps are complete.
+The app UI and server implementation are included in this change. Production provisioning and deployment were completed on 2026-11-07 JST; see [deployment verification](google-calendar-deployment-2026-11-07.md). **Live Google OAuth/calendar synchronization and simulator/device acceptance remain unverified.** Consent-screen configuration, calendar-data privacy disclosures and Google's required publication/verification must also be confirmed before broad customer release.
 
 The integration is exported only by the production Functions entrypoint (`temis-c05aa`, `asia-northeast1`). `testEntry.js` does not export these endpoints or bind their secrets. Automated tests use fake Google responses and the local `demo-wememo` Firestore/Storage emulators, never a customer's calendar.
 
