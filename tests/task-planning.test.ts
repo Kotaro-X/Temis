@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addDays, weekDates, initialDuration, slotAt, localDate, snapMinutes, scheduledPatch, occurrencesForDates, layoutIntervals, convertTodo, UNDATED_TASKS, type PlanningItem } from '../src/features/taskPlanning/planningCore.ts';
+import { addDays, weekDates, initialDuration, slotAt, localDate, snapMinutes, scheduledPatch, occurrencesForDates, overduePlanningOccurrences, layoutIntervals, convertTodo, UNDATED_TASKS, type PlanningItem } from '../src/features/taskPlanning/planningCore.ts';
 import { buildReminderRequests } from '../src/features/taskPlanning/reminderCore.ts';
 import { DEFAULT_TIMEBOX_SCHEDULE } from '../src/types/timer.ts';
 import type { SimpleTodoItem } from '../src/types/todo.ts';
@@ -42,6 +42,42 @@ test('overnight task is visible on both days with the same identity', () => {
   assert.equal(occurrencesForDates([overnight], ['2026-10-20']).length,1);
   assert.equal(occurrencesForDates([overnight], ['2026-10-19','2026-10-20']).length,1);
 });
+test('overdue planning waits for the overnight end and the time box midnight boundary', () => {
+  const overnight = { ...item, ...scheduledPatch(at(item.date, '23:30'), at('2026-10-20', '00:30')) };
+  const night = { ...item, id: 'night', slot: 'night' as const, plannedStartAt: null, plannedEndAt: null };
+  const backlog = [
+    { ...night, id: 'old', date: '2025-01-01' },
+    { ...night, id: 'undated', date: UNDATED_TASKS },
+    { ...night, id: 'done', completed: true },
+    { ...night, id: 'archived', archived: true },
+    overnight, night,
+  ];
+  const read = (now: number) => overduePlanningOccurrences(backlog, DEFAULT_TIMEBOX_SCHEDULE, now);
+  const beforeMidnight = read(at(item.date, '23:59'));
+  assert.deepEqual(beforeMidnight.occurrences.map(entry => entry.id), ['old']);
+  assert.equal(beforeMidnight.nextCheckAt, at('2026-10-20', '00:00'));
+  assert.deepEqual(read(at('2026-10-20', '00:00')).occurrences.map(entry => entry.id), ['night', 'old']);
+  assert.equal(read(at('2026-10-20', '00:00')).nextCheckAt, at('2026-10-20', '00:30'));
+  assert.deepEqual(read(at('2026-10-20', '00:30')).occurrences.map(entry => entry.id), ['task', 'night', 'old']);
+});
+
+test('overdue planning keeps each repeat identity and respects moved, completed and deleted occurrences', () => {
+  const placement = { slot: item.slot, plannedStartAt: null, plannedEndAt: null, estimateMinutes: 30 };
+  const source = {
+    ...item, repeat: 'daily' as const,
+    occurrenceOverrides: {
+      '2026-10-20': { ...placement, date: '2026-11-10' },
+      '2026-10-21': { ...placement, date: '2026-10-21', completed: true },
+      '2026-10-22': { ...placement, date: '2026-10-22', deleted: true },
+      '2026-11-01': { ...placement, date: '2026-10-22' },
+      '2026-10-23': { ...placement, date: UNDATED_TASKS },
+    },
+  };
+  const result = overduePlanningOccurrences([source], DEFAULT_TIMEBOX_SCHEDULE, at('2026-10-23'));
+  assert.deepEqual(result.occurrences.map(({ occurrenceDate, date }) => [occurrenceDate, date]),
+    [['2026-11-01', '2026-10-22'], ['2026-10-19', '2026-10-19']]);
+});
+
 test('overlapping intervals share columns, adjacent intervals reuse width', () => {
   const list = layoutIntervals([{ key:'a',start:0,end:60 },{ key:'b',start:30,end:90 },{ key:'c',start:60,end:80 },{ key:'d',start:90,end:120 }]);
   assert.deepEqual(list.map(item => [item.column,item.columns]), [[0,2],[1,2],[0,2],[0,1]]);

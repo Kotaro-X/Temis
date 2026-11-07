@@ -47,8 +47,14 @@ export function buildTodoMemoItems(todos: readonly SimpleTodoItem[]): MemoItem[]
   });
 }
 
-export const filterMemoTab = (items: MemoItem[], tab: MemoWorkspaceTabKey) =>
-  tab === "all" ? items : items.filter((item) => item.source === tab);
+export const filterMemoTab = (items: MemoItem[], tab: MemoWorkspaceTabKey, publishedIds?: ReadonlySet<string>) => {
+  if (tab === "all") return items;
+  if (tab !== "commons") return items.filter(item => item.source === tab);
+  if (!publishedIds?.size) return [];
+  const memoIds = new Set(items.map(item => item.memoId));
+  return items.filter(item => publishedIds.has(item.memoId) ||
+    (item.source === "note" && item.noteId && !memoIds.has(item.noteId) && publishedIds.has(item.noteId)));
+};
 
 export const hasMemoTags = (item: MemoItem) =>
   item.source === "task" || item.source === "tankyu" || item.source === "todo";

@@ -5,7 +5,7 @@ import { projectTaskAssignees, projectTaskState } from '../../services/collabora
 import { movePlanningOccurrence, performPlanningAction, type PlanningAction } from '../../features/taskPlanning/taskOperations';
 import type { TaskState } from '../../types/task';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, Text, View, StyleSheet } from 'react-native';
+import { Alert, AppState, Pressable, Text, View, StyleSheet } from 'react-native';
 import { useTaskPlanning } from '../../features/taskPlanning/TaskPlanningProvider';
 import { useAppSettings } from '../../context/AppSettingsContext';
 import { useCollaboration } from '../../context/CollaborationContext';
@@ -13,7 +13,7 @@ import storage from '../../services/account/accountWorkspace';
 import { getWorkspaceEpoch } from '../../services/account/workspaceEpoch';
 import { mutatePlannedTask } from '../../repositories/taskRepository';
 import { listProjectCreatorProfiles, updateProjectTask } from '../../services/collaboration/collaborationService';
-import { addDays, localDate, occurrencePatch, occurrencesForDates, scheduledPatch, slotAt, UNDATED_TASKS, weekDates, type PlanningOccurrence } from '../../features/taskPlanning/planningCore';
+import { addDays, localDate, occurrencePatch, occurrencesForDates, overduePlanningOccurrences, scheduledPatch, slotAt, UNDATED_TASKS, weekDates, type PlanningOccurrence } from '../../features/taskPlanning/planningCore';
 import { SLOT_KEYS, SLOT_LABELS, type SlotKey } from '../../types/timer';
 import TaskTimeline from './TaskTimeline';
 import TaskMoveModal from './TaskMoveModal';
@@ -47,7 +47,22 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
   const dates = range === 'week' && view === 'timeline' ? weekDates(date) : [date];
   const occurrences = occurrencesForDates(items, dates);
   const undated: PlanningOccurrence[] = items.filter(item => item.date === UNDATED_TASKS && !item.archived).map(item => ({ ...item, key: `${item.id}@undated`, occurrenceDate: UNDATED_TASKS }));
-  const unfinished = occurrences.filter(item => item.date === date && !item.completed);
+  const [now, setNow] = useState(Date.now);
+  const { occurrences: unfinished, nextCheckAt } = useMemo(
+    () => view === 'box' ? overduePlanningOccurrences(items, timeBoxSchedule, now) : { occurrences: [], nextCheckAt: null },
+    [items, timeBoxSchedule, now, view],
+  );
+  useEffect(() => {
+    if (view === 'box') setNow(Date.now());
+  }, [view, items, timeBoxSchedule]);
+  useEffect(() => {
+    if (nextCheckAt == null) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(1, nextCheckAt - Date.now()));
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') setNow(Date.now());
+    });
+    return () => { clearTimeout(timer); subscription.remove(); };
+  }, [nextCheckAt, now]);
   const toggleSelection = (item: PlanningOccurrence) => { if (item.editable === false) return; setSelectedKeys(previous => previous.includes(item.key) ? previous.filter(key => key !== item.key) : [...previous,item.key]); };
   const edit = (item: PlanningOccurrence) => { if (selectionMode) { toggleSelection(item); return; } setEditor({ item, date: item.date, projectId: item.projectId }); };
   useEffect(() => {
@@ -86,7 +101,16 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
     const palette = { TODO: { bar: '#9ca3af', badgeBg: '#f3f4f6', badgeText: '#374151' }, IN_PROGRESS: { bar: '#2563eb', badgeBg: '#dbeafe', badgeText: '#1e40af' }, PAUSED: { bar: '#f59e0b', badgeBg: '#fef3c7', badgeText: '#92400e' }, DONE: { bar: '#16a34a', badgeBg: '#dcfce7', badgeText: '#166534' } }[task.status];
     const invoke = (operation: PlanningAction) => { void action(item, operation); };
     const owners = shared ? projectTaskAssignees(shared.task) : [];
-    const timeLabel = `${item.plannedStartAt != null ? `${new Date(item.plannedStartAt).toTimeString().slice(0,5)}–${new Date(item.plannedEndAt!).toTimeString().slice(0,5)}` : '時間未設定'}${item.repeat && item.repeat !== 'none' ? ' · 繰り返し' : ''}`;
+    const isOverdueRow = group === 'unfinished';
+    const timeRange = item.plannedStartAt != null && item.plannedEndAt != null
+      ? `${new Date(item.plannedStartAt).toTimeString().slice(0, 5)}–${new Date(item.plannedEndAt).toTimeString().slice(0, 5)}`
+      : null;
+    const slotEnd = `${SLOT_LABELS[item.slot]}（${timeBoxSchedule[item.slot].end}まで）`;
+    const timeLabel = [
+      isOverdueRow ? item.date : null,
+      timeRange ?? (isOverdueRow ? slotEnd : '時間未設定'),
+      item.repeat && item.repeat !== 'none' ? '繰り返し' : null,
+    ].filter(Boolean).join(' · ');
     return <View key={item.key} style={{ marginVertical: 3 }}>
       <TaskItem styles={sharedStyles} tr={tr} task={task} noTagLabel={noTagLabel} untitledLabel={untitledLabel} statusLabel={statusLabel[task.status]} palette={palette}
         boxDetails={{ projectName: shared?.project.name, assigneeLabel: shared ? (owners.length ? owners.map(owner => owner === profile?.userId ? 'あなた' : assigneeNames[owner] || `メンバー ${owner.slice(0, 8)}`).join('、') : '未割り当て') : undefined, timeLabel }}
@@ -101,18 +125,24 @@ export default function TaskPlanner({ projectId, selectedDate, selectionMode = f
         ]} />
     </View>;
   };
-  const selectedItems = [...occurrences, ...undated].filter(item => selectedKeys.includes(item.key));
+  const selectedItems = new Map<string, PlanningOccurrence>();
+  if (selectedKeys.length) {
+    const selected = new Set(selectedKeys);
+    for (const item of [...occurrences, ...undated, ...unfinished]) {
+      if (selected.has(item.key) && item.editable !== false) selectedItems.set(item.key, item);
+    }
+  }
   const bulk = async (operation: 'delete' | 'move') => {
-    if (actionLock.current || !selectedItems.length) return; actionLock.current = true; const epoch = getWorkspaceEpoch();
+    if (actionLock.current || !selectedItems.size) return; actionLock.current = true; const epoch = getWorkspaceEpoch();
     try {
-      for (const item of selectedItems) { if (epoch !== getWorkspaceEpoch()) return; if (operation === 'delete') await performPlanningAction(item,'delete'); else await movePlanningOccurrence(item,bulkDate,bulkSlot,timeBoxSchedule); }
+      for (const item of selectedItems.values()) { if (epoch !== getWorkspaceEpoch()) return; if (operation === 'delete') await performPlanningAction(item,'delete'); else await movePlanningOccurrence(item,bulkDate,bulkSlot,timeBoxSchedule); }
       if (epoch !== getWorkspaceEpoch()) return; setSelectedKeys([]); setBulkMoveOpen(false); await store.refresh();
     } catch (cause) { const message = cause instanceof Error ? cause.message : '再試行してください。'; setBulkError(message); Alert.alert('更新できません',message); }
     finally { actionLock.current = false; }
   };
   const dateControls = <View style={s.dateControls}><Pressable accessibilityLabel="前へ" style={s.button} onPress={() => setDate(addDays(date, range === 'week' && view === 'timeline' ? -7 : -1))}><Text>‹</Text></Pressable><Text style={s.date}>{date}</Text><Pressable accessibilityLabel="次へ" style={s.button} onPress={() => setDate(addDays(date, range === 'week' && view === 'timeline' ? 7 : 1))}><Text>›</Text></Pressable><Pressable style={s.button} onPress={() => setDate(localDate(Date.now()))}><Text>今日</Text></Pressable></View>;
   return <View style={{ flex: 1 }}>
-    {selectionMode ? <View style={s.toolbar}><Text>選択中: {selectedItems.length}</Text><Pressable disabled={!selectedItems.length} style={s.button} onPress={() => { setBulkDate(date); setBulkError(null); setBulkMoveOpen(true); }}><Text>移動</Text></Pressable><Pressable disabled={!selectedItems.length} style={s.button} onPress={() => Alert.alert('選択したタスクを削除','繰り返しタスクは選択した回だけを削除します。',[{ text:'キャンセル',style:'cancel' },{ text:'削除',style:'destructive',onPress:() => { void bulk('delete'); } }])}><Text>削除</Text></Pressable><Pressable style={s.button} onPress={() => setSelectedKeys([])}><Text>選択解除</Text></Pressable></View> : null}
+    {selectionMode ? <View style={s.toolbar}><Text>選択中: {selectedItems.size}</Text><Pressable disabled={!selectedItems.size} style={s.button} onPress={() => { setBulkDate(date); setBulkError(null); setBulkMoveOpen(true); }}><Text>移動</Text></Pressable><Pressable disabled={!selectedItems.size} style={s.button} onPress={() => Alert.alert('選択したタスクを削除','繰り返しタスクは選択した回だけを削除します。',[{ text:'キャンセル',style:'cancel' },{ text:'削除',style:'destructive',onPress:() => { void bulk('delete'); } }])}><Text>削除</Text></Pressable><Pressable style={s.button} onPress={() => setSelectedKeys([])}><Text>選択解除</Text></Pressable></View> : null}
     <View style={s.toolbar}>{(['box','timeline'] as const).map(value => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: value === view }} style={[s.button, view === value && s.active]} onPress={() => setView(value)}><Text>{value === 'box' ? 'ボックス' : 'タイムライン'}</Text></Pressable>)}
       {view === 'timeline' ? (['day','week'] as const).map(value => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: range === value }} style={[s.button, range === value && s.active]} onPress={() => setRange(value)}><Text>{value === 'day' ? '日' : '週'}</Text></Pressable>) : null}
     </View>

@@ -7,7 +7,7 @@ export type TaskWorkspaceScreenKey =
   | "taskDetail";
 
 export type MemoWorkspaceScreenKey = "memo" | "notes" | "research";
-export type MemoWorkspaceTabKey = "all" | "task" | "note";
+export type MemoWorkspaceTabKey = "all" | "task" | "note" | "commons";
 
 export type SettingsWorkspaceScreenKey =
   | "settings"

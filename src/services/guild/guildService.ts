@@ -129,12 +129,16 @@ export const listGuildPosts = async ({
   };
 };
 
+const isPublicGuildPost = (post: GuildPost) =>
+  post.status === "published" && post.moderation.visibility === "visible" &&
+  post.safety?.status === "approved" && post.safety.version === 1;
+
 export const getGuildPost = async (postId: string): Promise<GuildFeedPost | null> => {
   const userId = requireUserId();
   const snapshot = await getDocFromServer(postRef(postId));
   if (!snapshot.exists()) return null;
   const post = snapshot.data() as GuildPost;
-  if (post.status !== "published" || post.moderation.visibility !== "visible" || post.safety?.status !== 'approved' || post.safety.version !== 1) return null;
+  if (!isPublicGuildPost(post)) return null;
   const relationships = await loadViewerRelationships(userId);
   if (relationships.blockedUserIds.has(post.authorUserId)) return null;
   return (await resolveGuildAuthors([omitSource(post)]))[0];
@@ -158,6 +162,22 @@ export const listMyGuildPosts = async (
     posts: await resolveGuildAuthors(posts),
     cursor: tail ? { updatedAt: tail.updatedAt, id: tail.id } : null,
   };
+};
+
+export const listMyPublicGuildSourceIds = async (userId: string): Promise<Set<string>> => {
+  const sourceIds = new Set<string>();
+  let cursor: OwnedGuildFeedCursor | null = null;
+  do {
+    if (requireUserId() !== userId) throw new Error("アカウントが切り替わりました。");
+    const page = await listMyGuildPosts(cursor);
+    for (const post of page.posts) {
+      if (post.authorUserId === userId && isPublicGuildPost(post) && post.source?.memoId) {
+        sourceIds.add(post.source.memoId);
+      }
+    }
+    cursor = page.cursor;
+  } while (cursor);
+  return sourceIds;
 };
 
 export const getOwnedGuildPost = async (postId: string): Promise<GuildPost | null> => {

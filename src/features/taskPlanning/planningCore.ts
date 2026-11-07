@@ -66,6 +66,30 @@ export const repeatsOn = (item: TaskPlanning, anchor: string, date: string) => {
     default: return false;
   }
 };
+const planningOccurrence = (item: PlanningItem, anchor: string, day: string): PlanningOccurrence | null => {
+  const override = item.occurrenceOverrides?.[day];
+  if (override?.deleted || !repeatsOn(item, anchor, day)) return null;
+
+  const start = item.plannedStartAt != null
+    ? new Date(`${day}T${new Date(item.plannedStartAt).toTimeString().slice(0, 8)}`).getTime()
+    : null;
+  const end = start != null && item.plannedEndAt != null && item.plannedStartAt != null
+    ? start + item.plannedEndAt - item.plannedStartAt
+    : null;
+  const laterRepeat = Boolean(item.repeat && item.repeat !== 'none' && day !== anchor);
+  return {
+    ...item,
+    ...(laterRepeat ? { executionStatus: 'TODO' as const, elapsedMinutes: 0, startAt: null } : {}),
+    date: day,
+    plannedStartAt: start,
+    plannedEndAt: end,
+    completed: !laterRepeat && item.completed,
+    ...override,
+    key: `${item.id}@${day}`,
+    occurrenceDate: day,
+  };
+};
+
 export const occurrencesForDates = (items: PlanningItem[], dates: string[]): PlanningOccurrence[] => {
   const visible = new Set(dates); const result: PlanningOccurrence[] = [];
   for (const item of items) {
@@ -75,13 +99,8 @@ export const occurrencesForDates = (items: PlanningItem[], dates: string[]): Pla
     const lookback = Math.max(1, Math.min(70, Math.ceil(((item.plannedEndAt ?? 0) - (item.plannedStartAt ?? 0)) / 86400000)));
     const candidates = new Set([item.date, ...dates.flatMap(date => Array.from({ length: lookback + 1 }, (_, index) => addDays(date, -index))), ...Object.keys(item.occurrenceOverrides ?? {})]);
     for (const day of candidates) {
-      if (!repeatsOn(item, anchor, day)) continue;
-      const override = item.occurrenceOverrides?.[day];
-      if (override?.deleted) continue;
-      const offset = item.plannedStartAt != null ? new Date(`${day}T${new Date(item.plannedStartAt).toTimeString().slice(0, 8)}`).getTime() : null;
-      const baseEnd = offset != null && item.plannedEndAt != null && item.plannedStartAt != null ? offset + item.plannedEndAt - item.plannedStartAt : null;
-      const occurrence = { ...item, ...(item.repeat && item.repeat !== 'none' && day !== anchor ? { executionStatus: 'TODO' as const, elapsedMinutes: 0, startAt: null } : {}), date: day, plannedStartAt: offset, plannedEndAt: baseEnd, completed: item.repeat && item.repeat !== 'none' ? day === anchor && item.completed : item.completed,
-        ...override, key: `${item.id}@${day}`, occurrenceDate: day };
+      const occurrence = planningOccurrence(item, anchor, day);
+      if (!occurrence) continue;
       if (visible.has(occurrence.date) || (occurrence.plannedEndAt != null && dates.some(date => {
         const start = new Date(`${date}T00:00:00`).getTime(); return occurrence.plannedStartAt! < new Date(`${addDays(date, 1)}T00:00:00`).getTime() && occurrence.plannedEndAt! > start;
       }))) result.push(occurrence);
@@ -89,6 +108,41 @@ export const occurrencesForDates = (items: PlanningItem[], dates: string[]): Pla
   }
   return result;
 };
+export const overduePlanningOccurrences = (items: PlanningItem[], schedule: TimeBoxSchedule, now: number) => {
+  const today = localDate(now);
+  // At midnight, another day's regular occurrences become eligible for evaluation.
+  let nextCheckAt = new Date(`${addDays(today, 1)}T00:00:00`).getTime();
+  const overdue: { item: PlanningOccurrence; end: number }[] = [];
+
+  for (const item of items) {
+    if (item.archived || !validDate(item.date)) continue;
+    const recurring = item.repeat && item.repeat !== 'none';
+    const anchor = recurring ? item.repeatAnchorDate ?? item.date : item.date;
+    if (!validDate(anchor)) continue;
+
+    // An override can move a future recurrence to a date that has already passed.
+    const candidates = new Set(Object.keys(item.occurrenceOverrides ?? {}));
+    if (recurring) {
+      const step = item.repeat === 'weekly' ? 7 : 1;
+      for (let day = anchor; day <= today; day = addDays(day, step)) candidates.add(day);
+    } else {
+      candidates.add(anchor);
+    }
+
+    for (const day of candidates) {
+      const occurrence = planningOccurrence(item, anchor, day);
+      if (!occurrence || occurrence.completed || !validDate(occurrence.date)) continue;
+      const end = occurrence.plannedEndAt ?? new Date(`${occurrence.date}T${schedule[occurrence.slot].end}:00`).getTime();
+      if (!Number.isFinite(end)) continue;
+      if (end <= now) overdue.push({ item: occurrence, end });
+      else nextCheckAt = Math.min(nextCheckAt, end);
+    }
+  }
+
+  overdue.sort((a, b) => b.end - a.end);
+  return { occurrences: overdue.map(entry => entry.item), nextCheckAt };
+};
+
 export const occurrencePatch = (source: TaskPlanning, date: string, patch: TaskOccurrenceOverride) => ({ occurrenceOverrides: { ...source.occurrenceOverrides, [date]: { ...source.occurrenceOverrides?.[date], ...patch } } });
 export const reminderTime = (item: TaskPlanning, reminder = item.reminder): number | null => !reminder?.enabled ? null : reminder.mode === 'custom' ? reminder.at : item.plannedStartAt == null ? null : item.plannedStartAt - reminder.offsetMinutes * 60000;
 export const todoTaskId = (id: string) => `todo-task:${id}`;

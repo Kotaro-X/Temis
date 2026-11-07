@@ -44,6 +44,8 @@ import TemisAIDock from "../components/ai/TemisAIDock";
 import MemoListCard from "../components/memo/MemoListCard";
 import { AppLanguage, t } from "../i18n";
 import { useAI } from "../hooks/useAI";
+import { listMyPublicGuildSourceIds } from "../services/guild/guildService";
+import { getWorkspaceEpoch } from "../services/account/workspaceEpoch";
 import { useCollaboration } from "../context/CollaborationContext";
 import { formatTemisAIUsageLabel, useTemisAIUsage } from "../context/TemisAIUsageContext";
 import type { MemoWorkspaceTabKey } from "../types/appNavigation";
@@ -90,11 +92,7 @@ type MemoEvidenceCardProps = {
   formatLabel?: (value: string) => string;
 };
 
-const TAB_LABELS: Record<MemoTab, string> = {
-  all: "All",
-  task: "Task",
-  note: "Note",
-};
+const MEMO_TABS = ["all", "task", "note", "commons"] as const satisfies readonly MemoTab[];
 
 const pad2 = (num: number) => String(num).padStart(2, "0");
 
@@ -262,6 +260,7 @@ const MemoScreen = ({
   language,
 }: Props) => {
   const tr = (key: string) => t(language, key);
+  const tabLabels = { all: "All", task: tr("tab.tasks"), note: tr("tab.memos"), commons: "Commons" };
   const allTagLabel = tr("common.all");
   const noTagLabel = tr("common.noTag");
   const untitledLabel = tr("common.untitled");
@@ -307,7 +306,16 @@ const MemoScreen = ({
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const aiUsage = useTemisAIUsage();
-  const { projects, overflowProjects } = useCollaboration();
+  const { projects, overflowProjects, profile } = useCollaboration();
+  const commonsUserId = tab === "commons" && visible ? profile?.userId : undefined;
+  const [commonsRetry, setCommonsRetry] = useState(0);
+  const commonsRequest = useMemo(() => ({ userId: commonsUserId, refreshToken, commonsRetry }),
+    [commonsUserId, refreshToken, commonsRetry]);
+  const [commonsResult, setCommonsResult] = useState<{
+    request: typeof commonsRequest;
+    ids: ReadonlySet<string> | null;
+  } | null>(null);
+  const currentCommons = commonsResult?.request === commonsRequest ? commonsResult : null;
   const projectNames = useMemo(() => new Map([
     ...overflowProjects.map(({ project }) => [project.id, project.name] as const),
     ...projects.map((project) => [project.id, project.name] as const),
@@ -339,20 +347,21 @@ const MemoScreen = ({
 
   const loadItems = useCallback(() => {
     let active = true;
+    const epoch = getWorkspaceEpoch();
     setLoading(true);
     buildMemoItems()
       .then((loaded) => {
-        if (active) {
+        if (active && epoch === getWorkspaceEpoch()) {
           setItems(loaded);
         }
       })
       .catch(() => {
-        if (active) {
+        if (active && epoch === getWorkspaceEpoch()) {
           setItems([]);
         }
       })
       .finally(() => {
-        if (active) {
+        if (active && epoch === getWorkspaceEpoch()) {
           setLoading(false);
         }
       });
@@ -363,7 +372,19 @@ const MemoScreen = ({
 
   useEffect(() => {
     if (visible) return loadItems();
-  }, [loadItems, refreshToken, visible, tab]);
+  }, [loadItems, refreshToken, visible, tab, profile?.userId]);
+
+  useEffect(() => {
+    const { userId } = commonsRequest;
+    if (!userId) return;
+    const epoch = getWorkspaceEpoch();
+    let active = true;
+    const finish = (ids: ReadonlySet<string> | null) => {
+      if (active && epoch === getWorkspaceEpoch()) setCommonsResult({ request: commonsRequest, ids });
+    };
+    void listMyPublicGuildSourceIds(userId).then(finish, () => finish(null));
+    return () => { active = false; };
+  }, [commonsRequest]);
 
 
   useEffect(() => {
@@ -462,7 +483,7 @@ const MemoScreen = ({
 
   const activeTagSet = useMemo(() => new Set(tagLibrary), [tagLibrary]);
 
-  const tabbedItems = useMemo(() => filterMemoTab(items, tab), [items, tab]);
+  const tabbedItems = useMemo(() => filterMemoTab(items, tab, currentCommons?.ids ?? undefined), [items, tab, currentCommons]);
 
   const tagFilterOptions = useMemo(() => {
     const options = [ALL_TAG_FILTER, ...tagLibrary];
@@ -488,7 +509,7 @@ const MemoScreen = ({
   }, [tagFilterOptions, tagFilter]);
 
   const tagFilteredItems = useMemo(() =>
-    tab === "note" ? tabbedItems : filterMemoTags(tabbedItems, tagFilter, activeTagSet),
+    tab === "note" || tab === "commons" ? tabbedItems : filterMemoTags(tabbedItems, tagFilter, activeTagSet),
   [tab, tabbedItems, tagFilter, activeTagSet]);
 
   const filteredItems = useMemo(() => filterMemoQuery(tagFilteredItems, query),
@@ -644,7 +665,7 @@ const MemoScreen = ({
         </View>
       </View>
       <View style={styles.segmentRow}>
-        {(Object.keys(TAB_LABELS) as MemoTab[]).map((key) => {
+        {MEMO_TABS.map((key) => {
           const active = tab === key;
           return (
             <Pressable
@@ -653,6 +674,8 @@ const MemoScreen = ({
                 styles.segmentButton,
                 active && styles.segmentButtonActive,
               ]}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
               onPress={() => onChangeTab(key)}
             >
               <Text
@@ -661,7 +684,7 @@ const MemoScreen = ({
                   active && styles.segmentTextActive,
                 ]}
               >
-                {TAB_LABELS[key]}
+                {tabLabels[key]}
               </Text>
             </Pressable>
           );
@@ -701,8 +724,15 @@ const MemoScreen = ({
           (tab === "task" || tab === "all") && styles.contentTight,
         ]}
       >
-        {loading ? (
+        {loading || (commonsUserId && !currentCommons) ? (
           <Text style={styles.helperText}>{tr("common.loading")}</Text>
+        ) : tab === "commons" && currentCommons?.ids === null ? (
+          <View>
+            <Text accessibilityRole="alert" style={styles.helperText}>{tr("memo.commonsLoadError")}</Text>
+            <Pressable accessibilityRole="button" onPress={() => setCommonsRetry(value => value + 1)}>
+              <Text style={styles.helperText}>{tr("memo.commonsRetry")}</Text>
+            </Pressable>
+          </View>
         ) : (
           <SectionList keyboardShouldPersistTaps="always"
             ref={listRef}
@@ -736,7 +766,7 @@ const MemoScreen = ({
               );
             }}
             ListEmptyComponent={
-              <Text style={styles.helperText}>{tr("memo.none")}</Text>
+              <Text style={styles.helperText}>{tr(tab === "commons" && !query.trim() ? "memo.commonsNone" : "memo.none")}</Text>
             }
           />
         )}

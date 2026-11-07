@@ -85,6 +85,22 @@ test("ToDo appears only in All without changing Task and Note filters", () => {
   assert.deepEqual(filterMemoTab(items, "note").map((item) => item.key), ["note:1"]);
 });
 
+test("Commons filters the existing memo list by canonical and legacy publication source IDs", () => {
+  const template = buildTodoMemoItems([todoFixture()])[0];
+  const items: MemoItem[] = [
+    { ...template, source: "note", memoId: "note:legacy", noteId: "legacy" },
+    { ...template, source: "note", memoId: "note:old-only", noteId: "old-only" },
+    { ...template, source: "task", memoId: "shared-id" },
+    { ...template, source: "note", memoId: "note:shared-id", noteId: "shared-id" },
+    { ...template, source: "tankyu", memoId: "tankyu:research" },
+    { ...template, source: "note", memoId: "note:private", noteId: "private" },
+  ];
+  const published = new Set(["legacy", "note:legacy", "old-only", "shared-id", "tankyu:research", "missing"]);
+  assert.deepEqual(filterMemoTab(items, "commons", published).map(item => item.memoId),
+    ["note:legacy", "note:old-only", "shared-id", "tankyu:research"]);
+  assert.deepEqual(filterMemoTab(items, "commons"), []);
+});
+
 test("ToDo tags and no-tag filters follow the active tag library", () => {
   const items = buildTodoMemoItems([todoFixture(), todoFixture({ id: "untagged", tags: [] }),
     todoFixture({ id: "old-tag", tags: ["削除済みタグ"] })]);
